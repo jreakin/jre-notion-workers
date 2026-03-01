@@ -1,0 +1,33 @@
+{
+  "name": "jre-notion-workers",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "@notionhq/workers": ">=0.0.0",
+    "date-fns": "^3.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.4.0"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "dev:local": "bun run --env-file=.env.local src/index.ts",
+    "dev:1p": "op run --env-file=.env.1p -- bun run src/index.ts",
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "test:local": "bun test --env-file=.env.local",
+    "test:ci": "bun test --timeout 10000",
+    "test:1p": "op run --env-file=.env.1p -- bun test",
+    "test:connection": "bun run scripts/test-connection.ts",
+    "test:connection:1p": "op run --env-file=.env.1p -- bun run scripts/test-connection.ts",
+    "test:integration": "bun test tests/integration/",
+    "test:coverage": "bun test --coverage",
+    "deploy": "npm run build && ntn workers deploy"
+  }
+}

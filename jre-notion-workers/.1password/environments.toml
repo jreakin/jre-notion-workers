@@ -1,0 +1,5 @@
+# Which locally mounted .env files the Cursor hook should validate.
+# Paths are relative to the project root. Ensure your 1Password Environment
+# has a "Mount .env file" destination at one of these paths (e.g. .env.local).
+# See: https://developer.1password.com/docs/environments/local-env-file
+mount_paths = [".env.local", ".env"]
