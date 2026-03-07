@@ -5,14 +5,14 @@
 import { mock } from "bun:test";
 import type { Client } from "@notionhq/client";
 
-const MOCK_PAGE_ID = "mock-page-id-abc123";
-const MOCK_PAGE_URL = "https://www.notion.so/mock-page-id-abc123";
+export const MOCK_PAGE_ID = "mock-page-id-abc123";
+export const MOCK_PAGE_URL = "https://www.notion.so/mock-page-id-abc123";
 
 export function createMockNotionClient(overrides?: Partial<{
-  pagesCreate: () => Promise<{ id: string; url: string }>;
-  databasesQuery: () => Promise<{ results: unknown[]; has_more: boolean }>;
-  blocksChildrenList: () => Promise<{ results: unknown[] }>;
-  blocksChildrenAppend: () => Promise<{ results: unknown[] }>;
+  pagesCreate: (...args: unknown[]) => Promise<{ id: string; url: string }>;
+  databasesQuery: (...args: unknown[]) => Promise<{ results: unknown[]; has_more: boolean }>;
+  blocksChildrenList: (...args: unknown[]) => Promise<{ results: unknown[] }>;
+  blocksChildrenAppend: (...args: unknown[]) => Promise<{ results: unknown[] }>;
 }>): Client {
   const pagesCreate = overrides?.pagesCreate ?? mock(async () => ({ id: MOCK_PAGE_ID, url: MOCK_PAGE_URL }));
   const databasesQuery = overrides?.databasesQuery ?? mock(async () => ({ results: [], has_more: false }));

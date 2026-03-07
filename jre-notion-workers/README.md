@@ -1,6 +1,6 @@
 # jre-notion-workers
 
-Notion Workers for the 11-agent custom agent system. Three tools enforce governance, reduce agent overhead, and make machine-to-machine coordination reliable across the automation fleet.
+Notion Workers for the 14-agent custom agent system. Seven tools enforce governance, reduce agent overhead, and make machine-to-machine coordination reliable across the automation fleet.
 
 ## What these Workers do
 
@@ -9,6 +9,14 @@ Notion Workers for the 11-agent custom agent system. Three tools enforce governa
 - **check-upstream-status** — Finds the most recent digest for a given agent, parses the machine-readable status line and run timestamp, and returns a structured result. Use at the start of any run that depends on upstream data.
 
 - **create-handoff-marker** — Creates a handoff record when one agent escalates to another. Returns a pre-formatted Escalations block and optionally creates a Notion Task. Enforces a circuit breaker (no duplicate handoff within 7 days) and re-escalation cap (max 2 in same direction within 7 days).
+
+- **monitor-fleet-status** — Batch-queries all monitored agents' latest digests and returns fleet-wide status. Returns per-agent found/not-found, status type, run time age, degraded/stale flags, and a heartbeat summary line. Used by Fleet Monitor agent.
+
+- **scan-briefing-failures** — Reads today's Morning Briefing digest page and extracts structured failure signals (missing digests, partial runs, failed runs, stale snapshots). Used by Dead Letter Logger to detect which agents need dead letter records.
+
+- **log-dead-letter** — Creates a structured record in the Dead Letters database for a single agent failure. Sets Resolution Status to "Open". Never modifies or deletes existing records. Used by Dead Letter Logger after scan-briefing-failures identifies failures.
+
+- **calculate-credit-forecast** — Pure calculation tool (no Notion I/O): takes agent credit data, computes monthly burn projection with 20% buffer, week-over-week delta, and dollar estimate. Returns structured forecast for digest writing by Credit Forecast Tracker.
 
 ## Setup
 
@@ -75,6 +83,8 @@ Required variables:
 | `DOCS_DATABASE_ID` | Docs database ID |
 | `HOME_DOCS_DATABASE_ID` | Home Docs database ID |
 | `TASKS_DATABASE_ID` | Tasks database ID (for handoff tasks) |
+| `DEAD_LETTERS_DATABASE_ID` | Dead Letters database ID (for dead letter records) |
+| `SYSTEM_CONTROL_PLANE_PAGE_ID` | System Control Plane page ID (for credit forecast reference) |
 
 For integration tests, also set `TEST_NOTION_TOKEN` and `TEST_DOCS_DATABASE_ID` (use a dedicated test DB, not production).
 
@@ -86,6 +96,8 @@ ntn workers secrets set NOTION_TOKEN=...
 ntn workers secrets set DOCS_DATABASE_ID=...
 ntn workers secrets set HOME_DOCS_DATABASE_ID=...
 ntn workers secrets set TASKS_DATABASE_ID=...
+ntn workers secrets set DEAD_LETTERS_DATABASE_ID=...
+ntn workers secrets set SYSTEM_CONTROL_PLANE_PAGE_ID=...
 ```
 
 Never commit `.env` or `.env.local`; they are in `.gitignore`. Safe to commit: `.env.example`, `scripts/load-secrets.sh`, `.env.1p`, `.cursor/hooks.json`, `.cursor/hooks/1password/`, and `.1password/environments.toml`.
@@ -111,6 +123,9 @@ Never commit `.env` or `.env.local`; they are in `.gitignore`. Safe to commit: `
 | Time Log Auditor | Time Log Audit | docs |
 | Client Health Scorecard | Client Health Scorecard | docs |
 | Morning Briefing | Morning Briefing | docs |
+| Fleet Monitor | *(heartbeat comment only)* | docs |
+| Dead Letter Logger | Dead Letter Log | docs |
+| Credit Forecast Tracker | Credit Forecast | docs |
 
 ## Governance rules enforced by code
 
@@ -180,7 +195,7 @@ In-repo references (templates adapted from Notion):
 
 ```
 src/
-├── index.ts              # Worker registration (write-agent-digest, check-upstream-status, create-handoff-marker)
+├── index.ts              # Worker registration (7 tools)
 ├── shared/
 │   ├── types.ts
 │   ├── agent-config.ts
@@ -191,7 +206,11 @@ src/
 └── workers/
     ├── write-agent-digest.ts
     ├── check-upstream-status.ts
-    └── create-handoff-marker.ts
+    ├── create-handoff-marker.ts
+    ├── monitor-fleet-status.ts
+    ├── scan-briefing-failures.ts
+    ├── log-dead-letter.ts
+    └── calculate-credit-forecast.ts
 .examples/                 # Example payloads (documentation only)
 tests/
 ├── unit/

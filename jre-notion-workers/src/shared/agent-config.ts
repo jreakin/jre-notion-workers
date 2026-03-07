@@ -15,6 +15,9 @@ export const AGENT_DIGEST_PATTERNS: Record<string, string[]> = {
   "Time Log Auditor": ["Time Log Audit"],
   "Client Health Scorecard": ["Client Health Scorecard"],
   "Morning Briefing": ["Morning Briefing"],
+  "Fleet Monitor": [],
+  "Dead Letter Logger": ["Dead Letter Log"],
+  "Credit Forecast Tracker": ["Credit Forecast"],
 };
 
 export const AGENT_TARGET_DB: Record<string, TargetDatabase> = {
@@ -29,9 +32,20 @@ export const AGENT_TARGET_DB: Record<string, TargetDatabase> = {
   "Time Log Auditor": "docs",
   "Client Health Scorecard": "docs",
   "Morning Briefing": "docs",
+  "Fleet Monitor": "docs",
+  "Dead Letter Logger": "docs",
+  "Credit Forecast Tracker": "docs",
 };
 
 export const VALID_AGENT_NAMES = Object.keys(AGENT_DIGEST_PATTERNS);
+
+/** Agents that are suspended and should be skipped by fleet-wide scans. */
+export const SUSPENDED_AGENTS: string[] = ["Template Freshness Watcher"];
+
+/** Agents that produce digest pages (used by fleet monitor). Excludes Fleet Monitor itself (heartbeat comment only). */
+export const MONITORED_AGENTS = VALID_AGENT_NAMES.filter(
+  (name) => !SUSPENDED_AGENTS.includes(name) && name !== "Fleet Monitor"
+);
 
 export function isValidAgentName(name: string): boolean {
   return VALID_AGENT_NAMES.includes(name);

@@ -33,3 +33,15 @@ export function getTasksDatabaseId(): string {
   if (!id) throw new Error("TASKS_DATABASE_ID is not set");
   return id;
 }
+
+export function getSystemControlPlanePageId(): string {
+  const id = process.env.SYSTEM_CONTROL_PLANE_PAGE_ID;
+  if (!id) throw new Error("SYSTEM_CONTROL_PLANE_PAGE_ID is not set");
+  return id;
+}
+
+export function getDeadLettersDatabaseId(): string {
+  const id = process.env.DEAD_LETTERS_DATABASE_ID;
+  if (!id) throw new Error("DEAD_LETTERS_DATABASE_ID is not set");
+  return id;
+}

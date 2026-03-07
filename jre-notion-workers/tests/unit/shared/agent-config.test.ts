@@ -8,10 +8,13 @@ import {
 } from "../../../src/shared/agent-config.js";
 
 describe("agent-config", () => {
-  it("VALID_AGENT_NAMES includes all 11 agents", () => {
+  it("VALID_AGENT_NAMES includes all 14 agents", () => {
     expect(VALID_AGENT_NAMES).toContain("GitHub Insyncerator");
     expect(VALID_AGENT_NAMES).toContain("Morning Briefing");
-    expect(VALID_AGENT_NAMES.length).toBe(11);
+    expect(VALID_AGENT_NAMES).toContain("Fleet Monitor");
+    expect(VALID_AGENT_NAMES).toContain("Dead Letter Logger");
+    expect(VALID_AGENT_NAMES).toContain("Credit Forecast Tracker");
+    expect(VALID_AGENT_NAMES.length).toBe(14);
   });
 
   it("AGENT_DIGEST_PATTERNS maps agent to title pattern", () => {

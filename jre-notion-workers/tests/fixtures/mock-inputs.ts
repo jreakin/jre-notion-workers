@@ -1,7 +1,12 @@
 /**
  * Shared test data factories for worker tests.
  */
-import type { WriteAgentDigestInput } from "../../src/shared/types.js";
+import type {
+  WriteAgentDigestInput,
+  LogDeadLetterInput,
+  CalculateCreditForecastInput,
+  AgentCreditEntry,
+} from "../../src/shared/types.js";
 
 export function createMockWriteDigestInput(
   overrides: Partial<WriteAgentDigestInput> = {}
@@ -21,6 +26,37 @@ export function createMockWriteDigestInput(
     escalations: [],
     target_database: "docs",
     doc_type: "Agent Digest",
+    ...overrides,
+  };
+}
+
+export function createMockLogDeadLetterInput(
+  overrides: Partial<LogDeadLetterInput> = {}
+): LogDeadLetterInput {
+  return {
+    agent_name: "GitHub Insyncerator",
+    expected_run_date: "2026-03-06",
+    failure_type: "Missing Digest",
+    detected_by: "Dead Letter Logger",
+    notes: "⚠️ GitHub Insyncerator — no digest found",
+    ...overrides,
+  };
+}
+
+export function createMockAgentCreditData(): AgentCreditEntry[] {
+  return [
+    { agent_name: "Inbox Manager", est_runs_per_month: 22, est_credits_per_run: 50, is_suspended: false },
+    { agent_name: "Morning Briefing", est_runs_per_month: 22, est_credits_per_run: 80, is_suspended: false },
+    { agent_name: "Fleet Monitor", est_runs_per_month: 22, est_credits_per_run: 30, is_suspended: false },
+    { agent_name: "Template Freshness Watcher", est_runs_per_month: 0, est_credits_per_run: 0, is_suspended: true },
+  ];
+}
+
+export function createMockCreditForecastInput(
+  overrides: Partial<CalculateCreditForecastInput> = {}
+): CalculateCreditForecastInput {
+  return {
+    agent_data: createMockAgentCreditData(),
     ...overrides,
   };
 }

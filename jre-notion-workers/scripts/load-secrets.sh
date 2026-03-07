@@ -24,6 +24,8 @@ NOTION_TOKEN=$(op item get "$ITEM" --vault "$VAULT" --fields label=NOTION_TOKEN)
 DOCS_DATABASE_ID=$(op item get "$ITEM" --vault "$VAULT" --fields label=DOCS_DATABASE_ID)
 HOME_DOCS_DATABASE_ID=$(op item get "$ITEM" --vault "$VAULT" --fields label=HOME_DOCS_DATABASE_ID)
 TASKS_DATABASE_ID=$(op item get "$ITEM" --vault "$VAULT" --fields label=TASKS_DATABASE_ID)
+DEAD_LETTERS_DATABASE_ID=$(op item get "$ITEM" --vault "$VAULT" --fields label=DEAD_LETTERS_DATABASE_ID)
+SYSTEM_CONTROL_PLANE_PAGE_ID=$(op item get "$ITEM" --vault "$VAULT" --fields label=SYSTEM_CONTROL_PLANE_PAGE_ID)
 EOF
 
 echo ".env written. Run 'bun run dev' to start local development."

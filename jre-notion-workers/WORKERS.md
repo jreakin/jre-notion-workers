@@ -46,6 +46,10 @@ This project uses the **tool-based** API: `Worker` + `.tool()` in `src/index.ts`
 | `write-agent-digest`    | Creates a governance-compliant agent digest page in Docs or Home Docs |
 | `check-upstream-status` | Finds latest digest for an agent and returns structured status |
 | `create-handoff-marker` | Creates handoff record and optionally a Task when escalating between agents |
+| `monitor-fleet-status`  | Batch-queries all agents' latest digests, returns fleet-wide status |
+| `scan-briefing-failures`| Reads today's Morning Briefing, extracts failure signals for Dead Letter Logger |
+| `log-dead-letter`       | Creates a Dead Letter record for a single agent failure |
+| `calculate-credit-forecast` | Pure calculation: computes monthly credit burn projection with buffer and delta |
 
 ## Input/output type design
 
