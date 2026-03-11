@@ -3,7 +3,7 @@
  */
 import type { Client } from "@notionhq/client";
 import { getDocsDatabaseId, getHomeDocsDatabaseId } from "../shared/notion-client.js";
-import { VALID_AGENT_NAMES, getDefaultDigestType } from "../shared/agent-config.js";
+import { VALID_AGENT_NAMES, AGENT_DIGEST_PATTERNS, getDefaultDigestType } from "../shared/agent-config.js";
 import { buildStatusLine } from "../shared/status-parser.js";
 import { formatRunTime } from "../shared/date-utils.js";
 import { buildDigestBlocks } from "../shared/block-builder.js";
@@ -130,6 +130,17 @@ export async function executeWriteAgentDigest(
   const err = validateFlaggedItems(input.flagged_items ?? []);
   if (err) return { success: false, error: err };
 
+  // Validate digest_type_override if provided
+  if (input.digest_type_override?.trim()) {
+    const validPatterns = AGENT_DIGEST_PATTERNS[input.agent_name] ?? [];
+    if (!validPatterns.includes(input.digest_type_override.trim())) {
+      return {
+        success: false,
+        error: `digest_type_override "${input.digest_type_override}" is not a valid pattern for ${input.agent_name}. Valid: ${validPatterns.join(", ")}`,
+      };
+    }
+  }
+
   const heartbeat = isHeartbeat({
     status_type: input.status_type,
     flagged_items: input.flagged_items ?? [],
@@ -137,7 +148,9 @@ export async function executeWriteAgentDigest(
   });
   const isErrorTitled =
     input.status_value === "partial" || input.status_value === "failed";
-  const digestType = getDefaultDigestType(input.agent_name);
+  const digestType = input.digest_type_override?.trim()
+    ? input.digest_type_override.trim()
+    : getDefaultDigestType(input.agent_name);
   const dateStr = formatRunTime(input.run_time_chicago).slice(0, 10);
   const title = buildPageTitle({
     emoji: input.agent_emoji,
@@ -152,12 +165,17 @@ export async function executeWriteAgentDigest(
   const contentLines = buildContentLines(input);
   const blocks = buildDigestBlocks(contentLines);
 
+  // Property names differ between Docs and Home Docs databases
+  const isHomeDocs = input.target_database === "home_docs";
+  const titleProp = isHomeDocs ? "Doc" : "Name";
+  const docTypeProp = isHomeDocs ? "Doc Type" : "Document Type";
+
   const properties: Record<string, unknown> = {
-    Name: { title: [{ text: { content: title } }] },
-    "Doc Type": { select: { name: input.doc_type } },
+    [titleProp]: { title: [{ text: { content: title } }] },
+    [docTypeProp]: { select: { name: input.doc_type } },
   };
-  if (input.client_relation_ids?.length) {
-    properties["Client"] = { relation: input.client_relation_ids.map((id) => ({ id })) };
+  if (!isHomeDocs && input.client_relation_ids?.length) {
+    properties["Clients"] = { relation: input.client_relation_ids.map((id) => ({ id })) };
   }
   if (input.project_relation_ids?.length) {
     properties["Project"] = { relation: input.project_relation_ids.map((id) => ({ id })) };

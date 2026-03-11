@@ -8,13 +8,14 @@ import {
 } from "../../../src/shared/agent-config.js";
 
 describe("agent-config", () => {
-  it("VALID_AGENT_NAMES includes all 14 agents", () => {
+  it("VALID_AGENT_NAMES includes all 15 agents", () => {
     expect(VALID_AGENT_NAMES).toContain("GitHub Insyncerator");
     expect(VALID_AGENT_NAMES).toContain("Morning Briefing");
-    expect(VALID_AGENT_NAMES).toContain("Fleet Monitor");
-    expect(VALID_AGENT_NAMES).toContain("Dead Letter Logger");
-    expect(VALID_AGENT_NAMES).toContain("Credit Forecast Tracker");
-    expect(VALID_AGENT_NAMES.length).toBe(14);
+    expect(VALID_AGENT_NAMES).toContain("Fleet Ops Agent");
+    expect(VALID_AGENT_NAMES).toContain("Response Drafter");
+    expect(VALID_AGENT_NAMES).toContain("Client Briefing Agent");
+    expect(VALID_AGENT_NAMES).toContain("Drift Watcher");
+    expect(VALID_AGENT_NAMES.length).toBe(15);
   });
 
   it("AGENT_DIGEST_PATTERNS maps agent to title pattern", () => {
@@ -36,5 +37,12 @@ describe("agent-config", () => {
   it("getDefaultDigestType returns first pattern", () => {
     expect(getDefaultDigestType("GitHub Insyncerator")).toBe("GitHub Sync");
     expect(getDefaultDigestType("Docs Librarian")).toBe("Docs Quick Scan");
+  });
+
+  it("Drift Watcher is a valid agent with correct config", () => {
+    expect(isValidAgentName("Drift Watcher")).toBe(true);
+    expect(AGENT_DIGEST_PATTERNS["Drift Watcher"]).toEqual(["Drift Watcher"]);
+    expect(AGENT_TARGET_DB["Drift Watcher"]).toBe("docs");
+    expect(getDefaultDigestType("Drift Watcher")).toBe("Drift Watcher");
   });
 });

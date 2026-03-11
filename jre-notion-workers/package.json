@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "tsx": "^4.21.0",
     "typescript": "^5.4.0"
   },
   "scripts": {
@@ -28,6 +29,8 @@
     "test:connection:1p": "op run --env-file=.env.1p -- bun run scripts/test-connection.ts",
     "test:integration": "bun test tests/integration/",
     "test:coverage": "bun test --coverage",
-    "deploy": "npm run build && ntn workers deploy"
+    "deploy": "npm run build && ntn workers deploy",
+    "backfill:time-log": "bun run --env-file=.env.local scripts/backfill-time-log.ts",
+    "backfill:time-log:dry-run": "bun run --env-file=.env.local scripts/backfill-time-log.ts --dry-run"
   }
 }
