@@ -33,7 +33,9 @@ function isHeartbeat(params: {
   if (params.status_type === "heartbeat") return true;
   const { flagged_items, actions_taken } = params;
   const hasTasks =
-    (actions_taken.created_tasks?.length ?? 0) > 0 || (actions_taken.updated_tasks?.length ?? 0) > 0;
+    (actions_taken.created_tasks?.length ?? 0) > 0 ||
+    (actions_taken.updated_tasks?.length ?? 0) > 0 ||
+    (actions_taken.auto_closed_by_pr?.length ?? 0) > 0;
   return flagged_items.length === 0 && !hasTasks;
 }
 
@@ -75,13 +77,17 @@ function buildContentLines(input: WriteAgentDigestInput): string[] {
   lines.push("## Actions Taken");
   const created = input.actions_taken.created_tasks ?? [];
   const updated = input.actions_taken.updated_tasks ?? [];
+  const autoClosed = input.actions_taken.auto_closed_by_pr ?? [];
   if (created.length > 0) {
     lines.push(`Created Tasks: ${created.map((t) => `[${t.name}](${t.notion_url})`).join(", ")}`);
   }
   if (updated.length > 0) {
     lines.push(`Updated Tasks: ${updated.map((t) => `[${t.name}](${t.notion_url})`).join(", ")}`);
   }
-  if (created.length === 0 && updated.length === 0) {
+  if (autoClosed.length > 0) {
+    lines.push(`Auto-closed by PR Merge: ${autoClosed.map((t) => `[${t.name}](${t.notion_url})`).join(", ")}`);
+  }
+  if (created.length === 0 && updated.length === 0 && autoClosed.length === 0) {
     lines.push("No Tasks Created");
   }
   lines.push("");

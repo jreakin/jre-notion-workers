@@ -85,8 +85,11 @@ This synced block is shared between the Hub and the design/rationale doc — one
 | TypeScript check | ✅ `tsc --noEmit` passes clean |
 | Hub worker tools reference (single source of truth) | ✅ Links to Workers Details page |
 | Governance doc section numbering | ✅ Sections 1–9 correct |
-| Credit Forecast table | ✅ All 15 agents, accurate estimates |
-| Control Plane change log | ✅ Current through 2026-03-09 |
+| Credit Forecast table | ✅ Updated 2026-03-13 (IM 90→60, RD 60→30 runs/mo) |
+| Control Plane change log | ✅ Current through 2026-03-13 |
+| Digest retention threshold | ✅ Updated 90→30 days (code + Control Plane) |
+| Workers audit remediation (March 13) | ✅ ActionsTaken.auto_closed_by_pr, circuit breaker PR fix, open_only sync, DetectedBy expanded |
+| Fleet Monitor status | ✅ Deprecated — merged into Fleet Ops Agent (prompt page retained as historical reference) |
 
 ---
 

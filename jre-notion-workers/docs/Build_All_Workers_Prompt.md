@@ -390,14 +390,14 @@ export type ValidateDigestQualityOutput =
 
 ### Worker 4: `archive-old-digests`
 
-**Purpose:** Enforces 90-day digest retention policy. Sets Status to "Archived" on old digest pages. Does NOT delete or trash pages.
+**Purpose:** Enforces 30-day digest retention policy. Sets Status to "Archived" on old digest pages. Does NOT delete or trash pages.
 
 **Called by:** Docs Librarian (bi-weekly/monthly runs), any agent needing cleanup
 
 **Input:**
 ```typescript
 export interface ArchiveOldDigestsInput {
-  retention_days?: number;         // Default: 90
+  retention_days?: number;         // Default: 30
   target_database?: "docs" | "home_docs" | "both";  // Default: "docs"
   dry_run?: boolean;               // Default: true
   max_pages?: number;              // Safety limit. Default: 50.
@@ -442,7 +442,7 @@ export type ArchiveOldDigestsOutput =
 7. Log each: `console.log("[archive-old-digests] archived:", title, age, "days old")`.
 8. If any update fails, increment `total_errors`, log the error, continue processing remaining pages.
 9. If `target_database="both"`: run the same logic for both Docs and Home Docs databases sequentially.
-10. Return summary: `"Archived 12 digests older than 90 days from Docs database (3 skipped, 0 errors)"`.
+10. Return summary: `"Archived 12 digests older than 30 days from Docs database (3 skipped, 0 errors)"`.
 
 ---
 

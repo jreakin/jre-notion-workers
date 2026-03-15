@@ -21,6 +21,8 @@ export interface TaskRef {
 export interface ActionsTaken {
   created_tasks: TaskRef[];
   updated_tasks: TaskRef[];
+  /** Tasks auto-closed by GitHub PR merge (via Merged → Done rule on Tasks DB). */
+  auto_closed_by_pr?: TaskRef[];
 }
 
 export interface NeedsReview {
@@ -183,7 +185,7 @@ export type ScanBriefingFailuresOutput =
   | { success: false; error: string };
 
 // --- log-dead-letter ---
-export type DetectedBy = "Dead Letter Logger" | "Morning Briefing" | "Manual";
+export type DetectedBy = "Dead Letter Logger" | "Morning Briefing" | "Manual" | "Fleet Ops Agent" | "check-agent-staleness";
 
 export interface LogDeadLetterInput {
   agent_name: string;
@@ -346,6 +348,12 @@ export interface SyncGitHubItemsInput {
    * across multiple runs. Omit or 0 for unlimited.
    */
   max_writes_per_run?: number;
+  /**
+   * Only sync items with state=open. Skips writing closed/merged items to Notion.
+   * Default: true when updated_since_days is set (incremental sync),
+   * false otherwise (full sync).
+   */
+  open_only?: boolean;
 }
 
 export type SyncGitHubItemsOutput =

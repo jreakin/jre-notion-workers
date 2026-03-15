@@ -616,6 +616,8 @@ export async function executeSyncGitHubItems(
   const includeIssues = input.include_issues ?? true;
   const includePRs = input.include_prs ?? true;
   const dryRun = input.dry_run ?? true;
+  // Default open_only to true for incremental syncs, false for full syncs
+  const openOnly = input.open_only ?? (input.updated_since_days != null && input.updated_since_days > 0);
 
   try {
     const token = getGitHubToken();
@@ -726,7 +728,9 @@ export async function executeSyncGitHubItems(
       // 6b. Sync issues (concurrent writes in batches)
       if (includeIssues) {
         try {
-          const issues = await fetchAllIssues(owner, repoName, token, sinceISO);
+          const allIssues = await fetchAllIssues(owner, repoName, token, sinceISO);
+          // Filter out closed issues when open_only is enabled
+          const issues = openOnly ? allIssues.filter((i) => i.state === "open") : allIssues;
           issuesFound += issues.length;
 
           await processInBatches(issues, WRITE_CONCURRENCY, async (issue) => {
@@ -779,7 +783,9 @@ export async function executeSyncGitHubItems(
       // 6c. Sync PRs (concurrent writes in batches)
       if (includePRs) {
         try {
-          const prs = await fetchAllPRs(owner, repoName, token, sinceISO);
+          const allPRs = await fetchAllPRs(owner, repoName, token, sinceISO);
+          // Filter out closed/merged PRs when open_only is enabled
+          const prs = openOnly ? allPRs.filter((pr) => pr.state === "open") : allPRs;
           prsFound += prs.length;
 
           await processInBatches(prs, WRITE_CONCURRENCY, async (pr) => {
@@ -833,11 +839,12 @@ export async function executeSyncGitHubItems(
     await processInBatches(filteredRepos, REPO_CONCURRENCY, processRepo);
 
     const modeLabel = dryRun ? "DRY RUN — " : "";
+    const openOnlyNote = openOnly ? " (open only)" : "";
     const linkedNote =
       unlinkedRepos > 0 ? ` (${unlinkedRepos} repos unlinked to Client)` : "";
     const budgetNote =
       budgetSkipped > 0 ? ` Budget exhausted — ${budgetSkipped} items deferred.` : "";
-    const summary = `${modeLabel}Synced [${sourceNames.join(", ")}]: ${reposFound} repos, ${issuesFound} issues, ${prsFound} PRs. ${created} created, ${updated} updated, ${skipped} skipped, ${errors} errors.${linkedNote}${budgetNote}`;
+    const summary = `${modeLabel}Synced [${sourceNames.join(", ")}]${openOnlyNote}: ${reposFound} repos, ${issuesFound} issues, ${prsFound} PRs. ${created} created, ${updated} updated, ${skipped} skipped, ${errors} errors.${linkedNote}${budgetNote}`;
 
     console.log(TAG, summary);
 

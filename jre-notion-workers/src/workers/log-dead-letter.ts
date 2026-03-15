@@ -7,7 +7,7 @@ import { getDeadLettersDatabaseId } from "../shared/notion-client.js";
 import type { LogDeadLetterInput, LogDeadLetterOutput } from "../shared/types.js";
 
 const VALID_FAILURE_TYPES = ["Missing Digest", "Partial Run", "Failed Run", "Stale Snapshot"] as const;
-const VALID_DETECTED_BY = ["Dead Letter Logger", "Morning Briefing", "Manual"] as const;
+const VALID_DETECTED_BY = ["Dead Letter Logger", "Morning Briefing", "Manual", "Fleet Ops Agent", "check-agent-staleness"] as const;
 
 export async function executeLogDeadLetter(
   input: LogDeadLetterInput,

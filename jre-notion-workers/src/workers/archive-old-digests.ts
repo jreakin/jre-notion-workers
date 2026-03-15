@@ -1,5 +1,5 @@
 /**
- * archive-old-digests: Enforces 90-day digest retention by setting Status to "Archived".
+ * archive-old-digests: Enforces 30-day digest retention by setting Status to "Archived".
  * NEVER trashes/deletes pages — only sets the Status property.
  */
 import type { Client } from "@notionhq/client";
@@ -109,7 +109,7 @@ export async function executeArchiveOldDigests(
   input: ArchiveOldDigestsInput,
   notion: Client
 ): Promise<ArchiveOldDigestsOutput> {
-  const retentionDays = input.retention_days ?? 90;
+  const retentionDays = input.retention_days ?? 30;
   const targetDatabase = input.target_database ?? "docs";
   const dryRun = input.dry_run ?? true;
   const maxPages = input.max_pages ?? 50;

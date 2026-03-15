@@ -93,19 +93,12 @@ export async function executeCreateHandoffMarker(
         return new Date(ct).getTime() >= sinceMs;
       });
 
-      const isOpen = (p: PageWithCreated): boolean => {
-        const props = p.properties ?? {};
-        const statusProp = props["Status"] ?? props["status"];
-        if (!statusProp || typeof statusProp !== "object") return true;
-        const sel = "select" in statusProp ? (statusProp as { select?: { name?: string } }).select?.name : null;
-        const st = "status" in statusProp ? (statusProp as { status?: { name?: string } }).status?.name : null;
-        const name = sel ?? st ?? "";
-        return !!name && !["Done", "Closed", "Complete"].includes(name);
-      };
-      const existingOpen = withinWindow.filter(isOpen);
-
-      if (existingOpen.length > 0) {
-        const first = existingOpen[0] as { id?: string; url?: string };
+      // Circuit breaker: prevent duplicate if ANY matching handoff task exists
+      // in the window — open OR recently closed (e.g. auto-closed by PR merge).
+      // Previously only checked open tasks, which caused duplicates when the
+      // GitHub PR "Merged → Done" rule auto-closed a handoff task.
+      if (withinWindow.length > 0) {
+        const first = withinWindow[0] as { id?: string; url?: string };
         duplicatePrevented = true;
         existingTaskUrl = first.url ?? null;
         console.log("[create-handoff-marker] circuit breaker: existing handoff task", first.id);

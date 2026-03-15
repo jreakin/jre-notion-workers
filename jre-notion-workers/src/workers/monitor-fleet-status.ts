@@ -22,7 +22,9 @@ async function checkSingleAgent(
 ): Promise<AgentFleetEntry> {
   const patterns = AGENT_DIGEST_PATTERNS[agentName];
   const targetDb = AGENT_TARGET_DB[agentName] ?? "docs";
-  const dbId = targetDb === "home_docs" ? getHomeDocsDatabaseId() : getDocsDatabaseId();
+  const isHomeDocs = targetDb === "home_docs";
+  const dbId = isHomeDocs ? getHomeDocsDatabaseId() : getDocsDatabaseId();
+  const titlePropName = isHomeDocs ? "Doc" : "Name";
 
   const notFoundEntry: AgentFleetEntry = {
     agent_name: agentName,
@@ -42,7 +44,7 @@ async function checkSingleAgent(
 
   try {
     const orConditions = patterns.map((p) => ({
-      property: "Name",
+      property: titlePropName,
       title: { contains: p },
     }));
     const response = await notion.databases.query({
@@ -70,7 +72,7 @@ async function checkSingleAgent(
       : null;
 
     let title = "";
-    const titleProp = page.properties?.["Name"];
+    const titleProp = page.properties?.[titlePropName];
     if (titleProp && typeof titleProp === "object" && "title" in titleProp) {
       const arr = (titleProp as { title: Array<{ plain_text?: string }> }).title;
       title = arr?.map((t) => t.plain_text ?? "").join("") ?? "";

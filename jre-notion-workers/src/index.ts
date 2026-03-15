@@ -81,6 +81,7 @@ worker.tool("write-agent-digest", {
     actions_taken: j.object({
       created_tasks: j.array(taskRefSchema),
       updated_tasks: j.array(taskRefSchema),
+      auto_closed_by_pr: j.array(taskRefSchema),
     }),
     summary: j.string(),
     needs_review: j.array(j.object({ description: j.string() })),
@@ -173,7 +174,7 @@ worker.tool("log-dead-letter", {
     agent_name: j.string(),
     expected_run_date: j.string(),
     failure_type: j.enum("Missing Digest", "Partial Run", "Failed Run", "Stale Snapshot"),
-    detected_by: j.enum("Dead Letter Logger", "Morning Briefing", "Manual"),
+    detected_by: j.enum("Dead Letter Logger", "Morning Briefing", "Manual", "Fleet Ops Agent", "check-agent-staleness"),
     notes: j.string(),
     linked_task_id: j.string().nullable(),
   }),
@@ -279,6 +280,7 @@ worker.tool("sync-github-items", {
     dry_run: j.boolean().nullable(),
     updated_since_days: j.number().nullable(),
     max_writes_per_run: j.number().nullable(),
+    open_only: j.boolean().nullable(),
   }),
   execute: (input, context) =>
     executeSyncGitHubItems(input as unknown as SyncGitHubItemsInput, getNotionClient()) as never,
