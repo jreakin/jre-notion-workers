@@ -427,7 +427,7 @@ function buildIssueProperties(
   const props: Record<string, unknown> = {
     Title: { title: [{ text: { content: issue.title } }] },
     Type: { select: { name: "Issue" } },
-    Status: { select: { name: mapIssueStatus(issue.state) } },
+    Status: { status: { name: mapIssueStatus(issue.state) } },
     "GitHub URL": { url: issue.html_url },
     Repo: { rich_text: [{ text: { content: repoFullName } }] },
     Description: {
@@ -457,7 +457,7 @@ function buildPRProperties(
   const props: Record<string, unknown> = {
     Title: { title: [{ text: { content: pr.title } }] },
     Type: { select: { name: "PR" } },
-    Status: { select: { name: mapPRStatus(pr.state, pr.merged_at) } },
+    Status: { status: { name: mapPRStatus(pr.state, pr.merged_at) } },
     "GitHub URL": { url: pr.html_url },
     Repo: { rich_text: [{ text: { content: repoFullName } }] },
     Description: {
