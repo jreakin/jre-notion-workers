@@ -544,7 +544,15 @@ const WRITE_CONCURRENCY = 2;
  * up on subsequent runs.  Does not apply to dry-run mode so that
  * diagnostic counts remain accurate.
  */
-const INTERNAL_WRITE_CAP = 150;
+const INTERNAL_WRITE_CAP = 75;
+
+/**
+ * Default lookback window in days when the caller does NOT provide
+ * `updated_since_days`.  Prevents full-history syncs from timing out
+ * the worker runtime.  Set to 180 (~6 months) to keep recent closed/
+ * merged items in Notion while avoiding unbounded GitHub API pagination.
+ */
+const DEFAULT_UPDATED_SINCE_DAYS = 180;
 
 async function processInBatches<T>(
   items: T[],
@@ -616,8 +624,8 @@ export async function executeSyncGitHubItems(
   const includeIssues = input.include_issues ?? true;
   const includePRs = input.include_prs ?? true;
   const dryRun = input.dry_run ?? true;
-  // Default open_only to true for incremental syncs, false for full syncs
-  const openOnly = input.open_only ?? (input.updated_since_days != null && input.updated_since_days > 0);
+  // Always default to false — we want closed/merged items from the lookback window
+  const openOnly = input.open_only ?? false;
 
   try {
     const token = getGitHubToken();
@@ -661,12 +669,20 @@ export async function executeSyncGitHubItems(
     );
 
     // ── 5. Compute incremental-sync cutoff ──
+    // Default to DEFAULT_UPDATED_SINCE_DAYS (180) when caller omits the param.
+    // Pass updated_since_days=0 explicitly to force a full-history sync.
+    const effectiveSinceDays =
+      input.updated_since_days != null
+        ? input.updated_since_days
+        : DEFAULT_UPDATED_SINCE_DAYS;
     let sinceISO: string | undefined;
-    if (input.updated_since_days != null && input.updated_since_days > 0) {
+    if (effectiveSinceDays > 0) {
       const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - input.updated_since_days);
+      cutoff.setDate(cutoff.getDate() - effectiveSinceDays);
       sinceISO = cutoff.toISOString();
-      console.log(TAG, `Incremental sync: only items updated since ${sinceISO}`);
+      console.log(TAG, `Incremental sync: only items updated since ${sinceISO} (${effectiveSinceDays} days)`);
+    } else {
+      console.log(TAG, `Full-history sync (updated_since_days=0)`);
     }
 
     // ── 6. Sync repos, issues, PRs (concurrent batches) ──

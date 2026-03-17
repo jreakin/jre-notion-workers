@@ -35,7 +35,7 @@ function makeRepo(
     fork: opts?.fork ?? false,
     archived: opts?.archived ?? false,
     created_at: "2024-01-01T00:00:00Z",
-    updated_at: opts?.updatedAt ?? "2024-06-15T00:00:00Z",
+    updated_at: opts?.updatedAt ?? new Date().toISOString(),
     owner: { login: owner! },
   };
 }
@@ -59,7 +59,7 @@ function makeIssue(
     body: opts?.body ?? `Body for issue ${num}`,
     labels: (opts?.labels ?? []).map((n) => ({ name: n })),
     created_at: "2024-03-01T00:00:00Z",
-    updated_at: opts?.updatedAt ?? "2024-06-15T00:00:00Z",
+    updated_at: opts?.updatedAt ?? new Date().toISOString(),
     ...(opts?.isPR ? { pull_request: { url: "..." } } : {}),
   };
 }
@@ -82,7 +82,7 @@ function makePR(
     body: `Body for PR ${num}`,
     labels: (opts?.labels ?? []).map((n) => ({ name: n })),
     created_at: "2024-03-01T00:00:00Z",
-    updated_at: opts?.updatedAt ?? "2024-06-15T00:00:00Z",
+    updated_at: opts?.updatedAt ?? new Date().toISOString(),
     merged_at: opts?.mergedAt ?? null,
   };
 }
@@ -913,18 +913,20 @@ describe("sync-github-items", () => {
     });
 
     test("forces update when PR is mistagged as Issue", async () => {
+      const recentDate = new Date().toISOString();
+      const recentDateShort = recentDate.slice(0, 10);
       mockFetch({
         repos: {
           "Abstract-Data": [
-            makeRepo("Abstract-Data/repo-a", { updatedAt: "2024-06-15T00:00:00Z" }),
+            makeRepo("Abstract-Data/repo-a"),
           ],
         },
         prs: {
           "Abstract-Data/repo-a": [
             makePR("Abstract-Data/repo-a", 10, {
               state: "closed",
-              mergedAt: "2024-06-10T00:00:00Z",
-              updatedAt: "2024-06-15T00:00:00Z",
+              mergedAt: recentDate,
+              updatedAt: recentDate,
             }),
           ],
         },
@@ -935,13 +937,13 @@ describe("sync-github-items", () => {
           id: "existing-repo",
           ghUrl: "https://github.com/Abstract-Data/repo-a",
           type: "Repo",
-          updatedAt: "2024-06-15",
+          updatedAt: recentDateShort,
         },
         {
           id: "mistagged-pr",
           ghUrl: "https://github.com/Abstract-Data/repo-a/pull/10",
           type: "Issue",   // WRONG — should be "PR"
-          updatedAt: "2024-06-15",
+          updatedAt: recentDateShort,
         },
       ]);
 
@@ -956,11 +958,12 @@ describe("sync-github-items", () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.updated).toBe(1);
-        expect(mock.updatedPages.length).toBe(1);
-        expect(mock.updatedPages[0]!.page_id).toBe("mistagged-pr");
+        // Both the repo (newer timestamp) and the mistagged PR get updated
+        expect(result.updated).toBe(2);
+        const prUpdate = mock.updatedPages.find((p) => p.page_id === "mistagged-pr");
+        expect(prUpdate).toBeDefined();
 
-        const updatedProps = mock.updatedPages[0]!.properties as Record<
+        const updatedProps = prUpdate!.properties as Record<
           string,
           { select?: { name: string } }
         >;
@@ -1441,7 +1444,7 @@ describe("sync-github-items", () => {
       expect(prUrl!).toContain("direction=desc");
     });
 
-    test("omitting updated_since_days does NOT add since to issues URL", async () => {
+    test("omitting updated_since_days applies default 180-day lookback", async () => {
       const calledUrls: string[] = [];
       globalThis.fetch = (async (url: string) => {
         calledUrls.push(url);
@@ -1465,7 +1468,42 @@ describe("sync-github-items", () => {
       await executeSyncGitHubItems(
         {
           sources: [{ name: "Org", type: "org" }],
-          // no updated_since_days
+          // no updated_since_days — should default to 180
+          dry_run: false,
+        },
+        mock.client
+      );
+
+      const issueUrl = calledUrls.find((u) => u.includes("/issues"));
+      expect(issueUrl).toBeDefined();
+      expect(issueUrl!).toContain("&since=");
+    });
+
+    test("updated_since_days=0 does NOT add since to issues URL (full-history sync)", async () => {
+      const calledUrls: string[] = [];
+      globalThis.fetch = (async (url: string) => {
+        calledUrls.push(url);
+        if (url.includes("/orgs/")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [makeRepo("Org/repo-a")],
+            headers: new Headers(),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [],
+          headers: new Headers(),
+        };
+      }) as never;
+
+      const mock = mockNotionClient([]);
+      await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Org", type: "org" }],
+          updated_since_days: 0,
           dry_run: false,
         },
         mock.client
@@ -1477,6 +1515,11 @@ describe("sync-github-items", () => {
     });
 
     test("PR early-stop: skips PRs older than cutoff", async () => {
+      // Use relative dates so the test doesn't go stale.
+      // "recent" = 2 days ago (inside 7-day window), "old" = 30 days ago (outside).
+      const recentDate = new Date(Date.now() - 2 * 86_400_000).toISOString();
+      const oldDate = new Date(Date.now() - 30 * 86_400_000).toISOString();
+
       // Return PRs sorted by updated desc. The second one is older than the cutoff.
       globalThis.fetch = (async (url: string) => {
         if (url.includes("/orgs/")) {
@@ -1500,8 +1543,8 @@ describe("sync-github-items", () => {
             ok: true,
             status: 200,
             json: async () => [
-              makePR("Org/repo-a", 2, { updatedAt: "2026-03-09T00:00:00Z" }),
-              makePR("Org/repo-a", 1, { updatedAt: "2026-02-01T00:00:00Z" }),
+              makePR("Org/repo-a", 2, { updatedAt: recentDate }),
+              makePR("Org/repo-a", 1, { updatedAt: oldDate }),
             ],
             headers: new Headers(),
           };
@@ -1514,7 +1557,7 @@ describe("sync-github-items", () => {
         {
           sources: [{ name: "Org", type: "org" }],
           include_issues: false,
-          updated_since_days: 7, // cutoff ≈ 2026-03-03
+          updated_since_days: 7,
           dry_run: false,
         },
         mock.client

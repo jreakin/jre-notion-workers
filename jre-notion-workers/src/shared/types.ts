@@ -339,7 +339,8 @@ export interface SyncGitHubItemsInput {
   /**
    * Only fetch GitHub items updated within this many days.
    * Dramatically reduces API calls for incremental syncs.
-   * Omit for a full initial sync.
+   * Defaults to 180 (~6 months) to prevent worker timeouts.
+   * Pass 0 explicitly to force a full-history sync.
    */
   updated_since_days?: number;
   /**
@@ -350,8 +351,7 @@ export interface SyncGitHubItemsInput {
   max_writes_per_run?: number;
   /**
    * Only sync items with state=open. Skips writing closed/merged items to Notion.
-   * Default: true when updated_since_days is set (incremental sync),
-   * false otherwise (full sync).
+   * Default: false (sync all states within the lookback window).
    */
   open_only?: boolean;
 }
