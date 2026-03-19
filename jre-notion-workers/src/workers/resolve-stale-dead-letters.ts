@@ -17,20 +17,6 @@ function isValidISODate(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s));
 }
 
-function todayChicago(): string {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Chicago",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const y = parts.find((p) => p.type === "year")?.value ?? "";
-  const m = parts.find((p) => p.type === "month")?.value ?? "";
-  const d = parts.find((p) => p.type === "day")?.value ?? "";
-  return `${y}-${m}-${d}`;
-}
-
 export async function executeResolveStaleDeadLetters(
   input: ResolveStaleDeadLettersInput,
   notion: Client
@@ -83,7 +69,6 @@ export async function executeResolveStaleDeadLetters(
     const records: ResolvedDeadLetter[] = [];
     let totalResolved = 0;
     let totalErrors = 0;
-    const resolvedDate = todayChicago();
 
     for (const page of response.results) {
       const p = page as {
@@ -122,10 +107,6 @@ export async function executeResolveStaleDeadLetters(
             page_id: p.id,
             properties: {
               "Resolution Status": { select: { name: "Resolved" } },
-              "Resolution Notes": {
-                rich_text: [{ text: { content: `Auto-resolved: successful run on ${input.successful_run_date} superseded this failure.` } }],
-              },
-              "Resolved Date": { date: { start: resolvedDate } },
             } as never,
           });
           resolved = true;

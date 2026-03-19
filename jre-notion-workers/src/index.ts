@@ -281,6 +281,13 @@ worker.tool("sync-github-items", {
     updated_since_days: j.number().nullable(),
     max_writes_per_run: j.number().nullable(),
     open_only: j.boolean().nullable(),
+    max_repos_per_run: j.number().nullable(),
+    max_items_per_run: j.number().nullable(),
+    max_seconds: j.number().nullable(),
+    resume_cursor: j.object({
+      repo_index: j.number(),
+      phase: j.enum("issues", "prs"),
+    }).nullable(),
   }),
   execute: (input, context) =>
     executeSyncGitHubItems(input as unknown as SyncGitHubItemsInput, getNotionClient()) as never,
@@ -332,7 +339,7 @@ worker.tool("archive-old-digests", {
     target_database: j.enum("docs", "home_docs", "both").nullable(),
     dry_run: j.boolean().nullable(),
     max_pages: j.number().nullable(),
-    exclude_doc_types: j.array(j.string()).nullable(),
+    exclude_patterns: j.array(j.string()).nullable(),
   }),
   execute: (input, context) =>
     executeArchiveOldDigests(input as unknown as ArchiveOldDigestsInput, getNotionClient()) as never,

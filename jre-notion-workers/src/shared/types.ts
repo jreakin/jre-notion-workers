@@ -2,6 +2,31 @@
  * Shared types for Notion Workers — write-agent-digest, check-upstream-status, create-handoff-marker.
  */
 
+// --- GitHub API error classification ---
+export type GitHubErrorCode =
+  | "repo_not_found"
+  | "permission_denied"
+  | "repo_renamed"
+  | "rate_limited"
+  | "server_error"
+  | "network_error"
+  | "unknown";
+
+export interface ClassifiedGitHubError {
+  code: GitHubErrorCode;
+  status: number | null;
+  message: string;
+  retry_after_seconds?: number;
+}
+
+// --- Degraded capability tracking ---
+export type DegradedCapability = {
+  capability: string;
+  status: "denied" | "error" | "unavailable";
+  message: string;
+  [key: string]: string;
+};
+
 export type StatusType = "sync" | "snapshot" | "report" | "heartbeat";
 export type StatusValue = "complete" | "partial" | "failed" | "full_report" | "stub";
 export type TargetDatabase = "docs" | "home_docs";
@@ -66,6 +91,7 @@ export type WriteAgentDigestOutput =
       title: string;
       is_error_titled: boolean;
       is_heartbeat: boolean;
+      degraded_capabilities?: DegradedCapability[];
     }
   | { success: false; error: string };
 
@@ -86,6 +112,15 @@ export type UpstreamStatus =
   | "stale"
   | "unknown";
 
+export type DiscoveryResult =
+  | "found_complete"
+  | "found_partial"
+  | "found_failed"
+  | "found_error_titled"
+  | "found_but_unparseable"
+  | "not_found_in_window"
+  | "api_error";
+
 export interface CheckUpstreamStatusOutput {
   found: boolean;
   agent_name: string;
@@ -99,6 +134,14 @@ export interface CheckUpstreamStatusOutput {
   page_url: string | null;
   page_id: string | null;
   degraded: boolean;
+  /** Granular discovery outcome for callers to make nuanced gating decisions. */
+  discovery_result: DiscoveryResult;
+  /** Whether the digest is usable by downstream agents (true even for error-titled/partial digests). */
+  is_usable: boolean;
+  /** Agent's configured cadence. */
+  cadence: string;
+  /** Staleness threshold in hours for this agent's cadence. */
+  threshold_hours: number;
   data_completeness_notice: string;
 }
 
@@ -125,6 +168,7 @@ export type CreateHandoffMarkerOutput =
       existing_task_url: string | null;
       escalation_capped: boolean;
       needs_manual_review: boolean;
+      degraded_capabilities?: DegradedCapability[];
     }
   | { success: false; error: string };
 
@@ -324,6 +368,23 @@ export interface GitHubSource {
   type: "org" | "user";
 }
 
+export interface SyncResumeCursor {
+  /** Index into the filtered repos array to resume from. */
+  repo_index: number;
+  /** Phase within the repo to resume from. */
+  phase: "issues" | "prs";
+}
+
+export interface SyncInstrumentation {
+  repos_scanned: number;
+  items_scanned: number;
+  items_upserted: number;
+  api_calls: number;
+  elapsed_ms: number;
+  budget_exhausted: boolean;
+  time_cutoff_hit: boolean;
+}
+
 export interface SyncGitHubItemsInput {
   /** @deprecated Use `sources` instead. Kept for backward compat — treated as a single org source. */
   org_name?: string;
@@ -354,6 +415,14 @@ export interface SyncGitHubItemsInput {
    * Default: false (sync all states within the lookback window).
    */
   open_only?: boolean;
+  /** Max repos to process before returning partial. Default: unlimited. */
+  max_repos_per_run?: number;
+  /** Max GitHub items (issues+PRs) to scan before returning partial. Default: unlimited. */
+  max_items_per_run?: number;
+  /** Safety cutoff in seconds. Exits early with resume cursor. Default: 50. */
+  max_seconds?: number;
+  /** Resume cursor from a previous partial run. Pass the cursor from the prior output. */
+  resume_cursor?: SyncResumeCursor | null;
 }
 
 export type SyncGitHubItemsOutput =
@@ -370,6 +439,12 @@ export type SyncGitHubItemsOutput =
       unlinked_repos: number;
       error_details: string[];
       summary: string;
+      /** Whether the sync completed all repos or exited early. */
+      is_complete: boolean;
+      /** Resume cursor for the next invocation. Null when is_complete=true. */
+      resume_cursor: SyncResumeCursor | null;
+      /** Performance instrumentation for debugging and alerting. */
+      instrumentation: SyncInstrumentation;
     }
   | { success: false; error: string };
 
@@ -440,7 +515,7 @@ export interface ArchiveOldDigestsInput {
   target_database?: "docs" | "home_docs" | "both";
   dry_run?: boolean;
   max_pages?: number;
-  exclude_doc_types?: string[];
+  exclude_patterns?: string[];
 }
 
 export interface ArchivedDigest {

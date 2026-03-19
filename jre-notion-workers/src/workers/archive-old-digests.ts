@@ -113,7 +113,7 @@ export async function executeArchiveOldDigests(
   const targetDatabase = input.target_database ?? "docs";
   const dryRun = input.dry_run ?? true;
   const maxPages = input.max_pages ?? 50;
-  const excludeDocTypes = input.exclude_doc_types ?? ["Client Report"];
+  const excludeDocTypes = input.exclude_patterns ?? ["Client Report"];
 
   try {
     const cutoffDate = subDays(new Date(), retentionDays);

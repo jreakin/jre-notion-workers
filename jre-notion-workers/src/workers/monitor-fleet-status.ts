@@ -4,7 +4,7 @@
  */
 import type { Client } from "@notionhq/client";
 import { getDocsDatabaseId, getHomeDocsDatabaseId } from "../shared/notion-client.js";
-import { AGENT_DIGEST_PATTERNS, AGENT_TARGET_DB, MONITORED_AGENTS } from "../shared/agent-config.js";
+import { AGENT_DIGEST_PATTERNS, AGENT_TARGET_DB, MONITORED_AGENTS, AGENT_CADENCE, STALENESS_THRESHOLDS } from "../shared/agent-config.js";
 import { parseStatusLine, hasHeartbeatLine } from "../shared/status-parser.js";
 import { parseRunTimeString, hoursAgo } from "../shared/date-utils.js";
 import type {
@@ -13,8 +13,6 @@ import type {
   AgentFleetEntry,
   UpstreamStatus,
 } from "../shared/types.js";
-
-const MAX_AGE_HOURS = 48;
 
 async function checkSingleAgent(
   agentName: string,
@@ -107,7 +105,9 @@ async function checkSingleAgent(
     const runTime = runTimeRaw ? runTimeRaw.toISOString() : null;
     const runTimeAgeHours = runTime ? hoursAgo(runTime) : null;
 
-    const isStale = ageHours !== null && ageHours > MAX_AGE_HOURS;
+    const cadence = AGENT_CADENCE[agentName] ?? "daily";
+    const thresholdHours = STALENESS_THRESHOLDS[cadence];
+    const isStale = ageHours !== null && ageHours > thresholdHours;
     let status: UpstreamStatus = statusValue;
     if (isStale) status = "stale";
 
@@ -120,9 +120,9 @@ async function checkSingleAgent(
 
     let notice = "";
     if (!isDegraded) {
-      notice = `✅ ${agentName} — current`;
+      notice = `✅ ${agentName} — current (${ageHours ?? "?"}h/${thresholdHours}h)`;
     } else if (isStale) {
-      notice = `⚠️ ${agentName} — stale (${ageHours}h ago)`;
+      notice = `⚠️ ${agentName} — stale (${ageHours}h/${thresholdHours}h)`;
     } else if (status === "partial") {
       notice = `⚠️ ${agentName} — last run partial`;
     } else if (status === "failed") {

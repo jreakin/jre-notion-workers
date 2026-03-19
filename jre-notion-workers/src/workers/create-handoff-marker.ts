@@ -5,7 +5,7 @@ import type { Client } from "@notionhq/client";
 import { getTasksDatabaseId } from "../shared/notion-client.js";
 import { VALID_AGENT_NAMES } from "../shared/agent-config.js";
 import { nextBusinessDay } from "../shared/date-utils.js";
-import type { CreateHandoffMarkerInput, CreateHandoffMarkerOutput, TaskPriority } from "../shared/types.js";
+import type { CreateHandoffMarkerInput, CreateHandoffMarkerOutput, DegradedCapability, TaskPriority } from "../shared/types.js";
 
 const HANDOFF_WINDOW_DAYS = 7;
 const ESCALATION_CAP = 2;
@@ -77,7 +77,7 @@ export async function executeCreateHandoffMarker(
       const existingResponse = await notion.databases.query({
         database_id: tasksDbId,
         filter: {
-          property: "Name",
+          property: "Task Name",
           title: {
             contains: `Handoff: ${input.source_agent} → ${input.target_agent}`,
           },
@@ -139,7 +139,7 @@ export async function executeCreateHandoffMarker(
       const taskNotes = `Escalation from ${input.source_agent}. Reason: ${input.escalation_reason}. Source digest: ${input.source_digest_url}`;
 
       const taskProps: Record<string, unknown> = {
-        Name: { title: [{ text: { content: taskTitle } }] },
+        "Task Name": { title: [{ text: { content: taskTitle } }] },
         "Priority": { select: { name: input.task_priority as TaskPriority } },
         "Due": { date: { start: dueStr } },
       };
@@ -168,10 +168,26 @@ export async function executeCreateHandoffMarker(
       console.log("[create-handoff-marker] created task", taskId, taskTitle);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error("[create-handoff-marker] Notion API error", message);
+      const isPermission = message.includes("403") || message.includes("Unauthorized") || message.includes("Could not find");
+      console.error("[create-handoff-marker] task creation failed:", message);
+
+      // Degrade gracefully — handoff block (core output) is still valid
+      const degraded: DegradedCapability = {
+        capability: "task_creation",
+        status: isPermission ? "denied" : "error",
+        message,
+      };
       return {
-        success: false,
-        error: message,
+        success: true,
+        handoff_block: handoffBlock,
+        task_created: false,
+        task_url: null,
+        task_id: null,
+        duplicate_prevented: duplicatePrevented,
+        existing_task_url: existingTaskUrl,
+        escalation_capped: escalationCapped,
+        needs_manual_review: false,
+        degraded_capabilities: [degraded],
       };
     }
   }

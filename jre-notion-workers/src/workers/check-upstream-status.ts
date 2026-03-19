@@ -3,12 +3,10 @@
  */
 import type { Client } from "@notionhq/client";
 import { getDocsDatabaseId, getHomeDocsDatabaseId } from "../shared/notion-client.js";
-import { AGENT_DIGEST_PATTERNS, AGENT_TARGET_DB, VALID_AGENT_NAMES } from "../shared/agent-config.js";
+import { AGENT_DIGEST_PATTERNS, AGENT_TARGET_DB, VALID_AGENT_NAMES, AGENT_CADENCE, STALENESS_THRESHOLDS } from "../shared/agent-config.js";
 import { parseStatusLine, hasHeartbeatLine } from "../shared/status-parser.js";
 import { parseRunTimeString, hoursAgo } from "../shared/date-utils.js";
-import type { CheckUpstreamStatusInput, CheckUpstreamStatusOutput, UpstreamStatus } from "../shared/types.js";
-
-const MAX_AGE_DEFAULT = 48;
+import type { CheckUpstreamStatusInput, CheckUpstreamStatusOutput, DiscoveryResult, UpstreamStatus } from "../shared/types.js";
 
 function buildDataCompletenessNotice(
   agentName: string,
@@ -48,24 +46,42 @@ export async function executeCheckUpstreamStatus(
       page_url: null,
       page_id: null,
       degraded: true,
+      discovery_result: "not_found_in_window",
+      is_usable: false,
+      cadence: "daily",
+      threshold_hours: STALENESS_THRESHOLDS.daily,
       data_completeness_notice: buildDataCompletenessNotice(input.agent_name, "not_found"),
     };
   }
 
-  const maxAgeHours = input.max_age_hours ?? MAX_AGE_DEFAULT;
+  const cadence = AGENT_CADENCE[input.agent_name] ?? "daily";
+  const cadenceThreshold = STALENESS_THRESHOLDS[cadence];
+  const maxAgeHours = input.max_age_hours ?? cadenceThreshold;
   const requireCurrentCycle = input.require_current_cycle ?? false;
   const patterns = AGENT_DIGEST_PATTERNS[input.agent_name];
   const targetDb = AGENT_TARGET_DB[input.agent_name] ?? "docs";
   const dbId = targetDb === "home_docs" ? getHomeDocsDatabaseId() : getDocsDatabaseId();
 
   try {
+    const titlePropName = targetDb === "home_docs" ? "Doc" : "Name";
     const orConditions = (patterns ?? []).map((p) => ({
-      property: "Name",
+      property: titlePropName,
       title: { contains: p },
     }));
+    // Limit search to a window based on agent cadence + 12h grace
+    const windowHours = cadenceThreshold + 12;
+    const windowStart = new Date(Date.now() - windowHours * 3600_000).toISOString();
+    const filter = orConditions.length > 0
+      ? {
+          and: [
+            { or: orConditions },
+            { timestamp: "created_time" as const, created_time: { on_or_after: windowStart } },
+          ],
+        }
+      : { timestamp: "created_time" as const, created_time: { on_or_after: windowStart } };
     const response = await notion.databases.query({
       database_id: dbId,
-      filter: orConditions.length > 0 ? { or: orConditions } : undefined,
+      filter,
       sorts: [{ timestamp: "created_time", direction: "descending" }],
       page_size: 5,
     });
@@ -85,6 +101,10 @@ export async function executeCheckUpstreamStatus(
         page_url: null,
         page_id: null,
         degraded: true,
+        discovery_result: "not_found_in_window",
+        is_usable: false,
+        cadence,
+        threshold_hours: cadenceThreshold,
         data_completeness_notice: buildDataCompletenessNotice(input.agent_name, "not_found"),
       };
     }
@@ -97,7 +117,7 @@ export async function executeCheckUpstreamStatus(
     const ageHours = createdDate ? Math.floor((Date.now() - createdDate.getTime()) / (1000 * 60 * 60)) : null;
 
     let title = "";
-    const titleProp = page.properties?.["Name"];
+    const titleProp = page.properties?.[titlePropName];
     if (titleProp && typeof titleProp === "object" && "title" in titleProp) {
       const arr = (titleProp as { title: Array<{ plain_text?: string }> }).title;
       title = arr?.map((t) => t.plain_text ?? "").join("") ?? "";
@@ -129,7 +149,7 @@ export async function executeCheckUpstreamStatus(
     const isHeartbeat = hasHeartbeatLine(blockLines);
 
     const isStale =
-      (requireCurrentCycle && (runTimeAgeHours ?? 999) > MAX_AGE_DEFAULT) ||
+      (requireCurrentCycle && (runTimeAgeHours ?? 999) > cadenceThreshold) ||
       (ageHours !== null && ageHours > maxAgeHours);
 
     let status: UpstreamStatus = statusValue;
@@ -142,6 +162,18 @@ export async function executeCheckUpstreamStatus(
       status === "partial" ||
       status === "failed" ||
       isErrorTitled;
+
+    // Compute granular discovery result
+    let discoveryResult: DiscoveryResult;
+    if (statusValue === "failed") discoveryResult = "found_failed";
+    else if (isErrorTitled) discoveryResult = "found_error_titled";
+    else if (statusValue === "partial" || statusValue === "stub") discoveryResult = "found_partial";
+    else if (statusValue === "complete" || statusValue === "full_report") discoveryResult = "found_complete";
+    else if (!parsed) discoveryResult = "found_but_unparseable";
+    else discoveryResult = "found_complete";
+
+    // Usable = found and has parseable content, even if error-titled or partial
+    const isUsable = discoveryResult !== "found_but_unparseable";
 
     let dataCompletenessNotice = "";
     if (degraded) {
@@ -173,6 +205,10 @@ export async function executeCheckUpstreamStatus(
       page_url: pageUrl,
       page_id: pageId,
       degraded,
+      discovery_result: discoveryResult,
+      is_usable: isUsable,
+      cadence,
+      threshold_hours: cadenceThreshold,
       data_completeness_notice: dataCompletenessNotice,
     };
   } catch (e) {
@@ -191,6 +227,10 @@ export async function executeCheckUpstreamStatus(
       page_url: null,
       page_id: null,
       degraded: true,
+      discovery_result: "api_error",
+      is_usable: false,
+      cadence,
+      threshold_hours: cadenceThreshold,
       data_completeness_notice: `⚠️ Data Completeness Notice: Error reading ${input.agent_name} — ${message}`,
     };
   }

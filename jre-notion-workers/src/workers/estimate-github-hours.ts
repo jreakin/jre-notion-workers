@@ -8,6 +8,7 @@ import type {
   EstimateGitHubHoursOutput,
   HoursBreakdown,
 } from "../shared/types.js";
+import { classifyGitHubError } from "../shared/github-utils.js";
 
 const TAG = "[estimate-github-hours]";
 
@@ -46,7 +47,7 @@ function labelNames(labels: Array<{ name: string }>): string[] {
   return labels.map((l) => l.name.toLowerCase());
 }
 
-async function ghFetch<T>(url: string, token: string): Promise<{ ok: true; data: T } | { ok: false; error: string; status: number }> {
+async function ghFetch<T>(url: string, token: string): Promise<{ ok: true; data: T } | { ok: false; error: string; status: number; code: string }> {
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -54,20 +55,9 @@ async function ghFetch<T>(url: string, token: string): Promise<{ ok: true; data:
     },
   });
 
-  if (res.status === 404) {
-    return { ok: false, error: "Item not found (404). It may have been deleted.", status: 404 };
-  }
-
-  if (res.status === 403) {
-    const remaining = res.headers.get("x-ratelimit-remaining");
-    if (remaining === "0") {
-      return { ok: false, error: "GitHub API rate limit exceeded", status: 403 };
-    }
-    return { ok: false, error: `GitHub API forbidden (403)`, status: 403 };
-  }
-
   if (!res.ok) {
-    return { ok: false, error: `GitHub API error: HTTP ${res.status}`, status: res.status };
+    const classified = classifyGitHubError(res, url);
+    return { ok: false, error: classified.message, status: classified.status ?? res.status, code: classified.code };
   }
 
   const data = (await res.json()) as T;

@@ -226,7 +226,7 @@ export async function executeAutoLinkMeetingClient(
         filter: {
           property: "Client",
           relation: { is_empty: true },
-        } as never,
+        },
         sorts: [{ property: "When", direction: "descending" }],
         page_size: maxPages,
       });

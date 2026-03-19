@@ -9,10 +9,13 @@ import {
   getGitHubItemsDatabaseId,
   getGitHubToken,
 } from "../shared/notion-client.js";
+import { classifyGitHubError, GitHubApiError } from "../shared/github-utils.js";
 import type {
   GitHubSource,
   SyncGitHubItemsInput,
   SyncGitHubItemsOutput,
+  SyncResumeCursor,
+  SyncInstrumentation,
 } from "../shared/types.js";
 
 const TAG = "[sync-github-items]";
@@ -153,7 +156,8 @@ function mapPRStatus(
  */
 async function paginatedGitHubGet<T>(
   baseUrl: string,
-  token: string
+  token: string,
+  apiCounter?: { count: number }
 ): Promise<T[]> {
   const items: T[] = [];
   let url: string | null = baseUrl.includes("?")
@@ -161,6 +165,7 @@ async function paginatedGitHubGet<T>(
     : `${baseUrl}?per_page=100`;
 
   while (url) {
+    if (apiCounter) apiCounter.count++;
     const res: Response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -169,7 +174,7 @@ async function paginatedGitHubGet<T>(
     });
 
     if (!res.ok) {
-      throw new Error(`GitHub API error: HTTP ${res.status} for ${url}`);
+      throw new GitHubApiError(classifyGitHubError(res, url));
     }
 
     const data = (await res.json()) as T[];
@@ -189,12 +194,14 @@ async function paginatedGitHubGet<T>(
 
 async function fetchAllRepos(
   source: GitHubSource,
-  token: string
+  token: string,
+  apiCounter?: { count: number }
 ): Promise<GitHubRepo[]> {
   if (source.type === "org") {
     return paginatedGitHubGet<GitHubRepo>(
       `https://api.github.com/orgs/${source.name}/repos?type=all`,
-      token
+      token,
+      apiCounter
     );
   }
 
@@ -203,7 +210,8 @@ async function fetchAllRepos(
   // by the specified user.
   const allUserRepos = await paginatedGitHubGet<GitHubRepo>(
     "https://api.github.com/user/repos?per_page=100",
-    token
+    token,
+    apiCounter
   );
   return allUserRepos.filter(
     (r) => r.owner.login.toLowerCase() === source.name.toLowerCase()
@@ -214,13 +222,14 @@ async function fetchAllIssues(
   owner: string,
   repo: string,
   token: string,
-  since?: string
+  since?: string,
+  apiCounter?: { count: number }
 ): Promise<GitHubIssue[]> {
   let url = `https://api.github.com/repos/${owner}/${repo}/issues?state=all`;
   if (since) {
     url += `&since=${since}`;
   }
-  const items = await paginatedGitHubGet<GitHubIssue>(url, token);
+  const items = await paginatedGitHubGet<GitHubIssue>(url, token, apiCounter);
   // The issues endpoint includes PRs; filter them out
   return items.filter((i) => !i.pull_request);
 }
@@ -229,12 +238,13 @@ async function fetchAllPRs(
   owner: string,
   repo: string,
   token: string,
-  since?: string
+  since?: string,
+  apiCounter?: { count: number }
 ): Promise<GitHubPullRequest[]> {
   if (!since) {
     // Full sync — fetch everything
     const url = `https://api.github.com/repos/${owner}/${repo}/pulls?state=all`;
-    return paginatedGitHubGet<GitHubPullRequest>(url, token);
+    return paginatedGitHubGet<GitHubPullRequest>(url, token, apiCounter);
   }
 
   // Incremental sync — sort by updated desc and stop when we pass the cutoff.
@@ -244,6 +254,7 @@ async function fetchAllPRs(
     `https://api.github.com/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`;
 
   while (url) {
+    if (apiCounter) apiCounter.count++;
     const res: Response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -252,7 +263,7 @@ async function fetchAllPRs(
     });
 
     if (!res.ok) {
-      throw new Error(`GitHub API error: HTTP ${res.status} for ${url}`);
+      throw new GitHubApiError(classifyGitHubError(res, url));
     }
 
     const data = (await res.json()) as GitHubPullRequest[];
@@ -627,9 +638,20 @@ export async function executeSyncGitHubItems(
   // Always default to false — we want closed/merged items from the lookback window
   const openOnly = input.open_only ?? false;
 
+  // ── Bounded execution: wall-clock timer + per-run limits ──
+  const startMs = Date.now();
+  const maxMs = (input.max_seconds ?? 50) * 1000;
+  const isTimeUp = (): boolean => Date.now() - startMs >= maxMs;
+  const maxReposPerRun = input.max_repos_per_run ?? Infinity;
+  const maxItemsPerRun = input.max_items_per_run ?? Infinity;
+  let totalItemsScanned = 0;
+  let apiCallCount = 0;
+
   try {
     const token = getGitHubToken();
     const dbId = getGitHubItemsDatabaseId();
+
+    const apiCounter = { count: 0 };
 
     // ── 1. Fetch repos from all sources ──
     const allRepos: GitHubRepo[] = [];
@@ -637,7 +659,7 @@ export async function executeSyncGitHubItems(
 
     for (const source of sources) {
       console.log(TAG, `Fetching repos for ${source.type} "${source.name}"...`);
-      const repos = await fetchAllRepos(source, token);
+      const repos = await fetchAllRepos(source, token, apiCounter);
       console.log(TAG, `  → ${repos.length} repos from ${source.name}`);
       allRepos.push(...repos);
     }
@@ -685,14 +707,15 @@ export async function executeSyncGitHubItems(
       console.log(TAG, `Full-history sync (updated_since_days=0)`);
     }
 
-    // ── 6. Sync repos, issues, PRs (concurrent batches) ──
+    // ── 6. Sync repos, issues, PRs (sequential with early-exit) ──
     // In dry-run mode use unlimited budget for accurate reporting.
     // Otherwise, fall back to INTERNAL_WRITE_CAP to prevent timeout.
     const effectiveMaxWrites = dryRun
       ? undefined
       : (input.max_writes_per_run ?? INTERNAL_WRITE_CAP);
     const budget = createWriteBudget(effectiveMaxWrites);
-    let reposFound = filteredRepos.length;
+    const reposFound = filteredRepos.length;
+    let reposProcessed = 0;
     let issuesFound = 0;
     let prsFound = 0;
     let created = 0;
@@ -702,35 +725,66 @@ export async function executeSyncGitHubItems(
     let errors = 0;
     let unlinkedRepos = 0;
     const errorDetails: string[] = [];
+    let resumeCursor: SyncResumeCursor | null = null;
+    let isComplete = true;
+    let timeCutoffHit = false;
+    let budgetExhausted = false;
 
-    async function processRepo(repo: GitHubRepo): Promise<void> {
+    /** Check if we should stop early due to time, budget, or limits. */
+    function shouldStop(): boolean {
+      if (isTimeUp()) { timeCutoffHit = true; return true; }
+      if (budget.remaining <= 0 && !dryRun) { budgetExhausted = true; return true; }
+      if (reposProcessed >= maxReposPerRun) return true;
+      if (totalItemsScanned >= maxItemsPerRun) return true;
+      return false;
+    }
+
+    const startRepoIndex = input.resume_cursor?.repo_index ?? 0;
+    const resumePhase = input.resume_cursor?.phase ?? "issues";
+    if (startRepoIndex > 0) {
+      console.log(TAG, `Resuming from repo index ${startRepoIndex}, phase=${resumePhase}`);
+    }
+
+    for (let repoIdx = startRepoIndex; repoIdx < filteredRepos.length; repoIdx++) {
+      if (shouldStop()) {
+        resumeCursor = { repo_index: repoIdx, phase: "issues" };
+        isComplete = false;
+        console.log(TAG, `Early exit at repo index ${repoIdx}/${filteredRepos.length}`);
+        break;
+      }
+
+      const repo = filteredRepos[repoIdx]!;
+      const skipIssuesForResume = repoIdx === startRepoIndex && resumePhase === "prs";
+
       // 6a. Upsert repo row
-      if (!reserveBudget(budget)) { budgetSkipped++; return; }
-      try {
-        const props = buildRepoProperties(repo);
-        const result = await upsertItem(
-          notion,
-          dbId,
-          existingRows,
-          repo.html_url,
-          repo.updated_at,
-          "Repo",
-          props,
-          dryRun
-        );
-        if (result === "created") created++;
-        else if (result === "updated") updated++;
-        else { skipped++; releaseBudget(budget); }
-      } catch (e) {
-        releaseBudget(budget);
-        errors++;
-        const msg = e instanceof Error ? e.message : String(e);
-        errorDetails.push(`Repo ${repo.full_name}: ${msg}`);
-        console.error(TAG, `Error upserting repo ${repo.full_name}:`, msg);
+      if (!reserveBudget(budget)) { budgetSkipped++; }
+      else {
+        try {
+          const props = buildRepoProperties(repo);
+          const result = await upsertItem(
+            notion,
+            dbId,
+            existingRows,
+            repo.html_url,
+            repo.updated_at,
+            "Repo",
+            props,
+            dryRun
+          );
+          if (result === "created") created++;
+          else if (result === "updated") updated++;
+          else { skipped++; releaseBudget(budget); }
+        } catch (e) {
+          releaseBudget(budget);
+          errors++;
+          const msg = e instanceof Error ? e.message : String(e);
+          errorDetails.push(`Repo ${repo.full_name}: ${msg}`);
+          console.error(TAG, `Error upserting repo ${repo.full_name}:`, msg);
+        }
       }
 
       const [owner, repoName] = repo.full_name.split("/");
-      if (!owner || !repoName) return;
+      if (!owner || !repoName) { reposProcessed++; continue; }
 
       // Track unlinked repos (no Client relation)
       const repoKey = repo.full_name.toLowerCase();
@@ -741,13 +795,13 @@ export async function executeSyncGitHubItems(
       // Resolve inherited relations for this repo's issues/PRs
       const repoRelations = inheritanceMap.get(repoKey);
 
-      // 6b. Sync issues (concurrent writes in batches)
-      if (includeIssues) {
+      // 6b. Sync issues (skip if resuming past issues phase)
+      if (includeIssues && !skipIssuesForResume) {
         try {
-          const allIssues = await fetchAllIssues(owner, repoName, token, sinceISO);
-          // Filter out closed issues when open_only is enabled
+          const allIssues = await fetchAllIssues(owner, repoName, token, sinceISO, apiCounter);
           const issues = openOnly ? allIssues.filter((i) => i.state === "open") : allIssues;
           issuesFound += issues.length;
+          totalItemsScanned += issues.length;
 
           await processInBatches(issues, WRITE_CONCURRENCY, async (issue) => {
             if (!reserveBudget(budget)) { budgetSkipped++; return; }
@@ -794,15 +848,24 @@ export async function executeSyncGitHubItems(
             msg
           );
         }
+
+        // Check time after issues — if up, save cursor at PRs phase for this repo
+        if (isTimeUp()) {
+          timeCutoffHit = true;
+          resumeCursor = { repo_index: repoIdx, phase: "prs" };
+          isComplete = false;
+          console.log(TAG, `Time cutoff after issues for ${repo.full_name}`);
+          break;
+        }
       }
 
-      // 6c. Sync PRs (concurrent writes in batches)
+      // 6c. Sync PRs
       if (includePRs) {
         try {
-          const allPRs = await fetchAllPRs(owner, repoName, token, sinceISO);
-          // Filter out closed/merged PRs when open_only is enabled
+          const allPRs = await fetchAllPRs(owner, repoName, token, sinceISO, apiCounter);
           const prs = openOnly ? allPRs.filter((pr) => pr.state === "open") : allPRs;
           prsFound += prs.length;
+          totalItemsScanned += prs.length;
 
           await processInBatches(prs, WRITE_CONCURRENCY, async (pr) => {
             if (!reserveBudget(budget)) { budgetSkipped++; return; }
@@ -850,19 +913,34 @@ export async function executeSyncGitHubItems(
           );
         }
       }
+
+      reposProcessed++;
     }
 
-    await processInBatches(filteredRepos, REPO_CONCURRENCY, processRepo);
-
+    const elapsedMs = Date.now() - startMs;
     const modeLabel = dryRun ? "DRY RUN — " : "";
+    const completionLabel = isComplete ? "" : "⚠️ Partial — ";
     const openOnlyNote = openOnly ? " (open only)" : "";
     const linkedNote =
       unlinkedRepos > 0 ? ` (${unlinkedRepos} repos unlinked to Client)` : "";
     const budgetNote =
       budgetSkipped > 0 ? ` Budget exhausted — ${budgetSkipped} items deferred.` : "";
-    const summary = `${modeLabel}Synced [${sourceNames.join(", ")}]${openOnlyNote}: ${reposFound} repos, ${issuesFound} issues, ${prsFound} PRs. ${created} created, ${updated} updated, ${skipped} skipped, ${errors} errors.${linkedNote}${budgetNote}`;
+    const resumeNote = resumeCursor
+      ? ` Resume from repo ${resumeCursor.repo_index}/${filteredRepos.length} (${resumeCursor.phase}).`
+      : "";
+    const summary = `${completionLabel}${modeLabel}Synced [${sourceNames.join(", ")}]${openOnlyNote}: ${reposFound} repos (${reposProcessed} processed), ${issuesFound} issues, ${prsFound} PRs. ${created} created, ${updated} updated, ${skipped} skipped, ${errors} errors.${linkedNote}${budgetNote}${resumeNote} [${elapsedMs}ms]`;
 
     console.log(TAG, summary);
+
+    const instrumentation: SyncInstrumentation = {
+      repos_scanned: reposProcessed,
+      items_scanned: totalItemsScanned,
+      items_upserted: created + updated,
+      api_calls: apiCounter.count,
+      elapsed_ms: elapsedMs,
+      budget_exhausted: budgetExhausted,
+      time_cutoff_hit: timeCutoffHit,
+    };
 
     return {
       success: true,
@@ -876,6 +954,9 @@ export async function executeSyncGitHubItems(
       unlinked_repos: unlinkedRepos,
       error_details: errorDetails,
       summary,
+      is_complete: isComplete,
+      resume_cursor: resumeCursor,
+      instrumentation,
     };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
