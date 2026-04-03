@@ -1,0 +1,17 @@
+cache-size 10MB
+max-ttl 300s
+cache-max-age 3600s
+bogus-priv true
+report-client-info true
+setup-router true
+use-hosts true
+auto-activate true
+listen localhost:53
+mdns all
+timeout 5s
+max-inflight-requests 256
+control /var/run/nextdns.sock
+
+# SITE-SPECIFIC PROFILES — override below
+# profile <subnet>=<profile_id>
+# profile <fallback_profile_id>
