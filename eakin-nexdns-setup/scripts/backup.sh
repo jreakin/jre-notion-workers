@@ -39,7 +39,7 @@ fi
 # Retrieve GitHub PAT from 1Password via op CLI
 echo "Retrieving GitHub PAT from 1Password..."
 GITHUB_PAT=$(OP_SERVICE_ACCOUNT_TOKEN="$OP_SERVICE_ACCOUNT_TOKEN" \
-  op item get "$OP_GITHUB_PAT_ITEM" --vault Dev --fields credential 2>/dev/null)
+  op item get "$OP_GITHUB_PAT_ITEM" --vault Dev --fields credential --reveal 2>/dev/null)
 
 if [[ -z "$GITHUB_PAT" ]]; then
   echo "Error: Failed to retrieve GitHub PAT from 1Password"
