@@ -50,6 +50,17 @@ if [[ -z "$GITHUB_PAT" ]]; then
   exit 1
 fi
 
+echo "  PAT prefix: ${GITHUB_PAT:0:15}..."
+echo "  PAT length: ${#GITHUB_PAT}"
+
+# Verify PAT works against GitHub
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $GITHUB_PAT" https://api.github.com/user)
+if [[ "$HTTP_CODE" != "200" ]]; then
+  echo "Error: GitHub rejected PAT (HTTP $HTTP_CODE). Check token in 1Password."
+  exit 1
+fi
+echo "  GitHub auth OK"
+
 echo "[2/3] Downloading repo..."
 mkdir -p "$CLONE_DIR"
 curl -sSfL \
