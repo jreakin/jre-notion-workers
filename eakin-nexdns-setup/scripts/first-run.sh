@@ -37,7 +37,7 @@ fi
 # 2. Clone the repo
 echo "[2/3] Retrieving GitHub PAT from 1Password..."
 export OP_SERVICE_ACCOUNT_TOKEN
-GITHUB_PAT=$(op item get "$OP_GITHUB_PAT_ITEM" --vault Dev --fields password)
+GITHUB_PAT=$(op item get "$OP_GITHUB_PAT_ITEM" --vault Dev --fields credential)
 
 if [[ -z "$GITHUB_PAT" ]]; then
   echo "Error: Failed to retrieve GitHub PAT"
