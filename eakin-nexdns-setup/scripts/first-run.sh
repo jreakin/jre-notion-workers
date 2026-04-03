@@ -53,7 +53,7 @@ fi
 echo "[2/3] Downloading repo..."
 mkdir -p "$CLONE_DIR"
 curl -sSfL \
-  -H "Authorization: token $GITHUB_PAT" \
+  -H "Authorization: Bearer $GITHUB_PAT" \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/jreakin/eakin-nextdns-setup/tarball/main" \
   | tar xz --strip-components=1 -C "$CLONE_DIR"
