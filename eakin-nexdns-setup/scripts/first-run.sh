@@ -1,0 +1,61 @@
+#!/bin/bash
+# scripts/first-run.sh
+# Paste this entire script into a fresh UDM gateway via SSH.
+# It installs op CLI, clones the repo, and runs bootstrap.
+
+set -euo pipefail
+
+OP_SERVICE_ACCOUNT_TOKEN="sqhnz3tcqfoxnhkmwyfegjijne"
+OP_GITHUB_PAT_ITEM="pues5sxoqxyggu2mqk4cqgcjlu"
+CLONE_DIR="/ssd1/eakin-nextdns-setup"
+
+echo ""
+echo "=== NextDNS First-Run Setup ==="
+echo ""
+
+# 1. Install op CLI
+if command -v op &>/dev/null; then
+  echo "[1/3] op CLI already installed: $(op --version)"
+else
+  echo "[1/3] Installing 1Password CLI..."
+  ARCH=$(uname -m)
+  case $ARCH in
+    aarch64|arm64) OP_ARCH="arm64" ;;
+    x86_64)        OP_ARCH="amd64" ;;
+    *)
+      echo "Error: Unsupported architecture: $ARCH"
+      exit 1
+      ;;
+  esac
+  curl -sSfo /tmp/op.zip "https://cache.agilebits.com/dist/1P/op2/pkg/v2.30.0/op_linux_${OP_ARCH}_v2.30.0.zip"
+  unzip -o /tmp/op.zip -d /usr/local/bin/
+  chmod +x /usr/local/bin/op
+  rm -f /tmp/op.zip
+  echo "[1/3] Installed op $(op --version)"
+fi
+
+# 2. Clone the repo
+echo "[2/3] Retrieving GitHub PAT from 1Password..."
+export OP_SERVICE_ACCOUNT_TOKEN
+GITHUB_PAT=$(op item get "$OP_GITHUB_PAT_ITEM" --vault Dev --fields password)
+
+if [[ -z "$GITHUB_PAT" ]]; then
+  echo "Error: Failed to retrieve GitHub PAT"
+  exit 1
+fi
+
+if [[ -d "$CLONE_DIR/.git" ]]; then
+  echo "[2/3] Repo already exists, pulling latest..."
+  cd "$CLONE_DIR"
+  git remote set-url origin "https://$GITHUB_PAT@github.com/jreakin/eakin-nextdns-setup.git"
+  git pull
+else
+  echo "[2/3] Cloning repo..."
+  git clone "https://$GITHUB_PAT@github.com/jreakin/eakin-nextdns-setup.git" "$CLONE_DIR"
+fi
+echo "[2/3] Repo ready at $CLONE_DIR"
+
+# 3. Hand off to bootstrap
+echo "[3/3] Running bootstrap..."
+echo ""
+bash "$CLONE_DIR/scripts/bootstrap.sh"
