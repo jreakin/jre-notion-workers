@@ -44,15 +44,13 @@ if [[ -z "$GITHUB_PAT" ]]; then
   exit 1
 fi
 
-if [[ -d "$CLONE_DIR/.git" ]]; then
-  echo "[2/3] Repo already exists, pulling latest..."
-  cd "$CLONE_DIR"
-  git remote set-url origin "https://$GITHUB_PAT@github.com/jreakin/eakin-nextdns-setup.git"
-  git pull
-else
-  echo "[2/3] Cloning repo..."
-  git clone "https://$GITHUB_PAT@github.com/jreakin/eakin-nextdns-setup.git" "$CLONE_DIR"
-fi
+echo "[2/3] Downloading repo..."
+mkdir -p "$CLONE_DIR"
+curl -sSfL \
+  -H "Authorization: token $GITHUB_PAT" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/repos/jreakin/eakin-nextdns-setup/tarball/main" \
+  | tar xz --strip-components=1 -C "$CLONE_DIR"
 echo "[2/3] Repo ready at $CLONE_DIR"
 
 # 3. Hand off to bootstrap
