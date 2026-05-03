@@ -4,6 +4,7 @@
  */
 import type { Client } from "@notionhq/client";
 import { getDocsDatabaseId } from "../shared/notion-client.js";
+import { isValidAgentName, VALID_AGENT_NAMES } from "../shared/agent-config.js";
 import type {
   ScanBriefingFailuresInput,
   ScanBriefingFailuresOutput,
@@ -12,23 +13,71 @@ import type {
 } from "../shared/types.js";
 
 /**
+ * Names that look like agent names but are actually parser artifacts from
+ * status lines or report sections. We never want these to surface as failure
+ * agents.
+ */
+const PARSER_ARTIFACTS = new Set<string>([
+  "Report Status",
+  "Sync Status",
+  "Snapshot Status",
+  "Run Time",
+  "Scope",
+  "Input Versions",
+  "Summary",
+  "Agent Run Summary",
+  "Heartbeat",
+  "Status",
+]);
+
+function cleanAgentCandidate(s: string): string {
+  return s.replace(/^[-•*\s]+/, "").replace(/[:—\-]+$/, "").trim();
+}
+
+/**
+ * Validate a candidate agent name from briefing parsing. We use an allowlist
+ * of known agent names so parser artifacts like "Report Status" do not become
+ * agent names. As a fallback we reject any candidate matching a known
+ * artifact label or shorter than 4 chars.
+ */
+export function isValidBriefingAgentCandidate(candidate: string): boolean {
+  const c = cleanAgentCandidate(candidate);
+  if (!c) return false;
+  if (PARSER_ARTIFACTS.has(c)) return false;
+  if (isValidAgentName(c)) return true;
+  // Accept loose matches against known agents (case-insensitive) so future
+  // agent additions don't silently break parsing — but never accept artifacts.
+  const lower = c.toLowerCase();
+  return VALID_AGENT_NAMES.some((n) => n.toLowerCase() === lower);
+}
+
+/**
  * Parse a line from the Morning Briefing Agent Run Summary to determine failure type.
- * Returns null if the line does not indicate a failure.
+ * Returns null if the line does not indicate a failure or the candidate name is
+ * not on the agent allowlist.
  */
 export function parseFailureLine(line: string): { agent_name: string; failure_type: FailureType } | null {
   const trimmed = line.trim();
 
+  const accept = (candidate: string, failure_type: FailureType): { agent_name: string; failure_type: FailureType } | null => {
+    const cleaned = cleanAgentCandidate(candidate);
+    if (!isValidBriefingAgentCandidate(cleaned)) return null;
+    return { agent_name: cleaned, failure_type };
+  };
+
   // Pattern: "⚠️ [Agent Name] — no digest found"
   const missingMatch = trimmed.match(/⚠️\s+(.+?)\s*—\s*no digest found/);
   if (missingMatch?.[1]) {
-    return { agent_name: missingMatch[1].trim(), failure_type: "Missing Digest" };
+    const r = accept(missingMatch[1], "Missing Digest");
+    if (r) return r;
   }
 
   // Pattern: status line referencing ⚠️ Partial
   if (trimmed.includes("⚠️") && trimmed.toLowerCase().includes("partial")) {
     const agentMatch = trimmed.match(/^[-•*]?\s*(.+?)\s*(?:—|:)\s*⚠️\s*Partial/i);
     if (agentMatch?.[1]) {
-      return { agent_name: agentMatch[1].trim(), failure_type: "Partial Run" };
+      const r = accept(agentMatch[1], "Partial Run");
+      if (r) return r;
     }
   }
 
@@ -36,7 +85,8 @@ export function parseFailureLine(line: string): { agent_name: string; failure_ty
   if (trimmed.includes("❌") && trimmed.toLowerCase().includes("failed")) {
     const agentMatch = trimmed.match(/^[-•*]?\s*(.+?)\s*(?:—|:)\s*❌\s*Failed/i);
     if (agentMatch?.[1]) {
-      return { agent_name: agentMatch[1].trim(), failure_type: "Failed Run" };
+      const r = accept(agentMatch[1], "Failed Run");
+      if (r) return r;
     }
   }
 
@@ -44,7 +94,8 @@ export function parseFailureLine(line: string): { agent_name: string; failure_ty
   if (trimmed.toLowerCase().includes("stale") && trimmed.toLowerCase().includes("snapshot")) {
     const agentMatch = trimmed.match(/^[-•*]?\s*(.+?)\s*(?:—|:)\s*.*stale/i);
     if (agentMatch?.[1]) {
-      return { agent_name: agentMatch[1].trim(), failure_type: "Stale Snapshot" };
+      const r = accept(agentMatch[1], "Stale Snapshot");
+      if (r) return r;
     }
   }
 

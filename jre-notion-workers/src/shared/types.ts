@@ -245,6 +245,8 @@ export type LogDeadLetterOutput =
       success: true;
       record_id: string;
       record_url: string;
+      /** True when an existing Open record was found and no new record was created. */
+      deduped: boolean;
     }
   | { success: false; error: string };
 
@@ -760,5 +762,259 @@ export type SyncTimeLogOutput =
       error_details: string[];
       entries: TimeLogEntryResult[];
       summary: string;
+    }
+  | { success: false; error: string };
+
+// --- write-agent-ops-run ---
+export interface WriteAgentOpsRunInput {
+  agent_name: string;
+  /** ISO date string for the run (YYYY-MM-DD or full ISO). */
+  run_date: string;
+  status_type: StatusType;
+  status_value: StatusValue;
+  /** Original digest page id, if available. */
+  digest_page_id?: string;
+  digest_page_url?: string;
+  notes?: string;
+  /** Counts from the run for quick reporting. */
+  flagged_count?: number;
+  needs_review_count?: number;
+  escalation_count?: number;
+  /** Pass-through warnings (e.g. heartbeat coercion warnings). */
+  warnings?: string[];
+}
+
+export type WriteAgentOpsRunOutput =
+  | {
+      success: true;
+      record_id: string;
+      record_url: string;
+      run_status: string;
+      coerced_to_heartbeat: boolean;
+      warnings: string[];
+    }
+  | { success: false; error: string };
+
+// --- normalize-agent-ops-options ---
+export interface NormalizeAgentOpsOptionsInput {
+  /** If false, perform writes; default true. */
+  dry_run?: boolean;
+  /** Cap pages scanned. */
+  max_pages?: number;
+  /** Property name on Agent Ops DB holding the run status. Default: "Run Status". */
+  status_property?: string;
+}
+
+export interface NormalizedRow {
+  page_id: string;
+  page_url: string;
+  agent_name: string | null;
+  before: string | null;
+  after: string | null;
+  action: "normalized" | "needs_review" | "skipped" | "error";
+  reason: string | null;
+}
+
+export type NormalizeAgentOpsOptionsOutput =
+  | {
+      success: true;
+      total_scanned: number;
+      total_normalized: number;
+      total_needs_review: number;
+      total_skipped: number;
+      total_errors: number;
+      rows: NormalizedRow[];
+      summary: string;
+    }
+  | { success: false; error: string };
+
+// --- client publishing shared types ---
+export type ClientPublishDecision = "publish" | "block" | "needs_review";
+
+export interface ClientPublishIssue {
+  severity: "FAIL" | "WARN" | "INFO";
+  rule: string;
+  message: string;
+}
+
+export interface ClientShareScopeInput {
+  /** Notion page id of the source document. */
+  source_page_id: string;
+  /** Optional explicit client relation ids — if omitted will be read from page. */
+  client_relation_ids?: string[];
+  project_relation_ids?: string[];
+  /** When true, treat missing approval/scope as block instead of warn. */
+  strict?: boolean;
+}
+
+export type ClientShareScopeOutput =
+  | {
+      success: true;
+      decision: ClientPublishDecision;
+      source_page_id: string;
+      issues: ClientPublishIssue[];
+      approved: boolean;
+      sensitive: boolean;
+      missing_portal: boolean;
+      cross_client: boolean;
+      embedded_databases: boolean;
+      synced_blocks: boolean;
+      internal_links: number;
+      summary: string;
+    }
+  | { success: false; error: string };
+
+export interface RedactClientDocumentInput {
+  /** Plain text or simple block array — for MVP we accept text. */
+  text: string;
+  /** Replace internal mentions with this placeholder. */
+  internal_mention_placeholder?: string;
+}
+
+export interface RedactClientDocumentOutput {
+  redacted_text: string;
+  redactions: Array<{ kind: string; original: string; replacement: string }>;
+}
+
+export interface DetectClientDocDriftInput {
+  source_page_id: string;
+  /** Existing published copy in CLIENT_SHARED_DOCUMENTS_DATABASE_ID. */
+  published_page_id?: string;
+}
+
+export type DetectClientDocDriftOutput =
+  | {
+      success: true;
+      source_page_id: string;
+      published_page_id: string | null;
+      has_published_copy: boolean;
+      drift_detected: boolean;
+      reasons: string[];
+      summary: string;
+    }
+  | { success: false; error: string };
+
+export interface PrepareClientDocUpdateInput {
+  source_page_id: string;
+  /** Optional override; otherwise inferred from page. */
+  client_id?: string;
+  project_id?: string;
+  dry_run?: boolean;
+  strict?: boolean;
+}
+
+export type PrepareClientDocUpdateOutput =
+  | {
+      success: true;
+      decision: ClientPublishDecision;
+      source_page_id: string;
+      sanitized_title: string;
+      sanitized_text: string;
+      issues: ClientPublishIssue[];
+      summary: string;
+    }
+  | { success: false; error: string };
+
+export interface PublishClientDocUpdateInput {
+  source_page_id: string;
+  /** When true, do not modify Notion. */
+  dry_run?: boolean;
+  /** Force publish even with WARN-level issues. */
+  force?: boolean;
+}
+
+export type PublishClientDocUpdateOutput =
+  | {
+      success: true;
+      published: boolean;
+      decision: ClientPublishDecision;
+      source_page_id: string;
+      published_page_id: string | null;
+      published_page_url: string | null;
+      issues: ClientPublishIssue[];
+      logged_event: boolean;
+      summary: string;
+    }
+  | { success: false; error: string };
+
+export interface CreateClientReviewTaskInput {
+  source_page_id: string;
+  client_id: string;
+  reason: string;
+  priority?: TaskPriority;
+}
+
+export type CreateClientReviewTaskOutput =
+  | {
+      success: true;
+      task_id: string;
+      task_url: string;
+    }
+  | { success: false; error: string };
+
+export interface SyncClientPortalIndexInput {
+  client_id: string;
+  dry_run?: boolean;
+}
+
+export type SyncClientPortalIndexOutput =
+  | {
+      success: true;
+      client_id: string;
+      total_documents: number;
+      summary: string;
+    }
+  | { success: false; error: string };
+
+export interface AuditClientPortalAccessInput {
+  client_id?: string;
+}
+
+export interface ClientPortalAuditEntry {
+  client_id: string;
+  client_name: string;
+  documents: number;
+  has_portal: boolean;
+  notes: string[];
+}
+
+export type AuditClientPortalAccessOutput =
+  | {
+      success: true;
+      total_clients: number;
+      entries: ClientPortalAuditEntry[];
+      summary: string;
+    }
+  | { success: false; error: string };
+
+export interface RevokeClientAccessInput {
+  client_id: string;
+  reason: string;
+  dry_run?: boolean;
+}
+
+export type RevokeClientAccessOutput =
+  | {
+      success: true;
+      client_id: string;
+      revoked_documents: number;
+      summary: string;
+    }
+  | { success: false; error: string };
+
+export interface LogClientShareEventInput {
+  source_page_id: string;
+  client_id: string;
+  event_type: "publish" | "block" | "partial" | "fail" | "revoke";
+  message: string;
+  published_page_id?: string;
+}
+
+export type LogClientShareEventOutput =
+  | {
+      success: true;
+      logged_to_agent_ops: boolean;
+      logged_to_dead_letter: boolean;
+      record_ids: string[];
     }
   | { success: false; error: string };

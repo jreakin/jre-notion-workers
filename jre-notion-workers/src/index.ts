@@ -24,6 +24,18 @@ import { executeResolveStaleDeadLetters } from "./workers/resolve-stale-dead-let
 import { executeValidateDatabaseReferences } from "./workers/validate-database-references.js";
 import { executeEstimateGitHubHours } from "./workers/estimate-github-hours.js";
 import { executeSyncTimeLog } from "./workers/sync-time-log.js";
+import { executeWriteAgentOpsRun } from "./workers/write-agent-ops-run.js";
+import { executeNormalizeAgentOpsOptions } from "./workers/normalize-agent-ops-options.js";
+import { executeValidateClientShareScope } from "./workers/validate-client-share-scope.js";
+import { executeRedactClientDocument } from "./workers/redact-client-document.js";
+import { executePrepareClientDocUpdate } from "./workers/prepare-client-doc-update.js";
+import { executeDetectClientDocDrift } from "./workers/detect-client-doc-drift.js";
+import { executePublishClientDocUpdate } from "./workers/publish-client-doc-update.js";
+import { executeCreateClientReviewTask } from "./workers/create-client-review-task.js";
+import { executeSyncClientPortalIndex } from "./workers/sync-client-portal-index.js";
+import { executeAuditClientPortalAccess } from "./workers/audit-client-portal-access.js";
+import { executeRevokeClientAccess } from "./workers/revoke-client-access.js";
+import { executeLogClientShareEvent } from "./workers/log-client-share-event.js";
 import { getNotionClient } from "./shared/notion-client.js";
 import type {
   WriteAgentDigestInput,
@@ -47,6 +59,18 @@ import type {
   ValidateDatabaseReferencesInput,
   EstimateGitHubHoursInput,
   SyncTimeLogInput,
+  WriteAgentOpsRunInput,
+  NormalizeAgentOpsOptionsInput,
+  ClientShareScopeInput,
+  RedactClientDocumentInput,
+  PrepareClientDocUpdateInput,
+  DetectClientDocDriftInput,
+  PublishClientDocUpdateInput,
+  CreateClientReviewTaskInput,
+  SyncClientPortalIndexInput,
+  AuditClientPortalAccessInput,
+  RevokeClientAccessInput,
+  LogClientShareEventInput,
 } from "./shared/types.js";
 
 const worker = new Worker();
@@ -458,4 +482,192 @@ worker.tool("sync-time-log", {
   }),
   execute: (input, context) =>
     executeSyncTimeLog(input as unknown as SyncTimeLogInput, getNotionClient()) as never,
+});
+
+// ── write-agent-ops-run ────────────────────────────────────────────────
+
+worker.tool("write-agent-ops-run", {
+  title: "Write Agent Ops Run",
+  description:
+    "Records the outcome of an agent run in the Agent Ops database. Maps to canonical Run Status values and applies heartbeat coercion when input is contradictory.",
+  schema: j.object({
+    agent_name: j.string(),
+    run_date: j.string(),
+    status_type: j.enum("sync", "snapshot", "report", "heartbeat"),
+    status_value: j.enum("complete", "partial", "failed", "full_report", "stub"),
+    digest_page_id: j.string().nullable(),
+    digest_page_url: j.string().nullable(),
+    notes: j.string().nullable(),
+    flagged_count: j.number().nullable(),
+    needs_review_count: j.number().nullable(),
+    escalation_count: j.number().nullable(),
+    warnings: j.array(j.string()).nullable(),
+  }),
+  execute: (input, context) =>
+    executeWriteAgentOpsRun(input as unknown as WriteAgentOpsRunInput, getNotionClient()) as never,
+});
+
+// ── normalize-agent-ops-options ────────────────────────────────────────
+
+worker.tool("normalize-agent-ops-options", {
+  title: "Normalize Agent Ops Options",
+  description:
+    "One-shot migration tool: scans the Agent Ops database and rewrites lowercase / stale Run Status values to canonical Notion options. Read-only by default (dry_run=true).",
+  schema: j.object({
+    dry_run: j.boolean().nullable(),
+    max_pages: j.number().nullable(),
+    status_property: j.string().nullable(),
+  }),
+  execute: (input, context) =>
+    executeNormalizeAgentOpsOptions(input as unknown as NormalizeAgentOpsOptionsInput, getNotionClient()) as never,
+});
+
+// ── validate-client-share-scope ────────────────────────────────────────
+
+worker.tool("validate-client-share-scope", {
+  title: "Validate Client Share Scope",
+  description:
+    "Read-only safety check. Verifies a source document is approved, not sensitive, has a single client scope, and identifies internal links/mentions/embedded blocks before publishing.",
+  schema: j.object({
+    source_page_id: j.string(),
+    client_relation_ids: j.array(j.string()).nullable(),
+    project_relation_ids: j.array(j.string()).nullable(),
+    strict: j.boolean().nullable(),
+  }),
+  execute: (input, context) =>
+    executeValidateClientShareScope(input as unknown as ClientShareScopeInput, getNotionClient()) as never,
+});
+
+// ── redact-client-document ─────────────────────────────────────────────
+
+worker.tool("redact-client-document", {
+  title: "Redact Client Document",
+  description:
+    "Strips internal Notion URLs and mentions out of a body of text. Pure logic — no Notion API calls. Returns the redacted text and a list of redactions.",
+  schema: j.object({
+    text: j.string(),
+    internal_mention_placeholder: j.string().nullable(),
+  }),
+  execute: (input) => executeRedactClientDocument(input as unknown as RedactClientDocumentInput) as never,
+});
+
+// ── prepare-client-doc-update ──────────────────────────────────────────
+
+worker.tool("prepare-client-doc-update", {
+  title: "Prepare Client Doc Update",
+  description:
+    "Reads a source page, validates scope, and produces a sanitized title and body that can be safely written to a client portal. Read-only.",
+  schema: j.object({
+    source_page_id: j.string(),
+    client_id: j.string().nullable(),
+    project_id: j.string().nullable(),
+    dry_run: j.boolean().nullable(),
+    strict: j.boolean().nullable(),
+  }),
+  execute: (input, context) =>
+    executePrepareClientDocUpdate(input as unknown as PrepareClientDocUpdateInput, getNotionClient()) as never,
+});
+
+// ── detect-client-doc-drift ────────────────────────────────────────────
+
+worker.tool("detect-client-doc-drift", {
+  title: "Detect Client Doc Drift",
+  description:
+    "Compares a source document against its published client copy and reports whether the published copy is out of sync.",
+  schema: j.object({
+    source_page_id: j.string(),
+    published_page_id: j.string().nullable(),
+  }),
+  execute: (input, context) =>
+    executeDetectClientDocDrift(input as unknown as DetectClientDocDriftInput, getNotionClient()) as never,
+});
+
+// ── publish-client-doc-update ──────────────────────────────────────────
+
+worker.tool("publish-client-doc-update", {
+  title: "Publish Client Doc Update",
+  description:
+    "Runs scope checks, sanitizes content, and writes a client-safe copy to CLIENT_SHARED_DOCUMENTS_DATABASE_ID. Supports dry_run and force (accept WARN-level issues). Logs a client share event for every outcome.",
+  schema: j.object({
+    source_page_id: j.string(),
+    dry_run: j.boolean().nullable(),
+    force: j.boolean().nullable(),
+  }),
+  execute: (input, context) =>
+    executePublishClientDocUpdate(input as unknown as PublishClientDocUpdateInput, getNotionClient()) as never,
+});
+
+// ── create-client-review-task ──────────────────────────────────────────
+
+worker.tool("create-client-review-task", {
+  title: "Create Client Review Task",
+  description:
+    "Creates a Task asking a human to review a client publishing decision (e.g. WARN-level scope issues).",
+  schema: j.object({
+    source_page_id: j.string(),
+    client_id: j.string(),
+    reason: j.string(),
+    priority: j.enum("🔴 High", "🟡 Medium", "🟢 Low").nullable(),
+  }),
+  execute: (input, context) =>
+    executeCreateClientReviewTask(input as unknown as CreateClientReviewTaskInput, getNotionClient()) as never,
+});
+
+// ── sync-client-portal-index ───────────────────────────────────────────
+
+worker.tool("sync-client-portal-index", {
+  title: "Sync Client Portal Index",
+  description:
+    "Reports the current published documents for a given client, sourced from CLIENT_SHARED_DOCUMENTS_DATABASE_ID.",
+  schema: j.object({
+    client_id: j.string(),
+    dry_run: j.boolean().nullable(),
+  }),
+  execute: (input, context) =>
+    executeSyncClientPortalIndex(input as unknown as SyncClientPortalIndexInput, getNotionClient()) as never,
+});
+
+// ── audit-client-portal-access ─────────────────────────────────────────
+
+worker.tool("audit-client-portal-access", {
+  title: "Audit Client Portal Access",
+  description:
+    "Reports per-client publish footprint and flags clients that have shared documents but no portal configured.",
+  schema: j.object({
+    client_id: j.string().nullable(),
+  }),
+  execute: (input, context) =>
+    executeAuditClientPortalAccess(input as unknown as AuditClientPortalAccessInput, getNotionClient()) as never,
+});
+
+// ── revoke-client-access ───────────────────────────────────────────────
+
+worker.tool("revoke-client-access", {
+  title: "Revoke Client Access",
+  description:
+    "Archives all client-shared documents for a given client so they no longer appear on the client portal. Default: dry_run=true.",
+  schema: j.object({
+    client_id: j.string(),
+    reason: j.string(),
+    dry_run: j.boolean().nullable(),
+  }),
+  execute: (input, context) =>
+    executeRevokeClientAccess(input as unknown as RevokeClientAccessInput, getNotionClient()) as never,
+});
+
+// ── log-client-share-event ─────────────────────────────────────────────
+
+worker.tool("log-client-share-event", {
+  title: "Log Client Share Event",
+  description:
+    "Logs a client publishing event to Agent Ops (when configured) and creates a deduped Dead Letter for non-success events.",
+  schema: j.object({
+    source_page_id: j.string(),
+    client_id: j.string(),
+    event_type: j.enum("publish", "block", "partial", "fail", "revoke"),
+    message: j.string(),
+    published_page_id: j.string().nullable(),
+  }),
+  execute: (input, context) =>
+    executeLogClientShareEvent(input as unknown as LogClientShareEventInput, getNotionClient()) as never,
 });
