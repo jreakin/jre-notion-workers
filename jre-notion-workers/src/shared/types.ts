@@ -439,6 +439,8 @@ export type SyncGitHubItemsOutput =
       errors: number;
       /** Number of repos with no Client relation — agents should follow up. */
       unlinked_repos: number;
+      /** Rows whose `GitHub URL` was rewritten this run because the upstream repo was renamed. */
+      remapped_rows?: number;
       error_details: string[];
       summary: string;
       /** Whether the sync completed all repos or exited early. */

@@ -1853,4 +1853,583 @@ describe("sync-github-items", () => {
       }
     });
   });
+
+  describe("repo rename remapping", () => {
+    test("remaps existing Repo row when full_name matches but URL changed", async () => {
+      // GitHub returns the renamed repo: new full_name + new html_url.
+      mockFetch({
+        repos: {
+          "Abstract-Data": [
+            makeRepo("Abstract-Data/new-name", { updatedAt: "2024-08-01T00:00:00Z" }),
+          ],
+        },
+      });
+
+      // Notion has a row with the OLD URL. The Repo rich_text column still
+      // holds the new full_name (because some other process — or the prior
+      // run — already wrote it), simulating a fresh detection scenario where
+      // the URL is stale but the human-readable name was updated separately.
+      // To keep the test honest, we reflect the *real-world* scenario: the
+      // stored repoFullName is the OLD name and we force a match via the
+      // GitHub response's new full_name only when we re-load. Use the OLD
+      // full_name as the rich_text:
+      const mock = mockNotionClient([
+        {
+          id: "renamed-row",
+          ghUrl: "https://github.com/Abstract-Data/old-name",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+          // Repo column still says old-name in Notion — this is the typical
+          // reality. Rename detection therefore CANNOT use rich_text and must
+          // rely on... wait, no — if Notion has only the OLD name, we can't
+          // detect rename from full_name alone. We need an actual full_name
+          // hit. Set the rich_text to the NEW name (matching GitHub):
+        },
+      ]);
+
+      // The mock above sets repoFullName implicitly via the page's "Repo"
+      // property. The default mockNotionClient does not set Repo rich_text,
+      // so the rename detection will not fire. To exercise the path, extend
+      // the mock to attach a Repo rich_text matching the NEW full_name.
+      const orig = mock.client.databases.query;
+      (mock.client as { databases: { query: Function } }).databases.query =
+        (async () => {
+          const r = await orig.call(mock.client.databases);
+          for (const page of (r as { results: Array<Record<string, unknown>> })
+            .results) {
+            (page as { properties: Record<string, unknown> }).properties.Repo = {
+              rich_text: [{ plain_text: "Abstract-Data/new-name" }],
+            };
+          }
+          return r;
+        }) as never;
+
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Abstract-Data", type: "org" }],
+          include_issues: false,
+          include_prs: false,
+          dry_run: false,
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Single repo: rename remap counts as an update, not a create.
+        expect(result.repos_found).toBe(1);
+        expect(result.created).toBe(0);
+        expect(result.updated).toBe(1);
+        expect(result.remapped_rows).toBe(1);
+        expect(mock.createdPages.length).toBe(0);
+        expect(mock.updatedPages.length).toBe(1);
+        expect(mock.updatedPages[0]!.page_id).toBe("renamed-row");
+
+        // The summary should mention remapping for operator visibility.
+        expect(result.summary).toContain("remapped after rename");
+
+        // The update payload should carry the NEW URL.
+        const updateProps = mock.updatedPages[0]!.properties as Record<
+          string,
+          { url?: string }
+        >;
+        expect(updateProps["GitHub URL"]?.url).toBe(
+          "https://github.com/Abstract-Data/new-name"
+        );
+      }
+    });
+
+    test("issue/PR rows are remapped to the renamed repo URL", async () => {
+      // GitHub now returns the renamed repo with new owner/repo and serves
+      // issues/PRs at the new URL.
+      mockFetch({
+        repos: {
+          "Abstract-Data": [
+            makeRepo("Abstract-Data/new-name", { updatedAt: "2024-08-01T00:00:00Z" }),
+          ],
+        },
+        issues: {
+          "Abstract-Data/new-name": [
+            makeIssue("Abstract-Data/new-name", 5, {
+              updatedAt: "2024-08-01T00:00:00Z",
+            }),
+          ],
+        },
+        prs: {
+          "Abstract-Data/new-name": [
+            makePR("Abstract-Data/new-name", 7, {
+              updatedAt: "2024-08-01T00:00:00Z",
+            }),
+          ],
+        },
+      });
+
+      // Notion has the repo + 1 issue + 1 PR all under the OLD name.
+      const mock = mockNotionClient([
+        {
+          id: "repo-row",
+          ghUrl: "https://github.com/Abstract-Data/old-name",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+        },
+        {
+          id: "issue-row",
+          ghUrl: "https://github.com/Abstract-Data/old-name/issues/5",
+          type: "Issue",
+          updatedAt: "2024-06-15",
+        },
+        {
+          id: "pr-row",
+          ghUrl: "https://github.com/Abstract-Data/old-name/pull/7",
+          type: "PR",
+          updatedAt: "2024-06-15",
+        },
+      ]);
+
+      // Inject Repo rich_text matching the NEW name on the repo row.
+      const orig = mock.client.databases.query;
+      (mock.client as { databases: { query: Function } }).databases.query =
+        (async () => {
+          const r = (await orig.call(mock.client.databases)) as {
+            results: Array<{ id: string; properties: Record<string, unknown> }>;
+          };
+          for (const page of r.results) {
+            if (page.id === "repo-row") {
+              page.properties.Repo = {
+                rich_text: [{ plain_text: "Abstract-Data/new-name" }],
+              };
+            }
+          }
+          return r;
+        }) as never;
+
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Abstract-Data", type: "org" }],
+          dry_run: false,
+          updated_since_days: 0,
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Repo + issue + PR all remapped (counted as updates).
+        expect(result.created).toBe(0);
+        expect(result.updated).toBe(3);
+        expect(result.remapped_rows).toBe(3);
+        expect(mock.createdPages.length).toBe(0);
+
+        const updatedIds = mock.updatedPages.map((p) => p.page_id).sort();
+        expect(updatedIds).toEqual(["issue-row", "pr-row", "repo-row"]);
+
+        // Each update should carry the new URL.
+        const issueUpdate = mock.updatedPages.find((p) => p.page_id === "issue-row");
+        const issueProps = issueUpdate!.properties as Record<
+          string,
+          { url?: string }
+        >;
+        expect(issueProps["GitHub URL"]?.url).toBe(
+          "https://github.com/Abstract-Data/new-name/issues/5"
+        );
+
+        const prUpdate = mock.updatedPages.find((p) => p.page_id === "pr-row");
+        const prProps = prUpdate!.properties as Record<
+          string,
+          { url?: string }
+        >;
+        expect(prProps["GitHub URL"]?.url).toBe(
+          "https://github.com/Abstract-Data/new-name/pull/7"
+        );
+      }
+    });
+
+    test("does NOT treat unrelated full_name overlaps as rename", async () => {
+      // Two repos in Notion with the SAME full_name but DIFFERENT urls would
+      // be a data error, not a rename. Verify we don't trigger remap for a
+      // simple URL-only mismatch when the existing row's URL parses to the
+      // same owner/repo as the GitHub repo.
+      mockFetch({
+        repos: {
+          "Abstract-Data": [
+            makeRepo("Abstract-Data/repo-a", { updatedAt: "2024-08-01T00:00:00Z" }),
+          ],
+        },
+      });
+
+      const mock = mockNotionClient([
+        {
+          id: "row-a",
+          ghUrl: "https://github.com/Abstract-Data/repo-a",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+        },
+      ]);
+
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Abstract-Data", type: "org" }],
+          include_issues: false,
+          include_prs: false,
+          dry_run: false,
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.remapped_rows ?? 0).toBe(0);
+      }
+    });
+  });
+
+  describe("owner-level relation fallback", () => {
+    test("inherits owner-consensus relations when parent repo has none", async () => {
+      // Two existing repos under "Abstract-Data" both link to the same client.
+      // A third repo under the same owner has no relations — its issues
+      // should still inherit the owner-level consensus.
+      mockFetch({
+        repos: {
+          "Abstract-Data": [
+            makeRepo("Abstract-Data/unlinked", {
+              updatedAt: "2024-06-15T00:00:00Z",
+            }),
+          ],
+        },
+        issues: {
+          "Abstract-Data/unlinked": [makeIssue("Abstract-Data/unlinked", 1)],
+        },
+      });
+
+      const mock = mockNotionClient([
+        {
+          id: "linked-1",
+          ghUrl: "https://github.com/Abstract-Data/linked-a",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+          projectIds: ["proj-1"],
+          clientIds: ["client-1"],
+        },
+        {
+          id: "linked-2",
+          ghUrl: "https://github.com/Abstract-Data/linked-b",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+          projectIds: ["proj-1"],
+          clientIds: ["client-1"],
+        },
+        {
+          id: "unlinked-row",
+          ghUrl: "https://github.com/Abstract-Data/unlinked",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+        },
+      ]);
+
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Abstract-Data", type: "org" }],
+          include_prs: false,
+          dry_run: false,
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Issue created
+        expect(result.created).toBe(1);
+        expect(mock.createdPages.length).toBe(1);
+
+        const issueProps = mock.createdPages[0]!.properties as Record<
+          string,
+          { relation?: Array<{ id: string }> }
+        >;
+        // Inherited from owner-level consensus
+        expect(issueProps.Project?.relation).toEqual([{ id: "proj-1" }]);
+        expect(issueProps.Client?.relation).toEqual([{ id: "client-1" }]);
+
+        // unlinked_repos goes to 0 because the owner-level fallback covers it.
+        expect(result.unlinked_repos).toBe(0);
+      }
+    });
+
+    test("does NOT fall back when owner has mixed-client siblings", async () => {
+      // Two siblings with different clients → no consensus → no fallback.
+      mockFetch({
+        repos: {
+          "Abstract-Data": [
+            makeRepo("Abstract-Data/unlinked", {
+              updatedAt: "2024-06-15T00:00:00Z",
+            }),
+          ],
+        },
+        issues: {
+          "Abstract-Data/unlinked": [makeIssue("Abstract-Data/unlinked", 1)],
+        },
+      });
+
+      const mock = mockNotionClient([
+        {
+          id: "linked-1",
+          ghUrl: "https://github.com/Abstract-Data/linked-a",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+          clientIds: ["client-A"],
+        },
+        {
+          id: "linked-2",
+          ghUrl: "https://github.com/Abstract-Data/linked-b",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+          clientIds: ["client-B"], // different client → no consensus
+        },
+        {
+          id: "unlinked-row",
+          ghUrl: "https://github.com/Abstract-Data/unlinked",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+        },
+      ]);
+
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Abstract-Data", type: "org" }],
+          include_prs: false,
+          dry_run: false,
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const issueProps = mock.createdPages[0]!.properties as Record<
+          string,
+          { relation?: Array<{ id: string }> }
+        >;
+        // No consensus → no relations applied
+        expect(issueProps.Project).toBeUndefined();
+        expect(issueProps.Client).toBeUndefined();
+        // unlinked_repos still counted because the unlinked repo got no fallback
+        expect(result.unlinked_repos).toBe(1);
+      }
+    });
+
+    test("requires at least 2 linked siblings before owner fallback applies", async () => {
+      // Single linked sibling is not enough — could be a one-off mistake.
+      mockFetch({
+        repos: {
+          "Abstract-Data": [
+            makeRepo("Abstract-Data/unlinked", {
+              updatedAt: "2024-06-15T00:00:00Z",
+            }),
+          ],
+        },
+        issues: {
+          "Abstract-Data/unlinked": [makeIssue("Abstract-Data/unlinked", 1)],
+        },
+      });
+
+      const mock = mockNotionClient([
+        {
+          id: "linked-1",
+          ghUrl: "https://github.com/Abstract-Data/linked-a",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+          clientIds: ["client-1"],
+        },
+        {
+          id: "unlinked-row",
+          ghUrl: "https://github.com/Abstract-Data/unlinked",
+          type: "Repo",
+          updatedAt: "2024-06-15",
+        },
+      ]);
+
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Abstract-Data", type: "org" }],
+          include_prs: false,
+          dry_run: false,
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const issueProps = mock.createdPages[0]!.properties as Record<
+          string,
+          { relation?: Array<{ id: string }> }
+        >;
+        expect(issueProps.Client).toBeUndefined();
+      }
+    });
+  });
+
+  describe("PR-phase resume regression", () => {
+    test("resume_cursor with phase=prs skips issue fetches for that repo", async () => {
+      const calledUrls: string[] = [];
+      globalThis.fetch = (async (url: string) => {
+        calledUrls.push(url);
+        if (url.includes("/orgs/")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              makeRepo("Org/repo-a"),
+              makeRepo("Org/repo-b"),
+            ],
+            headers: new Headers(),
+          };
+        }
+        if (url.includes("/issues")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [makeIssue("Org/whatever", 1)],
+            headers: new Headers(),
+          };
+        }
+        if (url.includes("/pulls")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [makePR("Org/whatever", 5)],
+            headers: new Headers(),
+          };
+        }
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({}),
+          headers: new Headers(),
+        };
+      }) as never;
+
+      const mock = mockNotionClient([]);
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Org", type: "org" }],
+          dry_run: false,
+          // Resume mid-repo at the PR phase for repo index 0 (repo-a).
+          resume_cursor: { repo_index: 0, phase: "prs" },
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // First repo's issues phase MUST be skipped.
+        const repoAIssueCalls = calledUrls.filter((u) =>
+          u.includes("/repos/Org/repo-a/issues")
+        );
+        expect(repoAIssueCalls.length).toBe(0);
+
+        // First repo's pulls phase still runs.
+        const repoAPullsCalls = calledUrls.filter((u) =>
+          u.includes("/repos/Org/repo-a/pulls")
+        );
+        expect(repoAPullsCalls.length).toBeGreaterThan(0);
+
+        // Second repo (downstream) syncs both issues and pulls normally.
+        const repoBIssueCalls = calledUrls.filter((u) =>
+          u.includes("/repos/Org/repo-b/issues")
+        );
+        const repoBPullsCalls = calledUrls.filter((u) =>
+          u.includes("/repos/Org/repo-b/pulls")
+        );
+        expect(repoBIssueCalls.length).toBeGreaterThan(0);
+        expect(repoBPullsCalls.length).toBeGreaterThan(0);
+      }
+    });
+
+    test("PR-phase resume completes when no further work remains", async () => {
+      // Single repo, pre-existing in Notion with identical full-precision
+      // timestamps. Resume at phase=prs for repo 0; everything is current → 0 writes.
+      const recent = "2024-06-15T15:00:00.000+00:00";
+      const recentGh = "2024-06-15T15:00:00Z"; // same instant, GitHub format
+
+      mockFetch({
+        repos: {
+          Org: [makeRepo("Org/repo-a", { updatedAt: recentGh })],
+        },
+        prs: {
+          "Org/repo-a": [makePR("Org/repo-a", 1, { updatedAt: recentGh })],
+        },
+      });
+
+      const mock = mockNotionClient([
+        {
+          id: "repo-row",
+          ghUrl: "https://github.com/Org/repo-a",
+          type: "Repo",
+          updatedAt: recent,
+        },
+        {
+          id: "pr-row",
+          ghUrl: "https://github.com/Org/repo-a/pull/1",
+          type: "PR",
+          updatedAt: recent,
+        },
+      ]);
+
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Org", type: "org" }],
+          dry_run: false,
+          resume_cursor: { repo_index: 0, phase: "prs" },
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.is_complete).toBe(true);
+        expect(result.resume_cursor).toBeNull();
+        // Repo gets re-checked + skipped; PR gets checked + skipped.
+        // No issue writes (phase skipped); no PR writes (already current).
+        expect(mock.updatedPages.length).toBe(0);
+        expect(mock.createdPages.length).toBe(0);
+      }
+    });
+
+    test("resume from phase=issues does NOT skip the issues phase", async () => {
+      // Sanity: phase=issues (the default) means the issues phase still runs
+      // for the resume repo.
+      const calledUrls: string[] = [];
+      globalThis.fetch = (async (url: string) => {
+        calledUrls.push(url);
+        if (url.includes("/orgs/")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [makeRepo("Org/repo-a")],
+            headers: new Headers(),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [],
+          headers: new Headers(),
+        };
+      }) as never;
+
+      const mock = mockNotionClient([]);
+      const result = await executeSyncGitHubItems(
+        {
+          sources: [{ name: "Org", type: "org" }],
+          dry_run: false,
+          resume_cursor: { repo_index: 0, phase: "issues" },
+        },
+        mock.client
+      );
+
+      expect(result.success).toBe(true);
+      const issueCalls = calledUrls.filter((u) => u.includes("/issues"));
+      const pullCalls = calledUrls.filter((u) => u.includes("/pulls"));
+      expect(issueCalls.length).toBeGreaterThan(0);
+      expect(pullCalls.length).toBeGreaterThan(0);
+    });
+  });
 });

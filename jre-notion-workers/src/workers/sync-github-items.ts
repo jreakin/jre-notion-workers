@@ -10,6 +10,7 @@ import {
   getGitHubToken,
 } from "../shared/notion-client.js";
 import { classifyGitHubError, GitHubApiError } from "../shared/github-utils.js";
+import { fetchWithGitHubRetry } from "../shared/github-retry.js";
 import type {
   GitHubSource,
   SyncGitHubItemsInput,
@@ -166,15 +167,20 @@ async function paginatedGitHubGet<T>(
 
   while (url) {
     if (apiCounter) apiCounter.count++;
-    const res: Response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-      },
-    });
+    const requestUrl = url;
+    const res: Response = await fetchWithGitHubRetry(
+      () =>
+        fetch(requestUrl, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+          },
+        }),
+      { label: requestUrl }
+    );
 
     if (!res.ok) {
-      throw new GitHubApiError(classifyGitHubError(res, url));
+      throw new GitHubApiError(classifyGitHubError(res, requestUrl));
     }
 
     const data = (await res.json()) as T[];
@@ -255,15 +261,20 @@ async function fetchAllPRs(
 
   while (url) {
     if (apiCounter) apiCounter.count++;
-    const res: Response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-      },
-    });
+    const requestUrl = url;
+    const res: Response = await fetchWithGitHubRetry(
+      () =>
+        fetch(requestUrl, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+          },
+        }),
+      { label: requestUrl }
+    );
 
     if (!res.ok) {
-      throw new GitHubApiError(classifyGitHubError(res, url));
+      throw new GitHubApiError(classifyGitHubError(res, requestUrl));
     }
 
     const data = (await res.json()) as GitHubPullRequest[];
@@ -293,8 +304,12 @@ async function fetchAllPRs(
 
 interface ExistingRow {
   id: string;
+  /** The GitHub URL key this row was loaded under (lowercased). */
+  ghUrl: string;
   updatedAt: string; // YYYY-MM-DD or ""
   type: string;      // "Repo" | "Issue" | "PR" | ""
+  /** Full repo name as stored in the `Repo` rich_text column ("Owner/Name"). */
+  repoFullName: string;
   projectIds: string[];
   clientIds: string[];
 }
@@ -354,11 +369,15 @@ async function preloadNotionRows(
 
       const projectIds = readRelationIds(p.properties, "Project");
       const clientIds = readRelationIds(p.properties, "Client");
+      const repoFullName = readRichText(p.properties, "Repo");
 
-      map.set(ghUrl.toLowerCase(), {
+      const key = ghUrl.toLowerCase();
+      map.set(key, {
         id: p.id,
+        ghUrl: key,
         updatedAt,
         type: existingType,
+        repoFullName,
         projectIds,
         clientIds,
       });
@@ -385,6 +404,72 @@ function readRelationIds(
 }
 
 /**
+ * Extract concatenated plain_text from a Notion rich_text property.
+ * Returns empty string when the property is missing or empty.
+ */
+function readRichText(
+  properties: Record<string, unknown> | undefined,
+  propName: string
+): string {
+  const prop = properties?.[propName];
+  if (!prop || typeof prop !== "object" || !("rich_text" in prop)) return "";
+  const arr = (prop as { rich_text: Array<{ plain_text?: string; text?: { content?: string } }> | null })
+    .rich_text;
+  if (!arr) return "";
+  return arr
+    .map((r) => r.plain_text ?? r.text?.content ?? "")
+    .join("")
+    .trim();
+}
+
+/**
+ * Given a NEW issue/PR URL and a rename map, try to find the OLD-URL
+ * equivalent and return the matching existing row.  Used to migrate rows
+ * whose stored `GitHub URL` still points at the pre-rename name.
+ */
+function lookupByRenamedUrl(
+  existingRows: Map<string, ExistingRow>,
+  renameMap: Map<string, string>,
+  newKeyLower: string
+): ExistingRow | undefined {
+  if (renameMap.size === 0) return undefined;
+  const newRepoKey = parseRepoKeyFromUrl(newKeyLower);
+  if (!newRepoKey) return undefined;
+  for (const [oldKey, mappedNew] of renameMap) {
+    if (mappedNew !== newRepoKey) continue;
+    // Replace the new owner/repo segment with the old one in the URL.
+    const oldUrl = newKeyLower.replace(`/${newRepoKey}/`, `/${oldKey}/`);
+    const candidate = existingRows.get(oldUrl);
+    if (candidate) return candidate;
+    // Tail-of-path edge case: URLs like "github.com/owner/repo" have no trailing slash.
+    const oldUrlBareTail = newKeyLower.replace(
+      new RegExp(`/${newRepoKey}$`),
+      `/${oldKey}`
+    );
+    const candidate2 = existingRows.get(oldUrlBareTail);
+    if (candidate2) return candidate2;
+  }
+  return undefined;
+}
+
+/**
+ * Parse a GitHub URL into its lowercased `owner/repo` key. Returns null
+ * for non-repo URLs or unparseable input.
+ */
+function parseRepoKeyFromUrl(url: string): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith("github.com")) return null;
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return null;
+    return `${parts[0]}/${parts[1]}`.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Builds a lookup from repo full_name (lowercase) → inherited relations.
  * Only includes Repo-type rows that have at least one relation set.
  */
@@ -408,6 +493,78 @@ function buildRelationInheritanceMap(
   }
 
   return map;
+}
+
+/**
+ * Build a fallback inheritance map keyed by lowercased GitHub owner.
+ * Used when a Repo row has no relations of its own — we look at every
+ * sibling repo under the same owner and adopt the relations only when
+ * every linked sibling agrees on the same `Client` and `Project` ids.
+ *
+ * Two design rules:
+ *   1. We only fall back when *all* linked siblings share the same
+ *      relation set — mixed-client owners produce no fallback (silence
+ *      is safer than mis-tagging).
+ *   2. The fallback is owner-scoped, not global: GitHub usernames are
+ *      unique, so the worst case is "this user owns repos for several
+ *      clients" which the consensus rule already filters out.
+ */
+function buildOwnerFallbackInheritanceMap(
+  existingRows: Map<string, ExistingRow>
+): Map<string, InheritedRelations> {
+  const byOwner = new Map<
+    string,
+    { projects: Set<string>; clients: Set<string>; linkedRepoCount: number }
+  >();
+
+  for (const [url, row] of existingRows) {
+    if (row.type !== "Repo") continue;
+    if (row.projectIds.length === 0 && row.clientIds.length === 0) continue;
+
+    const match = url.match(/github\.com\/([^/]+)\/[^/]+/i);
+    if (!match) continue;
+    const owner = match[1]!.toLowerCase();
+
+    let entry = byOwner.get(owner);
+    if (!entry) {
+      entry = { projects: new Set(), clients: new Set(), linkedRepoCount: 0 };
+      byOwner.set(owner, entry);
+    }
+    entry.linkedRepoCount++;
+    for (const id of row.projectIds) entry.projects.add(id);
+    for (const id of row.clientIds) entry.clients.add(id);
+  }
+
+  const result = new Map<string, InheritedRelations>();
+  for (const [owner, entry] of byOwner) {
+    // Need at least 2 linked siblings to call something a "consensus".
+    if (entry.linkedRepoCount < 2) continue;
+    // All linked siblings must agree on a single client (and at most one project).
+    if (entry.clients.size > 1) continue;
+    if (entry.projects.size > 1) continue;
+    result.set(owner, {
+      projectIds: [...entry.projects],
+      clientIds: [...entry.clients],
+    });
+  }
+  return result;
+}
+
+/**
+ * Resolve inherited relations for a repo, preferring the per-repo entry
+ * and falling back to the owner-level consensus when none exists.
+ */
+function resolveInheritedRelations(
+  repoFullName: string,
+  perRepo: Map<string, InheritedRelations>,
+  perOwner: Map<string, InheritedRelations>
+): InheritedRelations | undefined {
+  const key = repoFullName.toLowerCase();
+  const direct = perRepo.get(key);
+  if (direct) return direct;
+  const owner = key.split("/")[0];
+  if (!owner) return undefined;
+  return perOwner.get(owner);
 }
 
 /* ── Notion property builders ──────────────────────────────────── */
@@ -491,7 +648,19 @@ function buildPRProperties(
 
 /* ── Upsert logic ──────────────────────────────────────────────── */
 
-type UpsertResult = "created" | "updated" | "skipped";
+type UpsertResult = "created" | "updated" | "skipped" | "remapped";
+
+interface UpsertOptions {
+  /**
+   * Optional pre-resolved match (e.g. by full_name during a rename).
+   * When provided, we update this row regardless of URL-key match —
+   * but we re-key the map entry to the new URL so subsequent lookups
+   * find it by the new URL.
+   */
+  existingMatch?: ExistingRow;
+  /** New repoFullName to remember on the row after upsert. */
+  repoFullName?: string;
+}
 
 async function upsertItem(
   notion: Client,
@@ -501,10 +670,13 @@ async function upsertItem(
   githubUpdatedAt: string,
   expectedType: "Repo" | "Issue" | "PR",
   properties: Record<string, unknown>,
-  dryRun: boolean
+  dryRun: boolean,
+  opts: UpsertOptions = {}
 ): Promise<UpsertResult> {
   const key = githubUrl.toLowerCase();
-  const existing = existingRows.get(key);
+  const directMatch = existingRows.get(key);
+  const existing = directMatch ?? opts.existingMatch;
+  const isRemap = !directMatch && !!opts.existingMatch;
 
   if (!existing) {
     // Create new row
@@ -513,11 +685,12 @@ async function upsertItem(
         parent: { database_id: dbId },
         properties: properties as never,
       });
-      // Add to map so we don't try to create again
       existingRows.set(key, {
         id: (created as { id: string }).id,
+        ghUrl: key,
         updatedAt: githubUpdatedAt,
         type: expectedType,
+        repoFullName: opts.repoFullName ?? "",
         projectIds: [],
         clientIds: [],
       });
@@ -525,17 +698,29 @@ async function upsertItem(
     return "created";
   }
 
-  // Check if GitHub data is newer OR if Type is wrong
+  // Check if GitHub data is newer OR if Type is wrong OR if the row has been
+  // remapped (URL changed because the upstream repo was renamed).
   const typeMismatch = existing.type !== "" && existing.type !== expectedType;
+  const shouldUpdate =
+    isRemap || isNewer(githubUpdatedAt, existing.updatedAt) || typeMismatch;
 
-  if (isNewer(githubUpdatedAt, existing.updatedAt) || typeMismatch) {
+  if (shouldUpdate) {
     if (!dryRun) {
       await notion.pages.update({
         page_id: existing.id,
         properties: properties as never,
       });
-      existing.updatedAt = githubUpdatedAt;
-      existing.type = expectedType;
+    }
+    existing.updatedAt = githubUpdatedAt;
+    existing.type = expectedType;
+    if (opts.repoFullName) existing.repoFullName = opts.repoFullName;
+
+    if (isRemap) {
+      // Re-key the row under the new URL so subsequent lookups find it.
+      existingRows.delete(existing.ghUrl);
+      existing.ghUrl = key;
+      existingRows.set(key, existing);
+      return "remapped";
     }
     return "updated";
   }
@@ -685,10 +870,32 @@ export async function executeSyncGitHubItems(
 
     // ── 4. Build relation inheritance map ──
     const inheritanceMap = buildRelationInheritanceMap(existingRows);
+    const ownerFallbackMap = buildOwnerFallbackInheritanceMap(existingRows);
     console.log(
       TAG,
-      `  → ${inheritanceMap.size} repos with inheritable relations`
+      `  → ${inheritanceMap.size} repos with inheritable relations (${ownerFallbackMap.size} owner-level fallbacks)`
     );
+
+    // Build a secondary lookup from `Owner/Name` (lowercase) → existing Repo
+    // row so we can detect upstream repo renames (URL miss but full_name hit)
+    // and remap issue/PR URLs that still reference the old name.
+    const repoRowsByFullName = new Map<string, ExistingRow>();
+    for (const row of existingRows.values()) {
+      if (row.type !== "Repo") continue;
+      const fromUrl = parseRepoKeyFromUrl(row.ghUrl);
+      if (fromUrl) repoRowsByFullName.set(fromUrl, row);
+      if (row.repoFullName) {
+        repoRowsByFullName.set(row.repoFullName.toLowerCase(), row);
+      }
+    }
+
+    /**
+     * Maps lowercased OLD `owner/repo` → lowercased NEW `owner/repo` for
+     * repos we discovered to have been renamed during this run.  Used to
+     * remap issue/PR URLs that still point at the old name in Notion.
+     */
+    const repoRenameMap = new Map<string, string>();
+    let repoRemapped = 0;
 
     // ── 5. Compute incremental-sync cutoff ──
     // Default to DEFAULT_UPDATED_SINCE_DAYS (180) when caller omits the param.
@@ -756,7 +963,28 @@ export async function executeSyncGitHubItems(
       const repo = filteredRepos[repoIdx]!;
       const skipIssuesForResume = repoIdx === startRepoIndex && resumePhase === "prs";
 
-      // 6a. Upsert repo row
+      // 6a. Upsert repo row — detect rename if URL miss but full_name hit.
+      const repoKey = repo.full_name.toLowerCase();
+      const urlKey = repo.html_url.toLowerCase();
+      let renameMatch: ExistingRow | undefined;
+      if (!existingRows.has(urlKey)) {
+        const candidate = repoRowsByFullName.get(repoKey);
+        // Only treat as rename if the existing row's URL maps to a *different*
+        // owner/repo than the GitHub response — otherwise it's just a row
+        // that happened to be re-linked.
+        if (candidate) {
+          const candidateRepoKey = parseRepoKeyFromUrl(candidate.ghUrl);
+          if (candidateRepoKey && candidateRepoKey !== repoKey) {
+            renameMatch = candidate;
+            repoRenameMap.set(candidateRepoKey, repoKey);
+            console.log(
+              TAG,
+              `Detected rename: ${candidateRepoKey} → ${repoKey} (Notion row ${candidate.id})`
+            );
+          }
+        }
+      }
+
       if (!reserveBudget(budget)) { budgetSkipped++; }
       else {
         try {
@@ -769,10 +997,12 @@ export async function executeSyncGitHubItems(
             repo.updated_at,
             "Repo",
             props,
-            dryRun
+            dryRun,
+            { existingMatch: renameMatch, repoFullName: repo.full_name }
           );
           if (result === "created") created++;
           else if (result === "updated") updated++;
+          else if (result === "remapped") { updated++; repoRemapped++; }
           else { skipped++; releaseBudget(budget); }
         } catch (e) {
           releaseBudget(budget);
@@ -786,14 +1016,18 @@ export async function executeSyncGitHubItems(
       const [owner, repoName] = repo.full_name.split("/");
       if (!owner || !repoName) { reposProcessed++; continue; }
 
-      // Track unlinked repos (no Client relation)
-      const repoKey = repo.full_name.toLowerCase();
-      if (!inheritanceMap.has(repoKey)) {
+      // Resolve inherited relations for this repo's issues/PRs.  Falls back
+      // to an owner-level consensus when no per-repo relation is set.
+      const repoRelations = resolveInheritedRelations(
+        repo.full_name,
+        inheritanceMap,
+        ownerFallbackMap
+      );
+
+      // Track unlinked repos (no Client relation directly OR via owner fallback)
+      if (!repoRelations) {
         unlinkedRepos++;
       }
-
-      // Resolve inherited relations for this repo's issues/PRs
-      const repoRelations = inheritanceMap.get(repoKey);
 
       // 6b. Sync issues (skip if resuming past issues phase)
       if (includeIssues && !skipIssuesForResume) {
@@ -806,7 +1040,11 @@ export async function executeSyncGitHubItems(
           await processInBatches(issues, WRITE_CONCURRENCY, async (issue) => {
             if (!reserveBudget(budget)) { budgetSkipped++; return; }
             try {
-              const isNew = !existingRows.has(issue.html_url.toLowerCase());
+              const directKey = issue.html_url.toLowerCase();
+              const renameMatch = !existingRows.has(directKey)
+                ? lookupByRenamedUrl(existingRows, repoRenameMap, directKey)
+                : undefined;
+              const isNew = !existingRows.has(directKey) && !renameMatch;
               const props = buildIssueProperties(
                 issue,
                 repo.full_name,
@@ -820,10 +1058,12 @@ export async function executeSyncGitHubItems(
                 issue.updated_at,
                 "Issue",
                 props,
-                dryRun
+                dryRun,
+                { existingMatch: renameMatch, repoFullName: repo.full_name }
               );
               if (result === "created") created++;
               else if (result === "updated") updated++;
+              else if (result === "remapped") { updated++; repoRemapped++; }
               else { skipped++; releaseBudget(budget); }
             } catch (e) {
               releaseBudget(budget);
@@ -870,7 +1110,11 @@ export async function executeSyncGitHubItems(
           await processInBatches(prs, WRITE_CONCURRENCY, async (pr) => {
             if (!reserveBudget(budget)) { budgetSkipped++; return; }
             try {
-              const isNew = !existingRows.has(pr.html_url.toLowerCase());
+              const directKey = pr.html_url.toLowerCase();
+              const renameMatch = !existingRows.has(directKey)
+                ? lookupByRenamedUrl(existingRows, repoRenameMap, directKey)
+                : undefined;
+              const isNew = !existingRows.has(directKey) && !renameMatch;
               const props = buildPRProperties(
                 pr,
                 repo.full_name,
@@ -884,10 +1128,12 @@ export async function executeSyncGitHubItems(
                 pr.updated_at,
                 "PR",
                 props,
-                dryRun
+                dryRun,
+                { existingMatch: renameMatch, repoFullName: repo.full_name }
               );
               if (result === "created") created++;
               else if (result === "updated") updated++;
+              else if (result === "remapped") { updated++; repoRemapped++; }
               else { skipped++; releaseBudget(budget); }
             } catch (e) {
               releaseBudget(budget);
@@ -923,12 +1169,14 @@ export async function executeSyncGitHubItems(
     const openOnlyNote = openOnly ? " (open only)" : "";
     const linkedNote =
       unlinkedRepos > 0 ? ` (${unlinkedRepos} repos unlinked to Client)` : "";
+    const remapNote =
+      repoRemapped > 0 ? ` (${repoRemapped} rows remapped after rename)` : "";
     const budgetNote =
       budgetSkipped > 0 ? ` Budget exhausted — ${budgetSkipped} items deferred.` : "";
     const resumeNote = resumeCursor
       ? ` Resume from repo ${resumeCursor.repo_index}/${filteredRepos.length} (${resumeCursor.phase}).`
       : "";
-    const summary = `${completionLabel}${modeLabel}Synced [${sourceNames.join(", ")}]${openOnlyNote}: ${reposFound} repos (${reposProcessed} processed), ${issuesFound} issues, ${prsFound} PRs. ${created} created, ${updated} updated, ${skipped} skipped, ${errors} errors.${linkedNote}${budgetNote}${resumeNote} [${elapsedMs}ms]`;
+    const summary = `${completionLabel}${modeLabel}Synced [${sourceNames.join(", ")}]${openOnlyNote}: ${reposFound} repos (${reposProcessed} processed), ${issuesFound} issues, ${prsFound} PRs. ${created} created, ${updated} updated, ${skipped} skipped, ${errors} errors.${linkedNote}${remapNote}${budgetNote}${resumeNote} [${elapsedMs}ms]`;
 
     console.log(TAG, summary);
 
@@ -949,6 +1197,7 @@ export async function executeSyncGitHubItems(
       prs_found: prsFound,
       created,
       updated,
+      remapped_rows: repoRemapped,
       skipped,
       errors,
       unlinked_repos: unlinkedRepos,
