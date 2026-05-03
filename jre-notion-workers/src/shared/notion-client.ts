@@ -104,3 +104,23 @@ export function getTimeLogDatabaseId(): string {
   if (!id) throw new Error("TIME_LOG_DATABASE_ID is not set");
   return id;
 }
+
+export function getAgentOpsDatabaseId(): string {
+  const id = process.env.AGENT_OPS_DATABASE_ID;
+  if (!id) throw new Error("AGENT_OPS_DATABASE_ID is not set");
+  return id;
+}
+
+export function tryGetAgentOpsDatabaseId(): string | null {
+  return process.env.AGENT_OPS_DATABASE_ID || null;
+}
+
+export function getClientSharedDocumentsDatabaseId(): string {
+  const id = process.env.CLIENT_SHARED_DOCUMENTS_DATABASE_ID;
+  if (!id) throw new Error("CLIENT_SHARED_DOCUMENTS_DATABASE_ID is not set");
+  return id;
+}
+
+export function tryGetClientSharedDocumentsDatabaseId(): string | null {
+  return process.env.CLIENT_SHARED_DOCUMENTS_DATABASE_ID || null;
+}
