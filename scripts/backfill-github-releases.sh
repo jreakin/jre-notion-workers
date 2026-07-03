@@ -34,24 +34,13 @@ declare -A TAG_DATE=(
 
 extract_section() {
   local version="$1"
-  local next_version="$2"
-  # Strip leading 'v' for CHANGELOG heading match
   local ver="${version#v}"
-  local next_ver="${next_version#v}"
-
-  if [[ -z "$next_version" ]]; then
-    awk -v ver="$ver" '
-      $0 ~ "^## \\[" ver "\\]" { found=1; next }
-      found && /^## \[/ { exit }
-      found { print }
-    ' CHANGELOG.md
-  else
-    awk -v ver="$ver" -v next="$next_ver" '
-      $0 ~ "^## \\[" ver "\\]" { found=1; next }
-      found && $0 ~ "^## \\[" next "\\]" { exit }
-      found { print }
-    ' CHANGELOG.md
-  fi
+  # CHANGELOG is reverse-chronological (newest first). Stop at the next ## heading.
+  awk -v ver="$ver" '
+    $0 ~ "^## \\[" ver "\\]" { found=1; next }
+    found && /^## / { exit }
+    found { print }
+  ' CHANGELOG.md
 }
 
 VERSIONS=(v0.1.0 v0.2.0 v0.3.0 v0.4.0 v1.0.0)
@@ -60,12 +49,8 @@ for i in "${!VERSIONS[@]}"; do
   tag="${VERSIONS[$i]}"
   sha="${TAG_SHA[$tag]}"
   date="${TAG_DATE[$tag]}"
-  next_tag=""
-  if (( i + 1 < ${#VERSIONS[@]} )); then
-    next_tag="${VERSIONS[$((i + 1))]}"
-  fi
 
-  notes="$(extract_section "$tag" "$next_tag")"
+  notes="$(extract_section "$tag")"
 
   echo "--- $tag @ $sha ($date) ---"
 
@@ -95,4 +80,4 @@ for i in "${!VERSIONS[@]}"; do
   fi
 done
 
-echo "Done. Push tags with: git push origin --tags"
+echo "Done. Tags are on GitHub via gh release create; git push --tags is only needed if you created local-only tags."
