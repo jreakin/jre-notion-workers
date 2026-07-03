@@ -3,6 +3,28 @@
 All notable changes to this project are documented in this file.
 Release Please maintains this file going forward from v1.0.0.
 
+## [1.1.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.0.0...jre-notion-workers-v1.1.0) (2026-07-03)
+
+
+### Features
+
+* bounded/resumable sync, cadence-aware freshness, robust upstream discovery, GitHub error classification, graceful degradation ([096989e](https://github.com/jreakin/jre-notion-workers/commit/096989e7fb235b99126eba84d4d3945d23361f7a))
+* deploy jre-notion-workers ([b3cb6b8](https://github.com/jreakin/jre-notion-workers/commit/b3cb6b84d770ae7058da1328bc8ed9ba2d6c4222))
+* deploy jre-notion-workers ([3daa892](https://github.com/jreakin/jre-notion-workers/commit/3daa8923ef81c9bb2db2288bd4090184e3b57bcc))
+
+
+### Bug Fixes
+
+* agent config corrections and audit remediation ([2301e29](https://github.com/jreakin/jre-notion-workers/commit/2301e299d7a32588ce0afed7657e83701863128a))
+* extract changelog sections correctly for reverse-chronological order ([94919f8](https://github.com/jreakin/jre-notion-workers/commit/94919f8dbe6d6ff14baed8818c7e7ff6bbb1108c))
+* prevent sync-github-items timeout with 180-day default lookback and lower write cap ([df5cdd9](https://github.com/jreakin/jre-notion-workers/commit/df5cdd9f0a4676510e61f5bf6aebd89be8942db6))
+* use status property type instead of select for GitHub Items Status field ([678ef3e](https://github.com/jreakin/jre-notion-workers/commit/678ef3ea754c06c15c3b70e6beb43a6d12634663))
+
+
+### Documentation
+
+* add NEXT-STEPS.md with P0/P1 remediation instructions ([4a15321](https://github.com/jreakin/jre-notion-workers/commit/4a153217d199539b694f2219d26856f8f04945b8))
+
 ## [1.0.0](https://github.com/jreakin/jre-notion-workers/compare/v0.4.0...v1.0.0) (2026-05-03)
 
 ### Features
