@@ -4,7 +4,7 @@
     "jre-notion-workers": {
       "release-type": "node",
       "package-name": "jre-notion-workers",
-      "changelog-path": "../CHANGELOG.md",
+      "changelog-path": "/CHANGELOG.md",
       "include-component-in-tag": true
     }
   },
