@@ -127,17 +127,28 @@ async function checkProjectTargets(
   maxPages: number,
   projectsDbId: string
 ): Promise<RelationIntegrityIssue[]> {
-  const projectFilters = projectProps.map((prop) => ({
-    property: prop,
-    relation: { is_not_empty: true },
-  }));
+  const pagesById = new Map<string, { id: string; properties: Record<string, unknown> }>();
 
-  const pages = await queryPages(
-    notion,
-    databaseId,
-    projectFilters.length === 1 ? projectFilters[0] : { or: projectFilters },
-    maxPages
-  );
+  for (const prop of projectProps) {
+    try {
+      const propPages = await queryPages(
+        notion,
+        databaseId,
+        { property: prop, relation: { is_not_empty: true } },
+        maxPages - pagesById.size
+      );
+      for (const page of propPages) {
+        if (!pagesById.has(page.id)) {
+          pagesById.set(page.id, page);
+        }
+      }
+    } catch {
+      // Property may not exist in this database schema (e.g. legacy vs live name).
+    }
+    if (pagesById.size >= maxPages) break;
+  }
+
+  const pages = Array.from(pagesById.values());
 
   const issues: RelationIntegrityIssue[] = [];
   const normalizedProjectsDb = normalizeId(projectsDbId);
@@ -240,9 +251,13 @@ async function checkParkedChildren(
 ): Promise<RelationIntegrityIssue[]> {
   const issues: RelationIntegrityIssue[] = [];
 
-  const scans: Array<{ dbId: string; label: "Clients" | "Projects" }> = [
-    { dbId: getClientsDatabaseId(), label: "Clients" },
-    { dbId: getProjectsDatabaseId(), label: "Projects" },
+  const scans: Array<{
+    dbId: string;
+    label: "Clients" | "Projects";
+    titleProps: string[];
+  }> = [
+    { dbId: getClientsDatabaseId(), label: "Clients", titleProps: ["Client Name", "Name"] },
+    { dbId: getProjectsDatabaseId(), label: "Projects", titleProps: ["Project Name", "Name"] },
   ];
 
   for (const scan of scans) {
@@ -254,7 +269,7 @@ async function checkParkedChildren(
     );
 
     for (const parent of parentPages) {
-      const parentTitle = readTitle(parent.properties, "Name", "Client", "Project");
+      const parentTitle = readTitle(parent.properties, ...scan.titleProps);
 
       let cursor: string | undefined;
       do {
