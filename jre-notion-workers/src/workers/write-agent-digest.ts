@@ -7,6 +7,11 @@ import { VALID_AGENT_NAMES, AGENT_DIGEST_PATTERNS, getDefaultDigestType } from "
 import { buildStatusLine } from "../shared/status-parser.js";
 import { formatRunTime } from "../shared/date-utils.js";
 import { buildDigestBlocks } from "../shared/block-builder.js";
+import {
+  DOC_TRIAGE_STATUS,
+  DOCS_PROPS,
+  isAssessmentDocType,
+} from "../shared/notion-schema.js";
 import type {
   WriteAgentDigestInput,
   WriteAgentDigestOutput,
@@ -123,6 +128,40 @@ function buildContentLines(input: WriteAgentDigestInput): string[] {
 
 export { buildPageTitle, isHeartbeat, validateFlaggedItems };
 
+export function buildDocCreateProperties(params: {
+  title: string;
+  docType: string;
+  isHomeDocs: boolean;
+  clientRelationIds?: string[];
+  projectRelationIds?: string[];
+}): Record<string, unknown> {
+  const titleProp = params.isHomeDocs ? "Doc" : DOCS_PROPS.title;
+  const docTypeProp = params.isHomeDocs ? "Doc Type" : DOCS_PROPS.documentType;
+
+  const properties: Record<string, unknown> = {
+    [titleProp]: { title: [{ text: { content: params.title } }] },
+    [docTypeProp]: { select: { name: params.docType } },
+  };
+
+  if (!params.isHomeDocs && params.clientRelationIds?.length) {
+    properties[DOCS_PROPS.clients] = {
+      relation: params.clientRelationIds.map((id) => ({ id })),
+    };
+  }
+  if (params.projectRelationIds?.length) {
+    properties[DOCS_PROPS.project] = {
+      relation: params.projectRelationIds.map((id) => ({ id })),
+    };
+  }
+
+  // Quarantine agent assessments so they do not look finished on home-adjacent views.
+  if (!params.isHomeDocs && isAssessmentDocType(params.docType)) {
+    properties[DOCS_PROPS.status] = { status: { name: DOC_TRIAGE_STATUS } };
+  }
+
+  return properties;
+}
+
 export async function executeWriteAgentDigest(
   input: WriteAgentDigestInput,
   notion: Client
@@ -171,21 +210,14 @@ export async function executeWriteAgentDigest(
   const contentLines = buildContentLines(input);
   const blocks = buildDigestBlocks(contentLines);
 
-  // Property names differ between Docs and Home Docs databases
   const isHomeDocs = input.target_database === "home_docs";
-  const titleProp = isHomeDocs ? "Doc" : "Name";
-  const docTypeProp = isHomeDocs ? "Doc Type" : "Document Type";
-
-  const properties: Record<string, unknown> = {
-    [titleProp]: { title: [{ text: { content: title } }] },
-    [docTypeProp]: { select: { name: input.doc_type } },
-  };
-  if (!isHomeDocs && input.client_relation_ids?.length) {
-    properties["Clients"] = { relation: input.client_relation_ids.map((id) => ({ id })) };
-  }
-  if (input.project_relation_ids?.length) {
-    properties["Project"] = { relation: input.project_relation_ids.map((id) => ({ id })) };
-  }
+  const properties = buildDocCreateProperties({
+    title,
+    docType: input.doc_type,
+    isHomeDocs,
+    clientRelationIds: input.client_relation_ids,
+    projectRelationIds: input.project_relation_ids,
+  });
 
   try {
     const page = await notion.pages.create({

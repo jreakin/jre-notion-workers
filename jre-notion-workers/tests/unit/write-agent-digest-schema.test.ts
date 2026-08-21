@@ -145,7 +145,7 @@ describe("write-agent-digest output schema", () => {
       await executeWriteAgentDigest(
         createMockWriteDigestInput({
           target_database: "home_docs",
-          agent_name: "Home & Life Watcher",
+          agent_name: "Home & Life Task Watcher",
           agent_emoji: "🏡",
           status_type: "report",
         }),
@@ -201,7 +201,7 @@ describe("write-agent-digest output schema", () => {
       await executeWriteAgentDigest(
         createMockWriteDigestInput({
           target_database: "home_docs",
-          agent_name: "Home & Life Watcher",
+          agent_name: "Home & Life Task Watcher",
           agent_emoji: "🏡",
           status_type: "report",
           client_relation_ids: ["client-id-1"],

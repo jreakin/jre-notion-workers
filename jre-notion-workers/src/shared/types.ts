@@ -940,6 +940,8 @@ export type PublishClientDocUpdateOutput =
 export interface CreateClientReviewTaskInput {
   source_page_id: string;
   client_id: string;
+  /** Optional project page ID — sets 📊 Projects when known. */
+  project_id?: string;
   reason: string;
   priority?: TaskPriority;
 }
@@ -1016,5 +1018,45 @@ export type LogClientShareEventOutput =
       logged_to_agent_ops: boolean;
       logged_to_dead_letter: boolean;
       record_ids: string[];
+    }
+  | { success: false; error: string };
+
+// --- validate-relation-integrity ---
+export interface ValidateRelationIntegrityInput {
+  /** Default true — report only, no writes or dead letters unless explicitly enabled. */
+  dry_run?: boolean;
+  /** When dry_run=false, log one Dead Letter per rule category with findings. */
+  log_dead_letters?: boolean;
+  /** Max rows to scan per database check. Default 100. */
+  max_pages?: number;
+  /** Scan for pages parked as children under Client/Project pages. Default true. */
+  check_parked_children?: boolean;
+}
+
+export interface RelationIntegrityIssue {
+  severity: "FAIL" | "WARN";
+  rule:
+    | "docs_missing_client"
+    | "project_not_in_projects_db"
+    | "task_client_project_mismatch"
+    | "task_missing_project"
+    | "parked_child_page";
+  page_id: string;
+  page_title: string;
+  database: "Docs" | "Tasks" | "Clients" | "Projects";
+  message: string;
+}
+
+export type ValidateRelationIntegrityOutput =
+  | {
+      success: true;
+      dry_run: boolean;
+      checked_at: string;
+      total_issues: number;
+      total_fail: number;
+      total_warn: number;
+      issues: RelationIntegrityIssue[];
+      dead_letters_logged: number;
+      summary: string;
     }
   | { success: false; error: string };

@@ -1,6 +1,10 @@
 /**
  * validate-project-completeness: Scans Projects database for data completeness issues.
  * Read-only — never modifies any data.
+ *
+ * Note: This is the inverse of row-integrity checks (Docs/Tasks missing Client).
+ * Do not use missing-task warnings here to justify creating backlog tasks — that
+ * floods Active=not-Done views. Home health is In progress + urgent/due this week.
  */
 import type { Client } from "@notionhq/client";
 import { getProjectsDatabaseId } from "../shared/notion-client.js";

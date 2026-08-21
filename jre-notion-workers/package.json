@@ -1,6 +1,6 @@
 {
   "name": "jre-notion-workers",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -31,6 +31,8 @@
     "test:coverage": "bun test --coverage",
     "deploy": "npm run build && ntn workers deploy",
     "backfill:time-log": "bun run --env-file=.env.local scripts/backfill-time-log.ts",
-    "backfill:time-log:dry-run": "bun run --env-file=.env.local scripts/backfill-time-log.ts --dry-run"
+    "backfill:time-log:dry-run": "bun run --env-file=.env.local scripts/backfill-time-log.ts --dry-run",
+    "sync:secrets": "bash scripts/sync-notion-worker-secrets.sh",
+    "sync:secrets:dry-run": "DRY_RUN=1 bash scripts/sync-notion-worker-secrets.sh"
   }
 }

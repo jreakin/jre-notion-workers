@@ -25,7 +25,7 @@ describe("agent-config", () => {
 
   it("AGENT_TARGET_DB maps home_docs for Personal Ops and Home & Life", () => {
     expect(AGENT_TARGET_DB["Personal Ops Manager"]).toBe("home_docs");
-    expect(AGENT_TARGET_DB["Home & Life Watcher"]).toBe("home_docs");
+    expect(AGENT_TARGET_DB["Home & Life Task Watcher"]).toBe("home_docs");
     expect(AGENT_TARGET_DB["GitHub Insyncerator"]).toBe("docs");
   });
 

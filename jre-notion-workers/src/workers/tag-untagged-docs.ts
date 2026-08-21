@@ -5,6 +5,7 @@
 import type { Client } from "@notionhq/client";
 import { getDocsDatabaseId, getHomeDocsDatabaseId } from "../shared/notion-client.js";
 import { AGENT_DIGEST_PATTERNS } from "../shared/agent-config.js";
+import { isAssessmentTitle } from "../shared/notion-schema.js";
 import type {
   TagUntaggedDocsInput,
   TagUntaggedDocsOutput,
@@ -17,6 +18,11 @@ interface InferenceResult {
 }
 
 function inferDocType(title: string): InferenceResult {
+  // Never auto-classify agent assessments from title keywords alone.
+  if (isAssessmentTitle(title)) {
+    return { type: null, rule: "assessment_quarantine" };
+  }
+
   // 1. Agent digest pattern match
   for (const [, patterns] of Object.entries(AGENT_DIGEST_PATTERNS)) {
     for (const pattern of patterns) {
@@ -38,7 +44,9 @@ function inferDocType(title: string): InferenceResult {
 
   // 4–9. Keyword matches
   if (/Proposal/i.test(title)) return { type: "Proposal", rule: "title_keyword_proposal" };
-  if (/Report|Audit/i.test(title)) return { type: "Report", rule: "title_keyword_report" };
+  if (/Report|Audit/i.test(title) && !isAssessmentTitle(title)) {
+    return { type: "Report", rule: "title_keyword_report" };
+  }
   if (/Spec|Technical/i.test(title)) return { type: "Technical Spec", rule: "title_keyword_spec" };
   if (/Meeting|Notes/i.test(title)) return { type: "Meeting Notes", rule: "title_keyword_meeting" };
   if (/Invoice|Receipt/i.test(title)) return { type: "Financial", rule: "title_keyword_financial" };

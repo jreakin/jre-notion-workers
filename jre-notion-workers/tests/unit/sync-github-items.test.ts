@@ -115,6 +115,12 @@ function mockNotionClient(pages: NotionPage[]) {
               Updated: p.updatedAt
                 ? { date: { start: p.updatedAt } }
                 : { date: null },
+              "📊 Projects": {
+                relation: (p.projectIds ?? []).map((id) => ({ id })),
+              },
+              Clients: {
+                relation: (p.clientIds ?? []).map((id) => ({ id })),
+              },
               Project: {
                 relation: (p.projectIds ?? []).map((id) => ({ id })),
               },
@@ -479,8 +485,8 @@ describe("sync-github-items", () => {
 
         const statuses = prPages.map(
           (p) =>
-            (p.properties as Record<string, { select?: { name: string } }>)
-              ?.Status?.select?.name
+            (p.properties as Record<string, { status?: { name: string } }>)
+              ?.Status?.status?.name
         );
         expect(statuses).toContain("Open");
         expect(statuses).toContain("Merged");
@@ -965,10 +971,10 @@ describe("sync-github-items", () => {
 
         const updatedProps = prUpdate!.properties as Record<
           string,
-          { select?: { name: string } }
+          { select?: { name: string }; status?: { name: string } }
         >;
         expect(updatedProps.Type?.select?.name).toBe("PR");
-        expect(updatedProps.Status?.select?.name).toBe("Merged");
+        expect(updatedProps.Status?.status?.name).toBe("Merged");
       }
     });
 
@@ -1010,7 +1016,7 @@ describe("sync-github-items", () => {
   });
 
   describe("relation inheritance", () => {
-    test("new issue inherits Project and Client from parent repo", async () => {
+    test("new issue inherits 📊 Projects from parent repo (not Clients reverse link)", async () => {
       mockFetch({
         repos: {
           "Abstract-Data": [
@@ -1054,12 +1060,13 @@ describe("sync-github-items", () => {
           string,
           { relation?: Array<{ id: string }> }
         >;
-        expect(issueProps.Project?.relation).toEqual([{ id: "proj-page-1" }]);
-        expect(issueProps.Client?.relation).toEqual([{ id: "client-page-1" }]);
+        expect(issueProps["📊 Projects"]?.relation).toEqual([{ id: "proj-page-1" }]);
+        expect(issueProps.Client).toBeUndefined();
+        expect(issueProps.Clients).toBeUndefined();
       }
     });
 
-    test("new PR inherits Project and Client from parent repo", async () => {
+    test("new PR inherits 📊 Projects from parent repo (not Clients reverse link)", async () => {
       mockFetch({
         repos: {
           "Abstract-Data": [
@@ -1102,11 +1109,9 @@ describe("sync-github-items", () => {
           string,
           { relation?: Array<{ id: string }> }
         >;
-        expect(prProps.Project?.relation).toEqual([{ id: "proj-page-1" }]);
-        expect(prProps.Client?.relation).toEqual([
-          { id: "client-page-1" },
-          { id: "client-page-2" },
-        ]);
+        expect(prProps["📊 Projects"]?.relation).toEqual([{ id: "proj-page-1" }]);
+        expect(prProps.Client).toBeUndefined();
+        expect(prProps.Clients).toBeUndefined();
       }
     });
 
@@ -1151,7 +1156,8 @@ describe("sync-github-items", () => {
           string,
           { relation?: Array<{ id: string }> }
         >;
-        // No Project or Client properties should be set
+        // No project relation properties should be set
+        expect(issueProps["📊 Projects"]).toBeUndefined();
         expect(issueProps.Project).toBeUndefined();
         expect(issueProps.Client).toBeUndefined();
       }
@@ -1184,6 +1190,7 @@ describe("sync-github-items", () => {
           { relation?: Array<{ id: string }> }
         >;
         // Repos don't get auto-relations — those are set by users/agents
+        expect(repoProps["📊 Projects"]).toBeUndefined();
         expect(repoProps.Project).toBeUndefined();
         expect(repoProps.Client).toBeUndefined();
       }
@@ -1257,14 +1264,14 @@ describe("sync-github-items", () => {
         },
       });
 
-      // Only one repo has a Client relation
+      // Only one repo has a 📊 Projects relation
       const mock = mockNotionClient([
         {
           id: "linked",
           ghUrl: "https://github.com/Abstract-Data/linked-repo",
           type: "Repo",
           updatedAt: "2024-06-15",
-          clientIds: ["client-1"],
+          projectIds: ["proj-1"],
         },
         {
           id: "unlinked",
@@ -1287,7 +1294,7 @@ describe("sync-github-items", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.unlinked_repos).toBe(1);
-        expect(result.summary).toContain("1 repos unlinked to Client");
+        expect(result.summary).toContain("1 repos unlinked to 📊 Projects");
       }
     });
   });

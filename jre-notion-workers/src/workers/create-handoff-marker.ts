@@ -5,6 +5,7 @@ import type { Client } from "@notionhq/client";
 import { getTasksDatabaseId } from "../shared/notion-client.js";
 import { VALID_AGENT_NAMES } from "../shared/agent-config.js";
 import { nextBusinessDay } from "../shared/date-utils.js";
+import { AGENT_TASK_STATUS_IN_PROGRESS, TASKS_PROPS } from "../shared/notion-schema.js";
 import type { CreateHandoffMarkerInput, CreateHandoffMarkerOutput, DegradedCapability, TaskPriority } from "../shared/types.js";
 
 const HANDOFF_WINDOW_DAYS = 7;
@@ -139,15 +140,20 @@ export async function executeCreateHandoffMarker(
       const taskNotes = `Escalation from ${input.source_agent}. Reason: ${input.escalation_reason}. Source digest: ${input.source_digest_url}`;
 
       const taskProps: Record<string, unknown> = {
-        "Task Name": { title: [{ text: { content: taskTitle } }] },
-        "Priority": { select: { name: input.task_priority as TaskPriority } },
-        "Due": { date: { start: dueStr } },
+        [TASKS_PROPS.title]: { title: [{ text: { content: taskTitle } }] },
+        [TASKS_PROPS.status]: { status: { name: AGENT_TASK_STATUS_IN_PROGRESS } },
+        Priority: { select: { name: input.task_priority as TaskPriority } },
+        Due: { date: { start: dueStr } },
       };
       if (input.client_relation_ids?.length) {
-        taskProps["Client"] = { relation: input.client_relation_ids.map((id) => ({ id })) };
+        taskProps[TASKS_PROPS.clients] = {
+          relation: input.client_relation_ids.map((id) => ({ id })),
+        };
       }
       if (input.project_relation_ids?.length) {
-        taskProps["Project"] = { relation: input.project_relation_ids.map((id) => ({ id })) };
+        taskProps[TASKS_PROPS.projects] = {
+          relation: input.project_relation_ids.map((id) => ({ id })),
+        };
       }
 
       const taskPage = await notion.pages.create({

@@ -5,6 +5,7 @@
 import type { Client } from "@notionhq/client";
 import { getTasksDatabaseId } from "../shared/notion-client.js";
 import { withNotionRetry } from "../shared/notion-retry.js";
+import { AGENT_TASK_STATUS_IN_PROGRESS, TASKS_PROPS } from "../shared/notion-schema.js";
 import type {
   CreateClientReviewTaskInput,
   CreateClientReviewTaskOutput,
@@ -24,12 +25,15 @@ export async function executeCreateClientReviewTask(
     const title = `Review client publish — ${input.reason.slice(0, 80)}`;
 
     const properties: Record<string, unknown> = {
-      Name: { title: [{ text: { content: title } }] },
+      [TASKS_PROPS.title]: { title: [{ text: { content: title } }] },
       Priority: { select: { name: priority } },
-      Status: { status: { name: "Not Started" } },
-      Client: { relation: [{ id: input.client_id }] },
+      [TASKS_PROPS.status]: { status: { name: AGENT_TASK_STATUS_IN_PROGRESS } },
+      [TASKS_PROPS.clients]: { relation: [{ id: input.client_id }] },
       "Source Page ID": { rich_text: [{ text: { content: input.source_page_id } }] },
     };
+    if (input.project_id?.trim()) {
+      properties[TASKS_PROPS.projects] = { relation: [{ id: input.project_id }] };
+    }
 
     const page = await withNotionRetry(
       () =>
