@@ -77,13 +77,16 @@ Types live in `src/shared/types.ts`. Each worker has an `*Input` and `*Output` t
 
 Secrets come from `process.env`: `NTN_API_TOKEN` (not `NOTION_TOKEN` — that's a reserved prefix in the Workers SDK), `DOCS_DATABASE_ID`, `HOME_DOCS_DATABASE_ID`, `TASKS_DATABASE_ID`, `DEAD_LETTERS_DATABASE_ID`, `GITHUB_ITEMS_DATABASE_ID`, `GITHUB_TOKEN`, `AI_MEETINGS_DATABASE_ID`, `CLIENTS_DATABASE_ID`, `CONTACTS_DATABASE_ID`, `PROJECTS_DATABASE_ID`, `FOLLOW_UP_TRACKER_DATABASE_ID`, `DECISION_LOG_DATABASE_ID`, `LABEL_REGISTRY_DATABASE_ID`, `SYSTEM_CONTROL_PLANE_PAGE_ID`. Use `src/shared/notion-client.ts` (`getNotionClient()`, `getDocsDatabaseId()`, etc.) — never hardcode.
 
-Deployment secrets:
+Deployment secrets (use `ntn workers env` — `ntn workers secrets` is legacy):
 
 ```bash
-ntn workers secrets set NTN_API_TOKEN
-ntn workers secrets set DOCS_DATABASE_ID
-# etc.
+ntn workers env set NTN_API_TOKEN=...
+ntn workers env set DOCS_DATABASE_ID=...
+# Or sync all production keys from 1Password:
+bash scripts/sync-notion-worker-secrets.sh
 ```
+
+See [docs/GITHUB-SECRETS-SYNC.md](docs/GITHUB-SECRETS-SYNC.md) for GitHub Environment + CI sync.
 
 ## Local development loop
 
@@ -113,7 +116,7 @@ ntn workers logs
 
 - [ ] `npm run build` exits with zero errors
 - [ ] `bun test` passes
-- [ ] All required secrets set via `ntn workers secrets set`
+- [ ] All required secrets set via `ntn workers env set` or `scripts/sync-notion-worker-secrets.sh`
 - [ ] README documents input schema and expected output
 
 ## Worker-specific design rules
