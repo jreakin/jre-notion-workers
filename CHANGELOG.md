@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file.
 Release Please maintains this file going forward from v1.0.0.
 
+## [1.2.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.1.0...jre-notion-workers-v1.2.0) (2026-08-21)
+
+
+### Features
+
+* complement Notion home usability and add relation integrity validator ([#9](https://github.com/jreakin/jre-notion-workers/issues/9)) ([e958782](https://github.com/jreakin/jre-notion-workers/commit/e958782acfa308b0e6c65e7478dcfbd97050f265))
+
 ## [1.1.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.0.0...jre-notion-workers-v1.1.0) (2026-07-03)
 
 
