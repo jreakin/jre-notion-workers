@@ -1,0 +1,18 @@
+# Configuration for the Labeler workflow (.github/workflows/label.yml).
+# Uses the classic actions/labeler@v4 format: a label is applied when a PR
+# changes any file matching one of its globs. Labels referenced here already
+# exist in the repository. See: https://github.com/actions/labeler
+
+documentation:
+  - '**/*.md'
+
+dependencies:
+  - '**/package.json'
+  - '**/package-lock.json'
+  - '**/bun.lock'
+
+javascript:
+  - '**/*.ts'
+  - '**/*.js'
+  - '**/*.mjs'
+  - '**/*.cjs'

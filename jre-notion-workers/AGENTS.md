@@ -106,3 +106,15 @@ Never log or expose `NOTION_TOKEN`. For deployment, secrets are set via `ntn wor
 - **Does NOT modify:** Pages or databases outside the declared IDs in env
 
 No worker may read or write outside its declared scope without an explicit governance review.
+
+## Cursor Cloud specific instructions
+
+This project lives in the `jre-notion-workers/` subdirectory (it is not the repo root). Run all dev commands from there.
+
+- **Runtime:** Bun is the primary local dev runtime and is provided on `PATH` (symlinked at `/usr/local/bin/bun`). Node ≥ 22 is also available. The startup update script runs `bun install` in `jre-notion-workers/`. Do **not** use `bun install --frozen-lockfile`: the committed `bun.lock` can be out of sync with `package.json` (e.g. `tsx`, `@notionhq/workers` pin), which makes frozen installs fail; plain `bun install` reconciles it.
+- **Standard commands** (see `package.json` / `README.md` / `TESTING.md`): typecheck/lint `bun run check` (`tsc --noEmit`); tests `bun test`; dev `bun run dev`.
+- **Running "the app":** this is a Notion Workers SDK package, not a local HTTP server. `bun run dev` (`bun run src/index.ts`) just imports the module, registers all tool capabilities, and exits 0 — that is the expected healthy behavior. Do not wait for a listening port. Deployment to Notion is via the `ntn` CLI (`ntn workers deploy`), which is a production step, not needed for local dev.
+- **Smoke-testing a tool without secrets:** import the default `worker` export and call `await worker.run("<tool-key>", input, { concreteOutput: true })`. Pure-logic tools (`calculate-credit-forecast`, `redact-client-document`) need no Notion credentials and are the quickest end-to-end check.
+- **Secrets:** Notion-backed tools read `NTN_API_TOKEN` (note: the code uses `NTN_API_TOKEN`, not `NOTION_TOKEN`) plus the various `*_DATABASE_ID` vars; without them those tools throw `"... is not set"`. Provide them via `.env.local` (`bun run dev:local` / `--env-file=.env.local`) or as environment secrets. Integration tests under `tests/integration/` are auto-skipped unless `TEST_DOCS_DATABASE_ID` (and `TEST_NOTION_TOKEN`) are set — point them at a dedicated test DB, never production.
+- **Known pre-existing test failures:** on this branch, 2 unit tests fail independent of the environment — `agent-config > AGENT_TARGET_DB maps home_docs ...` and `write-agent-digest output schema > ... home_docs target` — because `AGENT_TARGET_DB` in `src/shared/agent-config.ts` has no `"Home & Life Watcher"` entry that the tests expect. This is application-logic drift, not a setup problem.
+- **1Password hook:** `.cursor/hooks.json` / `.cursor/hooks/1password/` is a Cursor Desktop feature that validates locally mounted `.env` files before shell commands. It does not run in / block the Cloud Agent shell.
