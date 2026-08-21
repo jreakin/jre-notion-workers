@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 Release Please maintains this file going forward from v1.0.0.
 
+## [1.3.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.2.0...jre-notion-workers-v1.3.0) (2026-08-21)
+
+
+### Features
+
+* **workers:** add sync-zoho-projects worker and project infrastructure ([#13](https://github.com/jreakin/jre-notion-workers/issues/13)) ([4b146f9](https://github.com/jreakin/jre-notion-workers/commit/4b146f972a251fe3e676d37ad3073334eaa6176f))
+
+
+### Bug Fixes
+
+* resolve ntn CLI auth from 1Password and add preflight checks ([#16](https://github.com/jreakin/jre-notion-workers/issues/16)) ([fdd9a14](https://github.com/jreakin/jre-notion-workers/commit/fdd9a14a4b74989e112489f72447541004ea0875))
+
 ## [1.2.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.1.0...jre-notion-workers-v1.2.0) (2026-08-21)
 
 
