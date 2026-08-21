@@ -1,0 +1,25 @@
+# ── Dependencies & build output ───────────────────────────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+
+# NOTE: the tracked root dist/ is deliberately kept in git — it is the ONLY
+# copy of the second-generation worker build whose TypeScript source was never
+# committed, and some of its tools are LIVE in production. Ignoring `dist/`
+# here does not untrack it (git only ignores untracked paths). Do not
+# `git rm` it until the recovery in docs/ADR/0005-orphan-dist.md is complete.
+
+# ── Secrets ───────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.1p
+
+# ── Local agent/IDE state (per-developer, never shared) ───────────────
+# .claude/settings.local.json has held a plaintext Notion PAT in a Bash
+# allow-rule. It must never be committed.
+.claude/
+.cursor/hooks/state/
+
+# ── OS noise ──────────────────────────────────────────────────────────
+.DS_Store

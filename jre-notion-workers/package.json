@@ -33,6 +33,7 @@
     "backfill:time-log": "bun run --env-file=.env.local scripts/backfill-time-log.ts",
     "backfill:time-log:dry-run": "bun run --env-file=.env.local scripts/backfill-time-log.ts --dry-run",
     "sync:secrets": "bash scripts/sync-notion-worker-secrets.sh",
-    "sync:secrets:dry-run": "DRY_RUN=1 bash scripts/sync-notion-worker-secrets.sh"
+    "sync:secrets:dry-run": "DRY_RUN=1 bash scripts/sync-notion-worker-secrets.sh",
+    "sync:secrets:op-env": "SOURCE=op-environment OP_ENVIRONMENT_ID=i6ul2k6tk5kzyszv465wzhdpnu bash scripts/sync-notion-worker-secrets.sh"
   }
 }

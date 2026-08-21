@@ -1,0 +1,25 @@
+{
+  "name": "jre-notion-workers",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Notion Workers — canonical generation, recovered from compiled output. See RECOVERY.md.",
+  "engines": {
+    "node": ">=22"
+  },
+  "comment:pins": "These are the versions the LIVE build was compiled against, read out of the canonical generation's own root node_modules. Do not bump them in the recovery commit — fidelity is verified against them. Upgrading to @notionhq/client@5.23.2 / @notionhq/workers@0.8.3 is a separate, deliberate PR.",
+  "dependencies": {
+    "@notionhq/client": "5.21.0",
+    "@notionhq/workers": "0.4.0",
+    "date-fns": "3.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "verify:fidelity": "node scripts/verify-fidelity.mjs"
+  }
+}
