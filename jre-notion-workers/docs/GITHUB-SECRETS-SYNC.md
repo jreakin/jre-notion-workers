@@ -103,5 +103,6 @@ npm run build && ntn workers deploy
 
 - `scripts/worker-env-keys.txt` — canonical list of production keys
 - `scripts/sync-notion-worker-secrets.sh` — sync implementation
+- `../../scripts/install-ntn.sh` — install `ntn` CLI on Cloud Agent / CI (no sudo)
 - `.env.1p` — 1Password secret references (safe to commit)
 - `workers.json` — worker ID and workspace for `ntn`
