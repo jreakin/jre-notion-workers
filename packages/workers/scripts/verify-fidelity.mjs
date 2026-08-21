@@ -12,6 +12,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,8 +52,10 @@ if (!existsSync(originalDist)) {
   process.exit(2);
 }
 
+const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+
 rmSync(resolve(pkgRoot, "dist"), { recursive: true, force: true });
-execFileSync(resolve(pkgRoot, "node_modules/.bin/tsc"), { cwd: pkgRoot, stdio: "inherit" });
+execFileSync(tsc, { cwd: pkgRoot, stdio: "inherit" });
 
 let failed = 0;
 for (const rel of RECOVERED) {

@@ -3,8 +3,6 @@
   "private": true,
   "description": "Root wrapper — app package lives in ./jre-notion-workers/",
   "scripts": {
-    "deploy": "npm run deploy --prefix jre-notion-workers",
-    "deploy:local": "npm run deploy:local --prefix jre-notion-workers",
     "build": "npm run build --prefix jre-notion-workers",
     "check": "npm run check --prefix jre-notion-workers",
     "test": "npm run test --prefix jre-notion-workers",

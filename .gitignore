@@ -23,6 +23,3 @@ dist/
 
 # ── OS noise ──────────────────────────────────────────────────────────
 .DS_Store
-
-# ── Generated: core sources copied into the workers package at prebuild ──
-packages/workers/src/_core/
