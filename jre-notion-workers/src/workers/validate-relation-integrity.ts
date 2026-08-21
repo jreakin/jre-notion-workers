@@ -2,7 +2,7 @@
  * validate-relation-integrity: Periodic dry-run validator for Docs↔Client/Project
  * relation integrity. Does not auto-guess Client, auto-fix, or instantiate templates.
  */
-import type { Client } from "@notionhq/client";
+import { APIResponseError, type Client } from "@notionhq/client";
 import {
   getClientsDatabaseId,
   getDocsDatabaseId,
@@ -53,6 +53,14 @@ function readTitle(
 
 function normalizeId(id: string): string {
   return id.replace(/-/g, "").toLowerCase();
+}
+
+function isMissingPropertyError(err: unknown): boolean {
+  return (
+    err instanceof APIResponseError &&
+    err.code === "validation_error" &&
+    /could not find property/i.test(err.message)
+  );
 }
 
 async function queryPages(
@@ -142,7 +150,8 @@ async function checkProjectTargets(
           pagesById.set(page.id, page);
         }
       }
-    } catch {
+    } catch (err) {
+      if (!isMissingPropertyError(err)) throw err;
       // Property may not exist in this database schema (e.g. legacy vs live name).
     }
     if (pagesById.size >= maxPages) break;
