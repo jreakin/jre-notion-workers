@@ -3,6 +3,7 @@
  * Uses NTN_API_TOKEN env var (NOTION_TOKEN is a reserved prefix in the Workers SDK).
  */
 import { Client } from "@notionhq/client";
+import { isDeadGitHubItemsDatabaseId } from "./notion-schema.js";
 
 let cachedClient: Client | null = null;
 
@@ -50,6 +51,12 @@ export function getDeadLettersDatabaseId(): string {
 export function getGitHubItemsDatabaseId(): string {
   const id = process.env.GITHUB_ITEMS_DATABASE_ID;
   if (!id) throw new Error("GITHUB_ITEMS_DATABASE_ID is not set");
+  if (isDeadGitHubItemsDatabaseId(id)) {
+    throw new Error(
+      "GITHUB_ITEMS_DATABASE_ID points at the dead GitHub Items collection (8c8a07b9…). " +
+        "Set it to GitHub Items (Sync) 3e789948-1fee-4af2-ac07-7e462e5c1e3e."
+    );
+  }
   return id;
 }
 

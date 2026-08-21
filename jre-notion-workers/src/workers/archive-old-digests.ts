@@ -5,11 +5,97 @@
 import type { Client } from "@notionhq/client";
 import { getDocsDatabaseId, getHomeDocsDatabaseId } from "../shared/notion-client.js";
 import { subDays, differenceInDays } from "date-fns";
+import { DOC_TYPE_AI_CODEBASE_ASSESSMENT } from "../shared/notion-schema.js";
 import type {
   ArchiveOldDigestsInput,
   ArchiveOldDigestsOutput,
   ArchivedDigest,
 } from "../shared/types.js";
+
+async function archiveAssessmentsFromDatabase(
+  notion: Client,
+  dbId: string,
+  dbLabel: string,
+  cutoffISO: string,
+  maxPages: number,
+  dryRun: boolean
+): Promise<{ digests: ArchivedDigest[]; totalErrors: number }> {
+  const isHomeDocs = dbLabel === "Home Docs";
+  const docTypeProp = isHomeDocs ? "Doc Type" : "Document Type";
+  const titleProp = isHomeDocs ? "Doc" : "Name";
+
+  const response = await notion.databases.query({
+    database_id: dbId,
+    filter: {
+      and: [
+        { property: "Created time", created_time: { before: cutoffISO } },
+        { property: docTypeProp, select: { equals: DOC_TYPE_AI_CODEBASE_ASSESSMENT } },
+        { property: "Status", status: { does_not_equal: "Archived" } },
+      ],
+    } as never,
+    sorts: [{ property: "Created time", direction: "ascending" }],
+    page_size: 100,
+  });
+
+  const digests: ArchivedDigest[] = [];
+  let totalErrors = 0;
+  const now = new Date();
+  const pagesToProcess = response.results.slice(0, maxPages);
+
+  for (const page of pagesToProcess) {
+    const p = page as {
+      id: string;
+      created_time?: string;
+      properties?: Record<string, unknown>;
+    };
+
+    let title = "";
+    const nameProp = p.properties?.[titleProp];
+    if (nameProp && typeof nameProp === "object" && "title" in nameProp) {
+      const arr = (nameProp as { title: Array<{ plain_text?: string }> }).title;
+      title = arr?.map((t) => t.plain_text ?? "").join("") ?? "";
+    }
+
+    let statusBefore: string | null = null;
+    const statusProp = p.properties?.["Status"];
+    if (statusProp && typeof statusProp === "object" && "status" in statusProp) {
+      const st = (statusProp as { status: { name?: string } | null }).status;
+      statusBefore = st?.name ?? null;
+    }
+
+    const createdTime = p.created_time ?? "";
+    const ageDays = createdTime ? differenceInDays(now, new Date(createdTime)) : 0;
+
+    let archived = false;
+    if (!dryRun) {
+      try {
+        await notion.pages.update({
+          page_id: p.id,
+          properties: {
+            Status: { status: { name: "Archived" } },
+          } as never,
+        });
+        archived = true;
+        console.log("[archive-old-digests] archived assessment:", title, ageDays, "days old");
+      } catch (e) {
+        totalErrors++;
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[archive-old-digests] assessment update error:", title, msg);
+      }
+    }
+
+    digests.push({
+      page_id: p.id,
+      title,
+      created_time: createdTime,
+      age_days: ageDays,
+      status_before: statusBefore,
+      archived,
+    });
+  }
+
+  return { digests, totalErrors };
+}
 
 async function archiveFromDatabase(
   notion: Client,
@@ -124,20 +210,26 @@ export async function executeArchiveOldDigests(
     const dbLabels: string[] = [];
 
     if (targetDatabase === "docs" || targetDatabase === "both") {
-      const result = await archiveFromDatabase(
+      const digestResult = await archiveFromDatabase(
         notion, getDocsDatabaseId(), "Docs", cutoffISO, maxPages, excludeDocTypes, dryRun
       );
-      allDigests.push(...result.digests);
-      totalErrors += result.totalErrors;
+      allDigests.push(...digestResult.digests);
+      totalErrors += digestResult.totalErrors;
+
+      const assessmentResult = await archiveAssessmentsFromDatabase(
+        notion, getDocsDatabaseId(), "Docs", cutoffISO, maxPages, dryRun
+      );
+      allDigests.push(...assessmentResult.digests);
+      totalErrors += assessmentResult.totalErrors;
       dbLabels.push("Docs");
     }
 
     if (targetDatabase === "home_docs" || targetDatabase === "both") {
-      const result = await archiveFromDatabase(
+      const digestResult = await archiveFromDatabase(
         notion, getHomeDocsDatabaseId(), "Home Docs", cutoffISO, maxPages, excludeDocTypes, dryRun
       );
-      allDigests.push(...result.digests);
-      totalErrors += result.totalErrors;
+      allDigests.push(...digestResult.digests);
+      totalErrors += digestResult.totalErrors;
       dbLabels.push("Home Docs");
     }
 

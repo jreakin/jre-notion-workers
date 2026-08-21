@@ -22,6 +22,7 @@ import { executeTagUntaggedDocs } from "./workers/tag-untagged-docs.js";
 import { executeValidateProjectCompleteness } from "./workers/validate-project-completeness.js";
 import { executeResolveStaleDeadLetters } from "./workers/resolve-stale-dead-letters.js";
 import { executeValidateDatabaseReferences } from "./workers/validate-database-references.js";
+import { executeValidateRelationIntegrity } from "./workers/validate-relation-integrity.js";
 import { executeEstimateGitHubHours } from "./workers/estimate-github-hours.js";
 import { executeSyncTimeLog } from "./workers/sync-time-log.js";
 import { executeWriteAgentOpsRun } from "./workers/write-agent-ops-run.js";
@@ -57,6 +58,7 @@ import type {
   ValidateProjectCompletenessInput,
   ResolveStaleDeadLettersInput,
   ValidateDatabaseReferencesInput,
+  ValidateRelationIntegrityInput,
   EstimateGitHubHoursInput,
   SyncTimeLogInput,
   WriteAgentOpsRunInput,
@@ -452,6 +454,22 @@ worker.tool("validate-database-references", {
     executeValidateDatabaseReferences(input as unknown as ValidateDatabaseReferencesInput, getNotionClient()) as never,
 });
 
+// ── validate-relation-integrity ────────────────────────────────────
+
+worker.tool("validate-relation-integrity", {
+  title: "Validate Relation Integrity",
+  description:
+    "Dry-run validator for Docs↔Client/Project relation integrity: Docs missing Client, Project pointed at non-Project pages, Task client/project mismatch, parked child pages. Does not auto-guess Client or auto-fix.",
+  schema: j.object({
+    dry_run: j.boolean().nullable(),
+    log_dead_letters: j.boolean().nullable(),
+    max_pages: j.number().nullable(),
+    check_parked_children: j.boolean().nullable(),
+  }),
+  execute: (input, context) =>
+    executeValidateRelationIntegrity(input as unknown as ValidateRelationIntegrityInput, getNotionClient()) as never,
+});
+
 // ── estimate-github-hours ──────────────────────────────────────────
 
 worker.tool("estimate-github-hours", {
@@ -606,6 +624,7 @@ worker.tool("create-client-review-task", {
   schema: j.object({
     source_page_id: j.string(),
     client_id: j.string(),
+    project_id: j.string().nullable(),
     reason: j.string(),
     priority: j.enum("🔴 High", "🟡 Medium", "🟢 Low").nullable(),
   }),

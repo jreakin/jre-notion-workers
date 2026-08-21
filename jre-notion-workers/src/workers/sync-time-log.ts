@@ -11,6 +11,12 @@ import {
   getGitHubItemsDatabaseId,
   getTimeLogDatabaseId,
 } from "../shared/notion-client.js";
+import {
+  readGitHubItemClientIds,
+  readGitHubItemProjectIds,
+  readGitHubItemTaskIds,
+  readRelationIds,
+} from "../shared/notion-schema.js";
 import type {
   SyncTimeLogInput,
   SyncTimeLogOutput,
@@ -71,14 +77,11 @@ export function parseGitHubUrl(
 }
 
 /** Read an array of page IDs from a Notion relation property. */
-export function readRelationIds(
+export function readRelationIdsFromProps(
   properties: Record<string, unknown> | undefined,
   propName: string
 ): string[] {
-  const prop = properties?.[propName];
-  if (!prop || typeof prop !== "object" || !("relation" in prop)) return [];
-  const rel = (prop as { relation: Array<{ id: string }> | null }).relation;
-  return (rel ?? []).map((r) => r.id);
+  return readRelationIds(properties, propName);
 }
 
 /** Read a plain-text title property. */
@@ -237,9 +240,9 @@ async function loadGitHubItems(
       const labels = readMultiSelect(props, "Labels");
       const createdDate = readDateStart(props, "Created");
       const updatedDate = readDateStart(props, "Updated");
-      const clientIds = readRelationIds(props, "Client");
-      const projectIds = readRelationIds(props, "Project");
-      const taskIds = readRelationIds(props, "Task");
+      const clientIds = readGitHubItemClientIds(props);
+      const projectIds = readGitHubItemProjectIds(props);
+      const taskIds = readGitHubItemTaskIds(props);
 
       // Apply repo filter if set
       if (repoFilter.length > 0) {

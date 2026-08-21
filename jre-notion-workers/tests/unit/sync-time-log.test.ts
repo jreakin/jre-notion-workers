@@ -83,6 +83,15 @@ function makeGitHubItemPage(item: MockGitHubItem): Record<string, unknown> {
       Labels: {
         multi_select: (item.labels ?? []).map((l) => ({ name: l })),
       },
+      Clients: {
+        relation: (item.clientIds ?? []).map((id) => ({ id })),
+      },
+      "📊 Projects": {
+        relation: (item.projectIds ?? []).map((id) => ({ id })),
+      },
+      "✅ Tasks": {
+        relation: (item.taskIds ?? []).map((id) => ({ id })),
+      },
       Client: {
         relation: (item.clientIds ?? []).map((id) => ({ id })),
       },

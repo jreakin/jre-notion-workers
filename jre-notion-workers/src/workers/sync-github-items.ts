@@ -10,6 +10,11 @@ import {
   getGitHubToken,
 } from "../shared/notion-client.js";
 import { classifyGitHubError, GitHubApiError } from "../shared/github-utils.js";
+import {
+  buildGitHubItemProjectRelation,
+  readGitHubItemClientIds,
+  readGitHubItemProjectIds,
+} from "../shared/notion-schema.js";
 import type {
   GitHubSource,
   SyncGitHubItemsInput,
@@ -299,10 +304,9 @@ interface ExistingRow {
   clientIds: string[];
 }
 
-/** Relations that an Issue/PR can inherit from its parent Repo row. */
+/** Relations that an Issue/PR can inherit from its parent Repo row (Project only — no Client reverse link). */
 interface InheritedRelations {
   projectIds: string[];
-  clientIds: string[];
 }
 
 /**
@@ -352,8 +356,8 @@ async function preloadNotionRows(
         existingType = sel?.name ?? "";
       }
 
-      const projectIds = readRelationIds(p.properties, "Project");
-      const clientIds = readRelationIds(p.properties, "Client");
+      const projectIds = readGitHubItemProjectIds(p.properties);
+      const clientIds = readGitHubItemClientIds(p.properties);
 
       map.set(ghUrl.toLowerCase(), {
         id: p.id,
@@ -372,7 +376,7 @@ async function preloadNotionRows(
 }
 
 /**
- * Extract page IDs from a Notion relation property.
+ * Extract page IDs from a Notion relation property (local alias — prefer notion-schema helpers).
  */
 function readRelationIds(
   properties: Record<string, unknown> | undefined,
@@ -385,8 +389,9 @@ function readRelationIds(
 }
 
 /**
- * Builds a lookup from repo full_name (lowercase) → inherited relations.
- * Only includes Repo-type rows that have at least one relation set.
+ * Builds a lookup from repo full_name (lowercase) → inherited Project relation.
+ * Only includes Repo-type rows that have a Project linked. Client is intentionally
+ * excluded to avoid reverse-relation bloat on Client pages.
  */
 function buildRelationInheritanceMap(
   existingRows: Map<string, ExistingRow>
@@ -395,15 +400,13 @@ function buildRelationInheritanceMap(
 
   for (const [url, row] of existingRows) {
     if (row.type !== "Repo") continue;
-    if (row.projectIds.length === 0 && row.clientIds.length === 0) continue;
+    if (row.projectIds.length === 0) continue;
 
-    // Extract owner/repo from URL: https://github.com/Owner/Repo → owner/repo
     const match = url.match(/github\.com\/([^/]+\/[^/]+)/i);
     if (!match) continue;
 
     map.set(match[1]!.toLowerCase(), {
       projectIds: row.projectIds,
-      clientIds: row.clientIds,
     });
   }
 
@@ -450,11 +453,9 @@ function buildIssueProperties(
   if (labels.length > 0) {
     props.Labels = { multi_select: labels };
   }
-  if (relations?.projectIds.length) {
-    props.Project = { relation: relations.projectIds.map((id) => ({ id })) };
-  }
-  if (relations?.clientIds.length) {
-    props.Client = { relation: relations.clientIds.map((id) => ({ id })) };
+  const projectRelation = buildGitHubItemProjectRelation(relations?.projectIds ?? []);
+  if (projectRelation) {
+    Object.assign(props, projectRelation);
   }
   return props;
 }
@@ -480,11 +481,9 @@ function buildPRProperties(
   if (labels.length > 0) {
     props.Labels = { multi_select: labels };
   }
-  if (relations?.projectIds.length) {
-    props.Project = { relation: relations.projectIds.map((id) => ({ id })) };
-  }
-  if (relations?.clientIds.length) {
-    props.Client = { relation: relations.clientIds.map((id) => ({ id })) };
+  const projectRelation = buildGitHubItemProjectRelation(relations?.projectIds ?? []);
+  if (projectRelation) {
+    Object.assign(props, projectRelation);
   }
   return props;
 }
@@ -786,7 +785,7 @@ export async function executeSyncGitHubItems(
       const [owner, repoName] = repo.full_name.split("/");
       if (!owner || !repoName) { reposProcessed++; continue; }
 
-      // Track unlinked repos (no Client relation)
+      // Track unlinked repos (no 📊 Projects relation on the Repo row)
       const repoKey = repo.full_name.toLowerCase();
       if (!inheritanceMap.has(repoKey)) {
         unlinkedRepos++;
@@ -922,7 +921,7 @@ export async function executeSyncGitHubItems(
     const completionLabel = isComplete ? "" : "⚠️ Partial — ";
     const openOnlyNote = openOnly ? " (open only)" : "";
     const linkedNote =
-      unlinkedRepos > 0 ? ` (${unlinkedRepos} repos unlinked to Client)` : "";
+      unlinkedRepos > 0 ? ` (${unlinkedRepos} repos unlinked to 📊 Projects)` : "";
     const budgetNote =
       budgetSkipped > 0 ? ` Budget exhausted — ${budgetSkipped} items deferred.` : "";
     const resumeNote = resumeCursor
