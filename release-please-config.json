@@ -1,13 +1,14 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
-    ".": {
+    "jre-notion-workers": {
       "release-type": "node",
       "package-name": "jre-notion-workers",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "../CHANGELOG.md",
+      "include-component-in-tag": true
     }
   },
-  "pull-request-title-pattern": "chore(main): release ${version}",
+  "pull-request-title-pattern": "chore(main): release ${component} v${version}",
   "pull-request-header": ":robot: I have created a release for jre-notion-workers.",
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
