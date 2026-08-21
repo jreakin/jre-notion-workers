@@ -60,6 +60,7 @@ This project uses the **tool-based** API: `Worker` + `.tool()` in `src/index.ts`
 | `auto-link-meeting-client`  | Fuzzy-matches AI Meeting Notes against Clients/Contacts to set relations |
 | `tag-untagged-docs`         | Infers Document Type from title patterns on untagged docs |
 | `validate-project-completeness` | Scans active Projects for data completeness issues (read-only) |
+| `validate-relation-integrity` | Dry-run validator for Docs↔Client/Project integrity; optional Dead Letter alerts |
 | `resolve-stale-dead-letters`| Auto-resolves Open dead letters when a successful run supersedes prior failures |
 | `validate-database-references` | Checks Notion database IDs are accessible; catches broken refs before cascade |
 | `estimate-github-hours`        | Estimates hours for a GitHub PR or issue from diff stats, labels, and complexity signals |
