@@ -8,11 +8,11 @@ CI reads secrets from a [1Password Environment](https://developer.1password.com/
 
 | Context | Tool | Auth |
 |--------|------|------|
-| **GitHub Actions** | `.github/workflows/sync-notion-secrets.yml` | `OP_SERVICE_ACCOUNT_TOKEN` (scoped to the Environment) + `NOTION_API_TOKEN` |
-| **Maintainer laptop** | `bash scripts/sync-notion-worker-secrets.sh` | `op` CLI + `NOTION_API_TOKEN` (or `ntn login`) |
+| **GitHub Actions** | `.github/workflows/sync-notion-secrets.yml` | `OP_SERVICE_ACCOUNT_TOKEN` (workers Environment) + `NOTION_API_TOKEN` from `OP_AS_CODE_ENVIRONMENT_ID` (preferred) or GitHub secret (fallback) |
+| **Maintainer laptop** | `bash scripts/sync-notion-worker-secrets.sh` | `op` CLI + `NOTION_API_TOKEN` from 1Password (or `ntn login`) |
 | **Worker runtime** | Notion-hosted worker | `NTN_API_TOKEN` and `*_DATABASE_ID` from worker env |
 
-**Important:** `NOTION_API_TOKEN` is a Notion **personal access token** for the `ntn` CLI. `NTN_API_TOKEN` on the worker is the **integration token** workers read at runtime — different credentials, often stored in the same 1Password Environment.
+**Important:** `NTN_WORKERS_TOKEN` (or `NOTION_API_TOKEN`) is the Notion **personal access token** for the `ntn` CLI. `NTN_API_TOKEN` on the worker is the **integration token** workers read at runtime — different credentials. The sync script maps `NTN_WORKERS_TOKEN` → `NOTION_API_TOKEN` because `ntn` only reads the latter env var name.
 
 ## One-time GitHub setup
 
@@ -32,9 +32,10 @@ Optional but recommended:
 | Secret | Purpose |
 |--------|---------|
 | `OP_SERVICE_ACCOUNT_TOKEN` | 1Password service account with **read access to the 1Password Environment** (`i6ul2k6tk5kzyszv465wzhdpnu`) — not just a vault |
-| `NOTION_API_TOKEN` | Notion PAT with Workers deploy/manage permission for workspace `c0b7d7f5-6298-81dd-8aad-0003d8ccc420` |
+| `OP_AS_CODE_ENVIRONMENT_ID` | **(Optional)** Separate 1Password Environment ID if the CLI PAT is stored outside the workers Environment |
+| `NOTION_API_TOKEN` | **(Fallback)** Notion PAT for `ntn` CLI. Only used if `NTN_WORKERS_TOKEN` is not in the workers 1Password Environment. Must **not** be the worker `NTN_API_TOKEN` integration token. |
 
-Create the PAT in [Notion Developer → Personal access tokens](https://www.notion.so/my-integrations).
+The workers 1Password Environment (`i6ul2k6tk5kzyszv465wzhdpnu`) should include **`NTN_WORKERS_TOKEN`** — the sync script reads it automatically and maps it to `NOTION_API_TOKEN` for `ntn`.
 
 If the existing `OP_SERVICE_ACCOUNT_TOKEN` was only scoped to vault `Dev`, it must be re-scoped (or a new service account issued) with read access to the Environment itself — vault access alone doesn't grant `op environment read` permission.
 
@@ -98,7 +99,9 @@ npm run build && ntn workers deploy
 
 | Symptom | Fix |
 |---------|-----|
-| `NOTION_API_TOKEN is not set` | Export PAT locally or add GitHub environment secret |
+| `NOTION_API_TOKEN is not set` | Add `NOTION_API_TOKEN` to your 1Password as-code Environment and set `OP_AS_CODE_ENVIRONMENT_ID` in GitHub, or export PAT locally / add GitHub environment secret |
+| `ntn Workers authentication failed (unauthorized)` | `NOTION_API_TOKEN` is wrong type (likely `NTN_API_TOKEN`), expired, or lacks Workers permission — regenerate PAT and store in 1Password as-code Environment |
+| `NOTION_API_TOKEN matches NTN_API_TOKEN` | Remove the GitHub secret value; store the PAT in 1Password and set `OP_AS_CODE_ENVIRONMENT_ID` |
 | `op CLI not found` | Install 1Password CLI (`install-cli-action` in CI; `brew install 1password-cli` locally) |
 | `OP_ENVIRONMENT_ID is not set` | Set it to `i6ul2k6tk5kzyszv465wzhdpnu` (or export as a step/job env var) |
 | `No production keys resolved` | Add the missing variable to the 1Password Environment; confirm the service account has read access to that Environment |
