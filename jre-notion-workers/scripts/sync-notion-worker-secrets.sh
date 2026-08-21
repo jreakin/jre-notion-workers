@@ -150,6 +150,8 @@ resolve_notion_api_token() {
     if op environment read "$OP_AS_CODE_ENVIRONMENT_ID" > "$as_code_env" 2>/dev/null; then
       if token="$(read_env_value_from_file "$as_code_env" "NOTION_API_TOKEN")"; then
         echo "Resolved NOTION_API_TOKEN from OP_AS_CODE_ENVIRONMENT_ID."
+      elif token="$(read_env_value_from_file "$as_code_env" "NTN_WORKERS_TOKEN")"; then
+        echo "Resolved NTN_WORKERS_TOKEN from OP_AS_CODE_ENVIRONMENT_ID (mapped to NOTION_API_TOKEN for ntn CLI)."
       fi
     else
       echo "Warning: could not read OP_AS_CODE_ENVIRONMENT_ID ($OP_AS_CODE_ENVIRONMENT_ID)." >&2
@@ -160,6 +162,8 @@ resolve_notion_api_token() {
   if [[ -z "$token" ]] && [[ -s "$RAW_ENV" ]]; then
     if token="$(read_env_value "NOTION_API_TOKEN")"; then
       echo "Resolved NOTION_API_TOKEN from source environment."
+    elif token="$(read_env_value "NTN_WORKERS_TOKEN")"; then
+      echo "Resolved NTN_WORKERS_TOKEN from source environment (mapped to NOTION_API_TOKEN for ntn CLI)."
     fi
   fi
 
@@ -170,16 +174,16 @@ resolve_notion_api_token() {
 
   if [[ -z "$token" ]]; then
     cat >&2 <<'EOF'
-NOTION_API_TOKEN is not set.
+NOTION_API_TOKEN / NTN_WORKERS_TOKEN is not set.
 
 The ntn CLI requires a Notion personal access token (PAT) with Workers manage access —
 not the worker runtime integration token (NTN_API_TOKEN).
 
-Add NOTION_API_TOKEN to your 1Password Environment (preferred) or export it locally:
-  export NOTION_API_TOKEN=ntn_...
+Add NTN_WORKERS_TOKEN (or NOTION_API_TOKEN) to your 1Password Environment:
+  NTN_WORKERS_TOKEN=ntn_...
 
-For CI, set OP_AS_CODE_ENVIRONMENT_ID to the 1Password Environment that stores the PAT,
-or add NOTION_API_TOKEN to the GitHub Environment notion-workers-production.
+For CI, the sync script reads NTN_WORKERS_TOKEN from the workers 1Password Environment
+automatically. GitHub secret NOTION_API_TOKEN is only a fallback.
 EOF
     exit 1
   fi
