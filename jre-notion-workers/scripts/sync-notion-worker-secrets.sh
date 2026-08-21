@@ -2,14 +2,18 @@
 # scripts/sync-notion-worker-secrets.sh
 # Materialize production secrets from 1Password and push new/changed keys to Notion Workers.
 #
-# Local (1Password CLI):
+# Local (1Password CLI, item/field secret references):
 #   bash scripts/sync-notion-worker-secrets.sh
 #   DRY_RUN=1 bash scripts/sync-notion-worker-secrets.sh
 #
-# CI (after 1password/load-secrets-action exports env vars):
+# CI (1Password Environment, via `op environment read`):
+#   SOURCE=op-environment OP_ENVIRONMENT_ID=<environment-id> bash scripts/sync-notion-worker-secrets.sh
+#
+# CI (legacy — env vars pre-exported by another step, e.g. load-secrets-action):
 #   SOURCE=env bash scripts/sync-notion-worker-secrets.sh
 #
-# Requires: op (for SOURCE=1p), ntn CLI, NOTION_API_TOKEN (or ntn login) for ntn workers env.
+# Requires: op (for SOURCE=1p or SOURCE=op-environment), ntn CLI, NOTION_API_TOKEN
+# (or ntn login) for ntn workers env.
 # Open-source safe — no plaintext secrets in this file.
 
 set -euo pipefail
@@ -57,6 +61,20 @@ materialize_raw_env() {
       fi
       op inject -i "$OP_INJECT_FILE" -o "$RAW_ENV"
       ;;
+    op-environment)
+      if ! command -v op >/dev/null 2>&1; then
+        echo "op CLI not found (required for SOURCE=op-environment)." >&2
+        exit 1
+      fi
+      if [[ -z "${OP_ENVIRONMENT_ID:-}" ]]; then
+        echo "OP_ENVIRONMENT_ID is not set (required for SOURCE=op-environment)." >&2
+        exit 1
+      fi
+      # `op environment read` is a beta CLI feature — no op:// item/field paths
+      # required, just a service account (or desktop app session) scoped to
+      # the Environment itself.
+      op environment read "$OP_ENVIRONMENT_ID" > "$RAW_ENV"
+      ;;
     file)
       if [[ -z "$ENV_FILE" || ! -f "$ENV_FILE" ]]; then
         echo "SOURCE=file requires ENV_FILE pointing to an existing file." >&2
@@ -78,7 +96,7 @@ materialize_raw_env() {
       done < "$KEYS_FILE"
       ;;
     *)
-      echo "Unknown SOURCE=$SOURCE (use 1p, file, or env)." >&2
+      echo "Unknown SOURCE=$SOURCE (use 1p, op-environment, file, or env)." >&2
       exit 1
       ;;
   esac
