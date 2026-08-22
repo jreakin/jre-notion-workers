@@ -31,6 +31,7 @@ loadEnvLocal();
 
 import type { Client } from "@notionhq/client";
 import { getNotionClient, getGitHubItemsDatabaseId, getTimeLogDatabaseId } from "../src/shared/notion-client.js";
+import { TIME_LOG_PROPS } from "../src/shared/notion-schema.js";
 import {
   type GitHubItemRow,
   type EstimationResult,
@@ -275,7 +276,7 @@ export async function runBackfill(
                 new Date().toISOString().split("T")[0],
             },
           },
-          "GitHub Item": { relation: [{ id: item.id }] },
+          [TIME_LOG_PROPS.githubItem]: { relation: [{ id: item.id }] },
           Billable: { checkbox: false },
         };
 

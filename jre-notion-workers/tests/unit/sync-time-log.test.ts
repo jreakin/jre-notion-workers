@@ -4,6 +4,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { executeSyncTimeLog, parseGitHubUrl } from "../../src/workers/sync-time-log.js";
+import { TIME_LOG_PROPS } from "../../src/shared/notion-schema.js";
 import type { SyncTimeLogInput } from "../../src/shared/types.js";
 
 /* ── Env helpers ────────────────────────────────────────────────────── */
@@ -118,7 +119,7 @@ function makeTimeLogPage(entry: MockTimeLogEntry): Record<string, unknown> {
       Description: {
         title: [{ plain_text: entry.description }],
       },
-      "GitHub Item": {
+      [TIME_LOG_PROPS.githubItem]: {
         relation: entry.githubItemIds.map((id) => ({ id })),
       },
     },
@@ -291,7 +292,7 @@ describe("sync-time-log", () => {
 
     // Verify Notion page was created with correct properties
     const created = notion._createdPages[0]!;
-    expect(created["GitHub Item"]).toEqual({ relation: [{ id: "issue-page-1" }] });
+    expect(created[TIME_LOG_PROPS.githubItem]).toEqual({ relation: [{ id: "issue-page-1" }] });
     expect(created.Client).toEqual({ relation: [{ id: "client-abc" }] });
     expect(created.Project).toEqual({ relation: [{ id: "project-xyz" }] });
     expect(created.Billable).toEqual({ checkbox: false });

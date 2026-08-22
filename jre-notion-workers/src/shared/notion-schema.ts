@@ -46,6 +46,25 @@ export const DOCS_PROPS = {
   status: "Status",
 } as const;
 
+/** Time Log property names — writes use the live Sync relation only. */
+export const TIME_LOG_PROPS = {
+  githubItem: "GitHub Item Sync",
+  /** Dead relation to inaccessible GitHub Items collection — read fallback only. */
+  legacyGithubItem: "GitHub Item",
+  client: "Client",
+  project: "Project",
+  task: "Task",
+} as const;
+
+/** Read GitHub Item links from a Time Log page (live Sync property, then legacy). */
+export function readTimeLogGithubItemIds(
+  properties: Record<string, unknown> | undefined
+): string[] {
+  const sync = readRelationIds(properties, TIME_LOG_PROPS.githubItem);
+  if (sync.length > 0) return sync;
+  return readRelationIds(properties, TIME_LOG_PROPS.legacyGithubItem);
+}
+
 export function normalizeNotionId(id: string): string {
   return id.replace(/-/g, "").toLowerCase();
 }
