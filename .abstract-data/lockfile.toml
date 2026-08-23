@@ -1,0 +1,336 @@
+items = []
+
+[meta]
+version = 1
+created = "2026-08-23T00:48:23.670577Z"
+last_apply = "2026-08-23T00:48:10.973832Z"
+project_profile = ""
+cli_version = "1.18.0"
+
+[cache]
+manifest_sha = "062ccbed85607140f92d17109769a9945ec9254aa889a38145b07b07690cbe62"
+
+[[bootstrap_files]]
+target = ".claude/agents/agent-docs-freshness.md"
+applied_sha = "81c120c7c292ac54eed1b0c2441e47ed44c23d9dbc71375626b562a6451d6578"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/agents/apply-assessment-reviewer.md"
+applied_sha = "ac8cdfc79ef80689966eada9c5d2c5a4d33dfd4cb8f2a26af44fef55fa759d36"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/agents/apply-preflight-auditor.md"
+applied_sha = "5e24a392eab9ec8191eb89f33ef833e1aa801170d72d1066e2d52dc3bc246fdd"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/agents/playbooks/typescript-design-principles.md"
+applied_sha = "4f6be1d592c5374b3b03ae529732c0522cdb64881e486313728e0a911e680064"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/agents/python-design-principles-gate.md"
+applied_sha = "ff1e1ee856aa1a3eace24493f93d8d29786c9ed69013bbbaebbaf44be65e21df"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/agents/task-critic.md"
+applied_sha = "df510706437513a4c4d93d2d0c6193e873aa4eb008a196eb5838f6f31563ccf8"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/agents/typescript-design-principles-gate.md"
+applied_sha = "f5c5397536d6ab3a8412295975e1c9e593da8da19f41ee376cd0f52506465470"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/archive-session.sh"
+applied_sha = "833e24bea5683ffa7c2deeec7f0e0c834d8df9be35673923fe74ab870769da96"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/backfill-telemetry.sh"
+applied_sha = "5fc275bfc5ed10bbf3541abe6e8f765ac413818b9cec7f34366879d9529a8622"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/capabilities-review-confirm.sh"
+applied_sha = "ce0fdf285c158c6c06f0da8c5258f41c85160235f7c68901e12e3490c58f1da6"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/check-handoff.sh"
+applied_sha = "81d8dbd1868b024ba4256312028619f4b97309dcc9d41dd470b72e485774ee68"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/dev-env-integrity-gate.sh"
+applied_sha = "5e50f409bddd0163b73d3014843e077b9b1e0b3bbfff7b27af4946a2b5e808c2"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/dev-env-local-touch-tracker.sh"
+applied_sha = "809da8306613b1d3eaa53f46d1c80a4cf785b99837d567f25ebd2ef67316bb1b"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/dev-env-notion-touch-tracker.sh"
+applied_sha = "82ec17e91ba44dfd56b1858a876fd082b732340c56a5d73b39a6fe11f265efe8"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/eval-authoring-reminder.sh"
+applied_sha = "2f7ecdbd26aebbde25c025098339d31f37ff40bf558b9f9e72ddd4e779845f54"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/eval-golden-review-nudge.sh"
+applied_sha = "4a270e0a0a86be61bcd11cadf20ab0c80ecd9f7f197b8554500cd6e6e0941bea"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/gitbutler-enforcement.sh"
+applied_sha = "df3bd2f07f6cf53bf79022803e148e0e5a6a12e280b0bfec98e4983beb22cb87"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/notion-write-guard.sh"
+applied_sha = "9795bcaf896f39dd50afa7f167e483a6761bef17086d5c581db8062c402b635a"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/op-cli-guard.sh"
+applied_sha = "bebdee08b9cb6b16864e66701cc997e823e574e23beb81803eedcd618dc6fd56"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/package-manifest-drift.sh"
+applied_sha = "5965642f3ca0b576f9df5d110f97ceada3df329c996546ecc5242d5597248a63"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/plugin-enforcement-notice.sh"
+applied_sha = "d7671b96c785631db537ee0a1677b1d9b459a854e4ce95ef21a8759fd52cf719"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/plugin-payload-drift.sh"
+applied_sha = "7436a150d34900daf16e91b5331a6f33677250077e1b55716c707d01ee33c494"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/protect-sensitive-files.sh"
+applied_sha = "d6468cce17f60cd967b3eed9794aa5bfa30022f355e20ede02af8c74172e9ced"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/require-apply-preflight.sh"
+applied_sha = "5f78c059ba87344521b52152f152ec17d31e610c941dcdcdc3cef0e50779f0f1"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/session-py-baseline.sh"
+applied_sha = "3ad7951e840c87a5eb997be92fce180717c92eb3ec63728cfa8b5628b206c940"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/spec-eval-cursor-warn.sh"
+applied_sha = "bd6ea130fdddbc72b7ff6676ad12770e42151a761c446752abb2c763a5af5a38"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/spec-eval-gate.sh"
+applied_sha = "15f51a1b11e761dc2f373dae8e5d1a345dc016823aaf485c3cb8de426c072da8"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/surface-handoff.sh"
+applied_sha = "3bb86f0e2ae08490c61750741445ff20eaa7fda4474283a4f258788e303969f2"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/terraform-guard.sh"
+applied_sha = "ac966210b1806303f124fffc3cc2abe945134d5983c777c590dd2984932f8783"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/terraform-review-gate.sh"
+applied_sha = "9d1012d0b7a38b2e284555d7123a49e770bb2726c5c1fdb49eabf1de777c12d9"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/trigger-peer-audit.sh"
+applied_sha = "19ed4eb4eab733657a77a44b58ed79929bf6ebef85716c1604a2c4714f6ccf09"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/verify-commit.sh"
+applied_sha = "4f110381adefa490e4c0f09e7913266a0d02646b36b04032305d9adfa70e20fc"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/verify-submit.sh"
+applied_sha = "c6a11e855f5ddb688a83db1c5b6d6336759e76a450536af01e195540cc9d01bb"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/write-preflight-confirmed.sh"
+applied_sha = "06803d3355b16c656289b99503e8ee3bd9f61560d6f6c57140d084cad52a1cf5"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/hooks/write-session-confirmed.sh"
+applied_sha = "55047a2e6f7ec2f0e0f66d610579fbcb754f85e6368847eb1b65fcbfeeeaf395"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/op-guard.conf"
+applied_sha = "db04edcf18ac9c99e3fd9c26691f38b3e7177fe750a945269c67c266a942e0d7"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".claude/settings.json"
+applied_sha = "18677eb02cad8b6d699f491c5f74a6f984610c7b3878975eb6258a69a9023ec7"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks.json"
+applied_sha = "04d21183c830f54e62d307628d274233f4f3169f387dadd146071f17c3af82e1"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/archive-session.sh"
+applied_sha = "833e24bea5683ffa7c2deeec7f0e0c834d8df9be35673923fe74ab870769da96"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/capabilities-review-confirm.sh"
+applied_sha = "ce0fdf285c158c6c06f0da8c5258f41c85160235f7c68901e12e3490c58f1da6"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/check-handoff.sh"
+applied_sha = "81d8dbd1868b024ba4256312028619f4b97309dcc9d41dd470b72e485774ee68"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/eval-authoring-reminder.sh"
+applied_sha = "2f7ecdbd26aebbde25c025098339d31f37ff40bf558b9f9e72ddd4e779845f54"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/eval-golden-review-nudge.sh"
+applied_sha = "4a270e0a0a86be61bcd11cadf20ab0c80ecd9f7f197b8554500cd6e6e0941bea"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/gate.py"
+applied_sha = "b308a6784cf2e8bff811d4cfac19b2eace61a15a01395621e2aa38382ed5d0bb"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/gitbutler-enforcement.sh"
+applied_sha = "df3bd2f07f6cf53bf79022803e148e0e5a6a12e280b0bfec98e4983beb22cb87"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/notion-write-guard.sh"
+applied_sha = "9795bcaf896f39dd50afa7f167e483a6761bef17086d5c581db8062c402b635a"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/op-cli-guard.sh"
+applied_sha = "bebdee08b9cb6b16864e66701cc997e823e574e23beb81803eedcd618dc6fd56"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/package-manifest-drift.sh"
+applied_sha = "5965642f3ca0b576f9df5d110f97ceada3df329c996546ecc5242d5597248a63"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/plugin-payload-drift.sh"
+applied_sha = "7436a150d34900daf16e91b5331a6f33677250077e1b55716c707d01ee33c494"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/protect-sensitive-files.sh"
+applied_sha = "d6468cce17f60cd967b3eed9794aa5bfa30022f355e20ede02af8c74172e9ced"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/require-apply-preflight.sh"
+applied_sha = "5f78c059ba87344521b52152f152ec17d31e610c941dcdcdc3cef0e50779f0f1"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/require-notion-read.sh"
+applied_sha = "d486774125623100a6f836e72bfa10710376b5c24b601a13dd0358732b7bb493"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/secret-scan.sh"
+applied_sha = "9491b744024bfebfc1e67d8bc912e6c551790aced80938215cb30fb6b2e5030d"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/session-py-baseline.sh"
+applied_sha = "3ad7951e840c87a5eb997be92fce180717c92eb3ec63728cfa8b5628b206c940"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/spec-eval-cursor-warn.sh"
+applied_sha = "bd6ea130fdddbc72b7ff6676ad12770e42151a761c446752abb2c763a5af5a38"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/spec-eval-gate.sh"
+applied_sha = "15f51a1b11e761dc2f373dae8e5d1a345dc016823aaf485c3cb8de426c072da8"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/surface-handoff.sh"
+applied_sha = "3bb86f0e2ae08490c61750741445ff20eaa7fda4474283a4f258788e303969f2"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/terraform-guard.sh"
+applied_sha = "ac966210b1806303f124fffc3cc2abe945134d5983c777c590dd2984932f8783"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/trigger-peer-audit.sh"
+applied_sha = "19ed4eb4eab733657a77a44b58ed79929bf6ebef85716c1604a2c4714f6ccf09"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/verify-commit.sh"
+applied_sha = "4f110381adefa490e4c0f09e7913266a0d02646b36b04032305d9adfa70e20fc"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/verify-completion.sh"
+applied_sha = "8c6a9f1c96224809b9eac666ada67b32a3ed65ffbe6eeb894af0ae829ea92f96"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/verify-submit.sh"
+applied_sha = "c6a11e855f5ddb688a83db1c5b6d6336759e76a450536af01e195540cc9d01bb"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/hooks/write-session-confirmed.sh"
+applied_sha = "55047a2e6f7ec2f0e0f66d610579fbcb754f85e6368847eb1b65fcbfeeeaf395"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".cursor/mcp.json"
+applied_sha = "452b8d47aeb1371b5c7fd1afb180517ebb5bdb43c59c6b4310385eef3df6612b"
+applied_at = "2026-08-23T00:48:10.973832Z"
+
+[[bootstrap_files]]
+target = ".env.op.template"
+applied_sha = "99c4d1bb2926d636c5764fcb6832cd1d8cd2036bfbf693fb1a2dc3329d2cfaf4"
+applied_at = "2026-08-23T00:48:10.973832Z"

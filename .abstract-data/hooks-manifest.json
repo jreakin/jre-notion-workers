@@ -1,0 +1,145 @@
+{
+  "entries": {
+    ".claude/hooks/archive-session.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "833e24bea5683ffa7c2deeec7f0e0c834d8df9be35673923fe74ab870769da96"
+    },
+    ".claude/hooks/backfill-telemetry.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "5fc275bfc5ed10bbf3541abe6e8f765ac413818b9cec7f34366879d9529a8622"
+    },
+    ".claude/hooks/capabilities-review-confirm.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "ce0fdf285c158c6c06f0da8c5258f41c85160235f7c68901e12e3490c58f1da6"
+    },
+    ".claude/hooks/check-handoff.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "81d8dbd1868b024ba4256312028619f4b97309dcc9d41dd470b72e485774ee68"
+    },
+    ".claude/hooks/dev-env-integrity-gate.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "5e50f409bddd0163b73d3014843e077b9b1e0b3bbfff7b27af4946a2b5e808c2"
+    },
+    ".claude/hooks/dev-env-local-touch-tracker.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "809da8306613b1d3eaa53f46d1c80a4cf785b99837d567f25ebd2ef67316bb1b"
+    },
+    ".claude/hooks/dev-env-notion-touch-tracker.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "82ec17e91ba44dfd56b1858a876fd082b732340c56a5d73b39a6fe11f265efe8"
+    },
+    ".claude/hooks/eval-authoring-reminder.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "2f7ecdbd26aebbde25c025098339d31f37ff40bf558b9f9e72ddd4e779845f54"
+    },
+    ".claude/hooks/eval-golden-review-nudge.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "4a270e0a0a86be61bcd11cadf20ab0c80ecd9f7f197b8554500cd6e6e0941bea"
+    },
+    ".claude/hooks/gitbutler-enforcement.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "df3bd2f07f6cf53bf79022803e148e0e5a6a12e280b0bfec98e4983beb22cb87"
+    },
+    ".claude/hooks/notion-write-guard.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "9795bcaf896f39dd50afa7f167e483a6761bef17086d5c581db8062c402b635a"
+    },
+    ".claude/hooks/op-cli-guard.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "bebdee08b9cb6b16864e66701cc997e823e574e23beb81803eedcd618dc6fd56"
+    },
+    ".claude/hooks/package-manifest-drift.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "5965642f3ca0b576f9df5d110f97ceada3df329c996546ecc5242d5597248a63"
+    },
+    ".claude/hooks/plugin-enforcement-notice.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "d7671b96c785631db537ee0a1677b1d9b459a854e4ce95ef21a8759fd52cf719"
+    },
+    ".claude/hooks/plugin-payload-drift.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "7436a150d34900daf16e91b5331a6f33677250077e1b55716c707d01ee33c494"
+    },
+    ".claude/hooks/protect-sensitive-files.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "d6468cce17f60cd967b3eed9794aa5bfa30022f355e20ede02af8c74172e9ced"
+    },
+    ".claude/hooks/require-apply-preflight.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "5f78c059ba87344521b52152f152ec17d31e610c941dcdcdc3cef0e50779f0f1"
+    },
+    ".claude/hooks/session-py-baseline.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "3ad7951e840c87a5eb997be92fce180717c92eb3ec63728cfa8b5628b206c940"
+    },
+    ".claude/hooks/spec-eval-cursor-warn.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "bd6ea130fdddbc72b7ff6676ad12770e42151a761c446752abb2c763a5af5a38"
+    },
+    ".claude/hooks/spec-eval-gate.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "15f51a1b11e761dc2f373dae8e5d1a345dc016823aaf485c3cb8de426c072da8"
+    },
+    ".claude/hooks/surface-handoff.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "3bb86f0e2ae08490c61750741445ff20eaa7fda4474283a4f258788e303969f2"
+    },
+    ".claude/hooks/terraform-guard.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "ac966210b1806303f124fffc3cc2abe945134d5983c777c590dd2984932f8783"
+    },
+    ".claude/hooks/terraform-review-gate.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "9d1012d0b7a38b2e284555d7123a49e770bb2726c5c1fdb49eabf1de777c12d9"
+    },
+    ".claude/hooks/trigger-peer-audit.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "19ed4eb4eab733657a77a44b58ed79929bf6ebef85716c1604a2c4714f6ccf09"
+    },
+    ".claude/hooks/verify-commit.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "4f110381adefa490e4c0f09e7913266a0d02646b36b04032305d9adfa70e20fc"
+    },
+    ".claude/hooks/verify-submit.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "c6a11e855f5ddb688a83db1c5b6d6336759e76a450536af01e195540cc9d01bb"
+    },
+    ".claude/hooks/write-preflight-confirmed.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "06803d3355b16c656289b99503e8ee3bd9f61560d6f6c57140d084cad52a1cf5"
+    },
+    ".claude/hooks/write-session-confirmed.sh": {
+      "baseline": false,
+      "package_version": "1.18.0",
+      "sha256": "55047a2e6f7ec2f0e0f66d610579fbcb754f85e6368847eb1b65fcbfeeeaf395"
+    }
+  },
+  "schema": 2
+}

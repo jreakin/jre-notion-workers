@@ -16,10 +16,23 @@ dist/
 !.env.1p
 
 # ── Local agent/IDE state (per-developer, never shared) ───────────────
-# .claude/settings.local.json has held a plaintext Notion PAT in a Bash
-# allow-rule. It must never be committed.
-.claude/
+# settings.local.json has held a plaintext Notion PAT in a Bash allow-rule.
+# Commit shared hooks/agents/settings.json; never commit local secrets or
+# session ledgers.
+.claude/settings.local.json
+.claude/state/
+.claude/handoffs/
+.claude/command-log.txt
+.claude/cross-agent-issues.json
+.claude/code-reviewer-receipt.json
+.claude/agent-config-audit-receipt.json
+.claude/state/1p-pending.json
+.abstract-data/pending-issues.jsonl
+.abstract-data/session-confirmed.json
+.abstract-data/transcripts/
+.abstract-data/kv/
 .cursor/hooks/state/
 
 # ── OS noise ──────────────────────────────────────────────────────────
 .DS_Store
+.abstract-data/backups/

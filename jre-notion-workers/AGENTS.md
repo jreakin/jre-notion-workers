@@ -1,5 +1,9 @@
 # AGENTS.md — JavaScript / TypeScript base (jre-notion-workers)
 
+**Version:** 1.1.0 | **Last Updated:** 2026-08-22
+
+Canonical repo-level agent config (enforcement, Notion References, tool permissions) is `/AGENTS.md` at the git root. This file is the package-level overlay for Cursor Cloud and in-package commands.
+
 Base standards and conventions for this Notion Workers project and the 11-agent system it supports.
 
 ## Runtime & toolchain
