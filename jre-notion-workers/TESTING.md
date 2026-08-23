@@ -1,5 +1,9 @@
 # TESTING.md — jre-notion-workers
 
+**Version:** 1.0.0 | **Last Updated:** 2026-08-22
+
+Repo-root copy: `/docs/TESTING.md`.
+
 Test strategy, patterns, and CI checklist for this Notion Workers repo. Combines base JS/TS test practices with Worker-specific patterns.
 
 ## Testing stack

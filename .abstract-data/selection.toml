@@ -1,0 +1,28 @@
+# Curated deploy selection for jre-notion-workers (TypeScript Notion Worker).
+#
+# Semantics (abstract-data ADR-0035):
+#   - Missing key  → deploy ALL of that type
+#   - Present key with [] → deploy NONE of that type
+# Enforcement bundled hooks (gate.py, verify-completion, etc.) always deploy.
+
+[select.bundled]
+community_skill = []
+skill = []
+command = []
+optional_agent = ["typescript-design-principles-gate"]
+
+[select.notion]
+subagent = [
+  "researcher",
+  "reviewer",
+  "security-auditor",
+  "task-critic",
+  "test-writer",
+  "doc-writer",
+  "post-alignment-code-conformance-reviewer",
+  "implementer",
+  "spec-reviewer",
+]
+skill = []
+command = []
+hook = []

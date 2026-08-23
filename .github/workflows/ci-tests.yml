@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  workflow_call:
+
+defaults:
+  run:
+    working-directory: jre-notion-workers
+
+jobs:
+  tests:
+    name: ubuntu / unit + coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - name: Run unit tests with coverage
+        run: bun test tests/unit --coverage
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            jre-notion-workers/coverage
+          retention-days: 5
+          if-no-files-found: ignore

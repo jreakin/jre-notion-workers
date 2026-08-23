@@ -1,0 +1,11 @@
+# Project-scoped Grok config. Only [mcp_servers], [plugins], and [permission]
+# are read from this file; everything else comes from ~/.grok/config.toml.
+
+[permission]
+deny = [
+  "Bash(rm -rf*)",
+  "Bash(git push --force*)",
+  "Bash(git reset --hard*)",
+  "Bash(git push --force:*)",
+  "Bash(git push --force-with-lease:*)",
+]

@@ -1,5 +1,9 @@
 # ARCHITECTURE.md — jre-notion-workers
 
+**Version:** 1.0.0 | **Last Updated:** 2026-08-22
+
+Repo-root copy (with current worker catalog): `/docs/ARCHITECTURE.md`. This file stays as the in-package companion.
+
 System design, module boundaries, and data flow for this Notion Workers repo.
 
 ## Core design principles

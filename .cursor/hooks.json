@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "./.cursor/hooks/capabilities-review-confirm.sh"
+      },
+      {
+        "command": "./.cursor/hooks/surface-handoff.sh"
+      },
+      {
+        "command": "./.cursor/hooks/session-py-baseline.sh"
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "./.cursor/hooks/require-apply-preflight.sh",
+        "matcher": "Shell"
+      },
+      {
+        "command": "./.cursor/hooks/gitbutler-enforcement.sh",
+        "matcher": "Shell"
+      },
+      {
+        "command": "./.cursor/hooks/op-cli-guard.sh",
+        "matcher": "Shell"
+      },
+      {
+        "command": "./.cursor/hooks/terraform-guard.sh",
+        "matcher": "Shell"
+      },
+      {
+        "command": "./.cursor/hooks/notion-write-guard.sh",
+        "matcher": "Shell"
+      },
+      {
+        "command": "./.cursor/hooks/spec-eval-gate.sh",
+        "matcher": "Write"
+      },
+      {
+        "command": "./.cursor/hooks/require-notion-read.sh",
+        "matcher": "Write"
+      },
+      {
+        "command": "./.cursor/hooks/trigger-peer-audit.sh",
+        "matcher": "Write"
+      },
+      {
+        "command": "./.cursor/hooks/protect-sensitive-files.sh",
+        "matcher": "Write"
+      },
+      {
+        "command": "python3 ./.cursor/hooks/gate.py pretool",
+        "matcher": "Shell|Write|MultiEdit"
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "./.cursor/hooks/verify-commit.sh",
+        "matcher": "Shell"
+      },
+      {
+        "command": "./.cursor/hooks/verify-submit.sh",
+        "matcher": "Shell"
+      },
+      {
+        "command": "./.cursor/hooks/eval-golden-review-nudge.sh",
+        "matcher": "Shell"
+      },
+      {
+        "command": "./.cursor/hooks/secret-scan.sh",
+        "matcher": "Write"
+      },
+      {
+        "command": "./.cursor/hooks/terraform-guard.sh",
+        "matcher": "Write"
+      },
+      {
+        "command": "./.cursor/hooks/package-manifest-drift.sh",
+        "matcher": "Write"
+      },
+      {
+        "command": "./.cursor/hooks/plugin-payload-drift.sh",
+        "matcher": "Write"
+      }
+    ],
+    "stop": [
+      {
+        "command": "./.cursor/hooks/write-session-confirmed.sh"
+      },
+      {
+        "command": "./.cursor/hooks/check-handoff.sh"
+      },
+      {
+        "command": "./.cursor/hooks/archive-session.sh"
+      },
+      {
+        "command": "./.cursor/hooks/eval-authoring-reminder.sh"
+      },
+      {
+        "command": "./.cursor/hooks/verify-completion.sh"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "./.cursor/hooks/spec-eval-cursor-warn.sh"
+      }
+    ]
+  }
+}

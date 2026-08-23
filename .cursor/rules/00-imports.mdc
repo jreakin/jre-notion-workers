@@ -1,0 +1,7 @@
+---
+description: Always load repo-root AGENTS.md
+alwaysApply: true
+---
+<!-- Version: 1.0.0 | Last Updated: 2026-08-22 -->
+
+Read `AGENTS.md` at the git repository root before editing. The app package is `jre-notion-workers/`. Use Bun locally, `ntn` for deploy, Context7 before citing library APIs, and GitButler `but` for all git writes.
