@@ -1,7 +1,7 @@
 ---
 name: security-auditor
 version: 1.0.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Bash(git log:*), Bash(git diff:*)
 description: >
   Use before any release, or when touching OAuth/credential/keyring code. Audits for secret leakage, unsafe deserialization, and live-mutation safety gaps specific to this project's Zoho-credential and apply-gate risk profile.

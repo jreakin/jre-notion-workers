@@ -1,7 +1,7 @@
 ---
 name: agent-docs-freshness
 version: 1.0.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Bash
 description: >
   Optional auto-detected auditor of agent-doc <-> capabilities-inventory drift. Invoke after `abstract-data apply`/`retrofit` (or before a PR that changes agent docs or tooling) to check that every capability in .agents/CAPABILITIES.md is ref

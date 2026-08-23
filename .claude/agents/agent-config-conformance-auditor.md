@@ -2,7 +2,7 @@
 name: agent-config-conformance-auditor
 version: 1.0.0
 
-model: claude-opus-4-1
+model: inherit
 tools: Read, Grep, Glob, Bash
 description: >
   Post-implementation structural, versioning, and Context7-currency audit of all AI-tool configuration surfaces (.claude/, .cursor/, .github/copilot-instructions.md, GEMINI.md) and their versioned artifacts (skills, subagents, playbooks, agen

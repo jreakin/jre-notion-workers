@@ -35,12 +35,16 @@
 - [x] bun typecheck + unit tests in app package
   - Verify: `cd jre-notion-workers && bun run check && bun test tests/unit`
   - Risk: HIGH
+- [x] Project `.grok/` dual layout (agents/skills/commands/hooks/rules)
+  - Verify: `test -L .grok/agents/task-critic.md && test -f .grok/hooks/enforcement.json && test -f .grok/hooks/with-claude-payload.py`
+  - Risk: HIGH
 
 ## Files in scope
 
 - Repo-root agent docs: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `NOTES.md`, `REVIEWERS.md`, `AGENT-DOCS-VERSIONING.md`
 - Companion docs: `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/GUARDRAILS.md`, `docs/DEPLOYMENTS.md`, `docs/RUNBOOK.md`, `docs/adr/`, `prompts/`, `plans/`
 - Enforcement: `.claude/hooks/`, `.claude/agents/`, `.claude/settings.json`, `.claude/scripts/`, `.cursor/rules/`
+- Grok dual layout: `.grok/{agents,skills,commands,hooks,rules,config.toml,README.md}`
 - CI: `.github/workflows/ci.yml`, `ci-quality.yml`, `ci-tests.yml`, `ci-report.yml` (do not replace existing `release-please.yml`, `sync-notion-secrets.yml`, `label.yml`)
 - Gitignore: allow committed `.claude/` hooks/agents/settings while keeping `settings.local.json` and state out of git
 - Nested package docs: `jre-notion-workers/AGENTS.md` and companions (update, do not delete)
@@ -66,6 +70,7 @@
 
 - `.abstract-data/` initialized and content applied from cache (`skip_pull` because MCP Notion token is not in this shell)
 - Enforcement bundle + universal subagents on disk and wired in `.claude/settings.json`
+- `.grok/` dual layout: spawnable agents, skills, commands, Grok hook JSON + camelCase adapter, `config.toml` deny rules
 - Root `AGENTS.md` with resolved Notion References
 - `task-critic` PASS receipt hash-bound to this file
 - Post-alignment code-conformance review disposed

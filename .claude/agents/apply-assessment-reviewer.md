@@ -1,7 +1,7 @@
 ---
 name: apply-assessment-reviewer
 version: 1.0.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Bash
 description: >
   Optional auto-detected reviewer of an apply/retrofit assessment. Invoke after `abstract-data assess-apply` (or an apply/retrofit run) to critique the scorecard — what the four dimensions missed, which gaps are most costly, and concrete prom

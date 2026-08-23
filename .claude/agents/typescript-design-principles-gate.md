@@ -1,7 +1,7 @@
 ---
 name: typescript-design-principles-gate
 version: 1.1.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Bash
 description: >
   Blocking design-principles gate for TypeScript diffs (Next.js App Router, React, TanStack Router/Query). Invoke before a commit or PR merge that touches *.ts or *.tsx files. Provide the git diff or changed TS/TSX files plus the repo package

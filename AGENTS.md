@@ -1,6 +1,6 @@
 # AGENTS.md — jre-notion-workers
 
-**Version:** 1.0.0 | **Last Updated:** 2026-08-22 | **Project Type:** worker (TypeScript / Notion Workers)
+**Version:** 1.0.0 | **Last Updated:** 2026-08-23 | **Project Type:** worker (TypeScript / Notion Workers)
 
 Canonical agent config for this git repository. The runnable package lives in `jre-notion-workers/`. Package-level Cursor Cloud notes remain in `jre-notion-workers/AGENTS.md`.
 
@@ -98,6 +98,17 @@ Use the shared client (`NTN_API_TOKEN` in code — not `NOTION_TOKEN`). Wrap Not
 ## Environment & secrets
 
 Required names are in `jre-notion-workers/.env.example`. Local maintainers use 1Password Environment mount (`.env.local` / `.env`) and `op run --env-file=.env.1p`. Never log tokens. Never commit `.env` / `.env.local`. Declare intent with `python3 .claude/hooks/gate.py 1p-declare` before editing live env files.
+
+## Grok (`.grok/`)
+
+Grok session state is `~/.grok/`, not the repo. Committed Grok project config is `.grok/`:
+
+- Spawnable agents: `.grok/agents/` (symlinks to `.claude/agents/` — Grok does not load Claude's agents directory)
+- Skills / slash commands: `.grok/skills/`, `.grok/commands/`
+- Native hooks: `.grok/hooks/enforcement.json` (same scripts as `.claude/hooks/`, with `with-claude-payload.py` for camelCase stdin)
+- Permissions: `.grok/config.toml` `[permission] deny`
+
+See `.grok/README.md`. Edit the `.claude/` bodies; do not fork copies under `.grok/`. Project hooks need `/hooks-trust` once per clone.
 
 ## GitButler
 

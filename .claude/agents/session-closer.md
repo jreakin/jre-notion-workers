@@ -1,7 +1,7 @@
 ---
 name: session-closer
 version: 1.0.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Bash(git diff:*), Bash(git log:*), Bash(git status:*), Write
 description: >
   Use at the end of a work session to write a complete handoff document. Does not write code. Writes HANDOFF.md only.

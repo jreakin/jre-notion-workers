@@ -1,7 +1,7 @@
 ---
 name: test-writer
 version: 1.0.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Write, Edit, Bash(uv run pytest*)
 description: >
   Writes pytest unit and integration tests for zoho-python-cli. Writes under tests/ only — never touches src/. Follows this project's mock-only rule for adapters (no test may hit a live Zoho org) and the CLI output-contract test matrix in TES

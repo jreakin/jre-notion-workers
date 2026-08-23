@@ -2,7 +2,7 @@
 name: notion-publisher
 version: 1.0.0
 
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob
 description: >
   The only agent that writes to Notion. Other agents hand it content; it never originates content itself. For zoho-python-cli specifically, there is no active Abstract Data Docs publishing target configured yet (this is an independent project

@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 version: 1.0.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Bash(git diff:*), Bash(git log:*), Bash(cat .claude/*.json:*)
 description: >
   Use after implementing a feature or fix, before merging. Reviews the diff for correctness, security, and adherence to this project's Hexagonal Ports & Adapters boundary and CLI output contract. Complements — does not duplicate — python-desi

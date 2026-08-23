@@ -1,7 +1,7 @@
 ---
 name: task-critic
 version: 1.2.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Bash(git diff:*), Bash(git log:*), Bash(grep:*)
 description: >
   Use BEFORE declaring any multi-step task complete. Checks that every requirement in TASK.md or the user's original request was actually implemented — not just that tests pass. Every checked box is re-verified against the working tree and mu

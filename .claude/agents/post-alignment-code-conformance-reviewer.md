@@ -1,7 +1,7 @@
 ---
 name: post-alignment-code-conformance-reviewer
 version: 1.0.0
-model: claude-opus-4-1
+model: inherit
 tools: Read, Grep, Glob, Bash(git log:*), Bash(git diff:*), Bash(python3 .claude/hooks/gate.py:*), Bash(python .claude/hooks/gate.py:*)
 
 description: >

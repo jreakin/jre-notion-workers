@@ -15,13 +15,13 @@ tool_file_path() {
   local path
   path="$(json_field '.file_path')"
   if [[ -z "$path" ]]; then
-    path="$(json_field '.tool_input.file_path // .tool_input.path')"
+    path="$(json_field '.tool_input.file_path // .tool_input.path // .toolInput.file_path // .toolInput.path // .toolInput.target_file')"
   fi
   echo "$path"
 }
 
 shell_command() {
-  json_field '.command // .tool_input.command'
+  json_field '.command // .tool_input.command // .toolInput.command'
 }
 
 deny_tool() {

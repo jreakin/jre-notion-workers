@@ -1,7 +1,7 @@
 ---
 name: apply-preflight-auditor
 version: 1.0.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, Bash
 description: >
   Blocking preflight for `abstract-data apply` / `retrofit`. Invoke BEFORE proposing or running an apply/retrofit plan. It verifies — with a mandatory evidence ledger — that the playbook, the existing .claude/ state (hooks, agents, skills, co

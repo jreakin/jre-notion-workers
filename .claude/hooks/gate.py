@@ -23,6 +23,9 @@ PROVENANCE
           the only path left and cannot be satisfied without a real
           SHA-256 read of the requirements file. Found 2026-07-04 via
           direct source review, not caught by the v1.1.0 design review.
+          Dual-runtime (same version): accepts Grok camelCase hook payloads
+          (toolName/toolInput/sessionId) and emits Grok decision/reason
+          alongside Claude permissionDecision.
 
 One file, five responsibilities, no third-party dependencies (stdlib only):
 
@@ -41,12 +44,63 @@ from pathlib import Path
 VERSION = "1.3.1"
 MAX_STOP_BLOCKS = 3
 
+# Grok sends camelCase; Claude Code sends snake_case. Accept both so the same
+# gate works from .claude/settings.json and .grok/hooks/enforcement.json.
+_TOOL_ALIASES = {
+    "run_terminal_command": "Bash",
+    "search_replace": "Edit",
+    "write": "Write",
+    "exit_plan_mode": "ExitPlanMode",
+}
+_EVENT_ALIASES = {
+    "pre_tool_use": "PreToolUse",
+    "post_tool_use": "PostToolUse",
+    "stop": "Stop",
+    "subagent_stop": "SubagentStop",
+    "subagent_end": "SubagentStop",
+}
+_KEY_ALIASES = (
+    ("toolName", "tool_name"),
+    ("toolInput", "tool_input"),
+    ("toolResult", "tool_response"),
+    ("sessionId", "session_id"),
+    ("hookEventName", "hook_event_name"),
+    ("stopHookActive", "stop_hook_active"),
+)
+
+def normalize_payload(payload):
+    if not isinstance(payload, dict):
+        return {}
+    out = dict(payload)
+    for src, dst in _KEY_ALIASES:
+        if src in out and dst not in out:
+            out[dst] = out[src]
+    tool = out.get("tool_name") or ""
+    if tool in _TOOL_ALIASES:
+        out["tool_name"] = _TOOL_ALIASES[tool]
+    event = out.get("hook_event_name") or ""
+    if event in _EVENT_ALIASES:
+        out["hook_event_name"] = _EVENT_ALIASES[event]
+    ti = out.get("tool_input")
+    if isinstance(ti, dict):
+        ti = dict(ti)
+        if not ti.get("file_path"):
+            for key in ("target_file", "path"):
+                if ti.get(key):
+                    ti["file_path"] = ti[key]
+                    break
+        out["tool_input"] = ti
+    if not out.get("session_id"):
+        out["session_id"] = os.environ.get("GROK_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or "no-session"
+    return out
+
 def read_payload():
     try:
         raw = sys.stdin.read()
-        return json.loads(raw) if raw.strip() else {}
+        data = json.loads(raw) if raw.strip() else {}
     except Exception:
-        return {}
+        data = {}
+    return normalize_payload(data)
 
 def project_dir(payload=None):
     env = os.environ.get("CLAUDE_PROJECT_DIR")
@@ -72,7 +126,18 @@ def sha256_file(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 def emit_stop_block(reason): print(json.dumps({"decision": "block", "reason": reason})); sys.exit(0)
 def emit_allow(): sys.exit(0)
 def emit_pretool(decision, reason):
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}})); sys.exit(0)
+    # Claude Code reads permissionDecision; Grok reads decision/reason.
+    grok_decision = "deny" if decision == "deny" else "allow"
+    print(json.dumps({
+        "decision": grok_decision,
+        "reason": reason,
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": reason,
+        },
+    }))
+    sys.exit(0)
 
 # v1.1.0: receipt-bound task-critic
 def open_items(ledger, require_task_critic, proj):
@@ -252,7 +317,7 @@ def _arg(flag, default=None):
 
 def _session_ledger():
     proj = project_dir()
-    session = os.environ.get("CLAUDE_SESSION_ID") or _arg("--session") or "no-session"
+    session = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("GROK_SESSION_ID") or _arg("--session") or "no-session"
     lpath = ledger_path(proj, session)
     return lpath, load_ledger(lpath)
 

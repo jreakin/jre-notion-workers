@@ -1,7 +1,7 @@
 ---
 name: researcher
 version: 1.0.0
-model: claude-sonnet-4-6
+model: inherit
 tools: Read, Grep, Glob, WebSearch, WebFetch, Bash(git log:*), Bash(git blame:*)
 description: >
   Read-only research subagent. Investigates a library, API, or design question and writes findings to docs/research/ — never touches src/ or tests/. Use before implementing anything involving zohocrmsdk8-0 (not indexed by Context7 — requires 
