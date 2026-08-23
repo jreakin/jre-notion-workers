@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "abstract-data": {
+      "command": "abstract-data",
+      "args": [
+        "serve"
+      ]
+    }
+  }
+}

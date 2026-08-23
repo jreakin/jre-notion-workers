@@ -1,0 +1,1 @@
+../../.claude/agents/typescript-design-principles-gate.md

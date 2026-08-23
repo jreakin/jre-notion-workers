@@ -1,5 +1,9 @@
 # GUARDRAILS.md — Boundary rules and safety
 
+**Version:** 1.0.0 | **Last Updated:** 2026-08-22
+
+Repo-root copy (Signs architecture): `/docs/GUARDRAILS.md`.
+
 What workers in this repo must never do, and how to handle errors and edge cases. These rules apply to all code in `src/` and any new workers added to the project.
 
 ## Secrets and configuration

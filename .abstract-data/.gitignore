@@ -1,0 +1,12 @@
+snapshots/
+backups/
+conflicts.log
+command-log.txt
+session-confirmed.json
+*.abstract-data.tmp*
+state.db
+state.db-wal
+state.db-shm
+receipts/
+attestations/
+ledger.jsonl

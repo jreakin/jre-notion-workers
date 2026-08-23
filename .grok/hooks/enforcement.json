@@ -1,0 +1,288 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/gate.py pretool"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-dangerous.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-dangerous.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-raw-git.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-raw-git.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-pr-review-gate.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-pr-review-gate.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gate.py pretool",
+            "statusMessage": "checking dangerous-ops gate"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/require-apply-preflight.sh'",
+            "statusMessage": "checking apply/retrofit preflight"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gitbutler-enforcement.sh'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/op-cli-guard.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/op-cli-guard.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/terraform-guard.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/terraform-guard.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/notion-write-guard.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/notion-write-guard.sh\"; fi'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/gate.py pretool"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/require-notion-read.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/require-notion-read.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-env-writes.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-env-writes.sh\"; fi'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gate.py pretool",
+            "statusMessage": "checking protected-path gate"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/require-notion-read.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/require-notion-read.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/trigger-peer-audit.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/trigger-peer-audit.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-sensitive-files.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-sensitive-files.sh\"; fi'"
+          }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode|Write|Edit|MultiEdit|mcp__abstract-data__abstract_data_create_plan",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-eval-gate.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-eval-gate.sh\"; fi'",
+            "statusMessage": "checking spec-eval gate"
+          }
+        ]
+      },
+      {
+        "matcher": "exit_plan_mode|abstract-data__.*create_plan",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-eval-gate.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-eval-gate.sh\"; fi'",
+            "statusMessage": "checking spec-eval gate"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/secret-scan.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/secret-scan.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/large-file-warning.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/large-file-warning.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/auto-format-ts.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/auto-format-ts.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-tsc.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-tsc.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/terraform-guard.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/terraform-guard.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/package-manifest-drift.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/package-manifest-drift.sh\"; fi'",
+            "timeout": 60,
+            "statusMessage": "checking lockfile drift"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/plugin-payload-drift.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/plugin-payload-drift.sh\"; fi'",
+            "timeout": 120,
+            "statusMessage": "checking plugin payload drift"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*notion.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/record-notion-read.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/record-notion-read.sh\"; fi'"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/verify-commit.sh'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/verify-submit.sh'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/eval-golden-review-nudge.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/eval-golden-review-nudge.sh\"; fi'"
+          }
+        ]
+      },
+      {
+        "matcher": "notion__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/record-notion-read.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/record-notion-read.sh\"; fi'"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/gate.py stop-check"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify-completion.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify-completion.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/gate.py stop-check"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent-config-versioning-gate.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent-config-versioning-gate.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/checklist-completion-gate.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/checklist-completion-gate.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforcement-deployment-gate.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforcement-deployment-gate.sh\"; fi'"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/write-session-confirmed.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/write-session-confirmed.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-handoff.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-handoff.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/archive-session.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/archive-session.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/eval-authoring-reminder.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/eval-authoring-reminder.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify-completion.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify-completion.sh\"; fi'"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gate.py stop-check",
+            "statusMessage": "loop-closure gate"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc '[ -f \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/capabilities-review-confirm.sh ] && bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/capabilities-review-confirm.sh'",
+            "statusMessage": "surfacing capabilities inventory"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc '[ -f \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/surface-handoff.sh ] && bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/surface-handoff.sh'",
+            "statusMessage": "surfacing prior handoff"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-py-baseline.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-py-baseline.sh\"; fi'"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.grok/hooks/with-claude-payload.py\" bash -lc 'if [ -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/backfill-telemetry.sh\" ]; then bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/backfill-telemetry.sh\"; fi'",
+            "statusMessage": "backfilling tool-usage telemetry"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+name: Tool config verify
+
+on:
+  pull_request:
+    paths:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.claude/**'
+      - '.cursor/rules/**'
+      - 'tests/verify/**'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: AGENTS.md sections
+        run: python3 tests/verify/check_agents_md.py
+      - name: CLAUDE.md symlink
+        run: test -L CLAUDE.md && test "$(readlink CLAUDE.md)" = "AGENTS.md"
+      - name: Required hooks executable
+        run: |
+          for h in block-dangerous block-env-writes pre-commit verify-completion; do
+            test -x ".claude/hooks/${h}.sh"
+          done
