@@ -16,6 +16,8 @@ import {
   readGitHubItemProjectIds,
   readGitHubItemTaskIds,
   readRelationIds,
+  readTimeLogGithubItemIds,
+  TIME_LOG_PROPS,
 } from "../shared/notion-schema.js";
 import type {
   SyncTimeLogInput,
@@ -280,10 +282,18 @@ export async function loadExistingTimeLogEntries(
 ): Promise<Map<string, ExistingTimeLogEntry>> {
   const dbId = getTimeLogDatabaseId();
 
-  // Query for entries that have a GitHub Item relation
+  // Query for entries linked via live Sync relation or legacy dead relation (migration)
   const filter = {
-    property: "GitHub Item",
-    relation: { is_not_empty: true as const },
+    or: [
+      {
+        property: TIME_LOG_PROPS.githubItem,
+        relation: { is_not_empty: true as const },
+      },
+      {
+        property: TIME_LOG_PROPS.legacyGithubItem,
+        relation: { is_not_empty: true as const },
+      },
+    ],
   };
 
   // Map: github_item_page_id → time log entry
@@ -303,7 +313,7 @@ export async function loadExistingTimeLogEntries(
       const props = page.properties as Record<string, unknown>;
 
       const description = readTitle(props);
-      const githubItemIds = readRelationIds(props, "GitHub Item");
+      const githubItemIds = readTimeLogGithubItemIds(props);
 
       const entry: ExistingTimeLogEntry = {
         id: page.id,
@@ -438,7 +448,7 @@ export async function executeSyncTimeLog(
             Description: { title: [{ text: { content: desc } }] },
             Hours: { number: result.hours },
             Date: { date: { start: item.createdDate || new Date().toISOString().split("T")[0] } },
-            "GitHub Item": { relation: [{ id: item.id }] },
+            [TIME_LOG_PROPS.githubItem]: { relation: [{ id: item.id }] },
             Billable: { checkbox: false },
           };
 

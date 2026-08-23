@@ -14,7 +14,7 @@ const TL = {
   client: "Client",
   project: "Project",
   task: "Task",
-  githubItem: "GitHub Item",
+  githubItem: "GitHub Item Sync",
 } as const;
 
 /** Property names on a 🔀 GitHub Items page (Source 1). */
