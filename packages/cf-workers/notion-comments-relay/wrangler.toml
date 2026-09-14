@@ -1,0 +1,12 @@
+name = "notion-comments-relay"
+main = "src/index.ts"
+compatibility_date = "2026-09-11"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "RELAY_KV"
+id = "REPLACE_WITH_RELAY_KV_NAMESPACE_ID"  # live: 108f8eb2447e4f41aa5ab76de3cfcad0
+
+[observability]
+enabled = true
+head_sampling_rate = 1
