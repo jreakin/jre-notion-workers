@@ -36,6 +36,28 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+function authorizeSetup(request: Request, env: Env): boolean {
+  if (!env.SETUP_SECRET) {
+    return false;
+  }
+  const provided = request.headers.get("X-Setup-Secret");
+  if (!provided) {
+    return false;
+  }
+  return timingSafeEqual(provided, env.SETUP_SECRET);
+}
+
 function findVerificationToken(parsed: Record<string, unknown>): string | null {
   const direct = parsed.verification_token;
   if (typeof direct === "string" && direct.length > 0) return direct;
@@ -175,16 +197,19 @@ async function writeBuffer(env: Env, items: CoalesceItem[]): Promise<void> {
   await env.RELAY_KV.put(COALESCE_BUF_KEY, JSON.stringify(items.slice(-COALESCE_MAX)));
 }
 
-async function flushCoalesce(env: Env): Promise<void> {
-  const items = await readBuffer(env);
-  await writeBuffer(env, []);
+async function clearCoalesceLock(env: Env): Promise<void> {
   try {
     await env.RELAY_KV.delete(COALESCE_LOCK_KEY);
   } catch {}
+}
+
+async function flushCoalesce(env: Env): Promise<boolean> {
+  const items = await readBuffer(env);
 
   if (items.length === 0) {
     console.log(JSON.stringify({ event: "coalesce_flush_empty" }));
-    return;
+    await clearCoalesceLock(env);
+    return true;
   }
 
   if (!env.COS_WEBHOOK_URL || !env.COS_WEBHOOK_AUTHORIZATION) {
@@ -194,37 +219,65 @@ async function flushCoalesce(env: Env): Promise<void> {
       coalesce: true,
       count: items.length,
     });
-    return;
+    return false;
   }
 
-  if (items.length === 1) {
-    const only = items[0];
-    await forwardRaw(env, only.body, only.signature, only.notion_type, {
-      coalesce: false,
-      count: 1,
-    });
-    return;
-  }
-
-  const events = items.map((it) => {
-    try {
-      return JSON.parse(it.body);
-    } catch {
-      return { raw: it.body.slice(0, 500), parseOk: false, at: it.at };
+  let status: number;
+  try {
+    if (items.length === 1) {
+      const only = items[0];
+      status = await forwardRaw(env, only.body, only.signature, only.notion_type, {
+        coalesce: false,
+        count: 1,
+      });
+    } else {
+      const events = items.map((it) => {
+        try {
+          return JSON.parse(it.body);
+        } catch {
+          return { raw: it.body.slice(0, 500), parseOk: false, at: it.at };
+        }
+      });
+      const batchBody = JSON.stringify({
+        coalesce: true,
+        window_ms: COALESCE_MS,
+        count: events.length,
+        types: items.map((i) => i.notion_type),
+        events,
+      });
+      status = await forwardRaw(env, batchBody, null, "coalesce.batch", {
+        coalesce: true,
+        count: events.length,
+        sigOk: null,
+      });
     }
-  });
-  const batchBody = JSON.stringify({
+  } catch (err) {
+    await recordForward(env, {
+      at: new Date().toISOString(),
+      event: "coalesce_forward_failed",
+      coalesce: true,
+      count: items.length,
+      error: String(err),
+    });
+    console.log(JSON.stringify({ event: "coalesce_forward_failed", error: String(err) }));
+    return false;
+  }
+
+  if (status >= 200 && status < 300) {
+    await writeBuffer(env, []);
+    await clearCoalesceLock(env);
+    return true;
+  }
+
+  await recordForward(env, {
+    at: new Date().toISOString(),
+    event: "coalesce_forward_non_2xx",
     coalesce: true,
-    window_ms: COALESCE_MS,
-    count: events.length,
-    types: items.map((i) => i.notion_type),
-    events,
+    count: items.length,
+    status,
   });
-  await forwardRaw(env, batchBody, null, "coalesce.batch", {
-    coalesce: true,
-    count: events.length,
-    sigOk: null,
-  });
+  console.log(JSON.stringify({ event: "coalesce_forward_non_2xx", status, count: items.length }));
+  return false;
 }
 
 async function enqueueAndSchedule(
@@ -265,12 +318,13 @@ async function enqueueAndSchedule(
     (async () => {
       await new Promise((r) => setTimeout(r, COALESCE_MS));
       try {
-        await flushCoalesce(env);
+        const flushed = await flushCoalesce(env);
+        if (!flushed) {
+          await clearCoalesceLock(env);
+        }
       } catch (err) {
         console.log(JSON.stringify({ event: "coalesce_flush_failed", error: String(err) }));
-        try {
-          await env.RELAY_KV.delete(COALESCE_LOCK_KEY);
-        } catch {}
+        await clearCoalesceLock(env);
       }
     })(),
   );
@@ -286,8 +340,7 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname === "/setup/verification-token") {
-        const key = url.searchParams.get("key") ?? "";
-        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+        if (!authorizeSetup(request, env)) {
           return json({ error: "unauthorized" }, 401);
         }
         const token =
@@ -301,9 +354,27 @@ export default {
         return json({ ok: true, verification_token: token });
       }
 
+      if (request.method === "POST" && url.pathname === "/setup/verification-token") {
+        if (!authorizeSetup(request, env)) {
+          return json({ error: "unauthorized" }, 401);
+        }
+        let body: Record<string, unknown> = {};
+        try {
+          body = (await request.json()) as Record<string, unknown>;
+        } catch {
+          return json({ error: "invalid_json" }, 400);
+        }
+        const nextToken = findVerificationToken(body);
+        if (!nextToken) {
+          return json({ error: "verification_token required" }, 400);
+        }
+        await env.RELAY_KV.put(TOKEN_KEY, nextToken);
+        console.log(JSON.stringify({ event: "verification_token_rotated", hasToken: true }));
+        return json({ ok: true, rotated: true });
+      }
+
       if (request.method === "GET" && url.pathname === "/setup/last-post") {
-        const key = url.searchParams.get("key") ?? "";
-        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+        if (!authorizeSetup(request, env)) {
           return json({ error: "unauthorized" }, 401);
         }
         const raw = await env.RELAY_KV.get(LAST_POST_KEY);
@@ -312,8 +383,7 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname === "/setup/last-forward") {
-        const key = url.searchParams.get("key") ?? "";
-        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+        if (!authorizeSetup(request, env)) {
           return json({ error: "unauthorized" }, 401);
         }
         const raw = await env.RELAY_KV.get(LAST_FORWARD_KEY);
@@ -322,8 +392,7 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname === "/setup/forward-history") {
-        const key = url.searchParams.get("key") ?? "";
-        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+        if (!authorizeSetup(request, env)) {
           return json({ error: "unauthorized" }, 401);
         }
         const raw = await env.RELAY_KV.get(FORWARD_HISTORY_KEY);
@@ -331,8 +400,7 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname === "/setup/last-unsigned") {
-        const key = url.searchParams.get("key") ?? "";
-        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+        if (!authorizeSetup(request, env)) {
           return json({ error: "unauthorized" }, 401);
         }
         const raw = await env.RELAY_KV.get(LAST_POST_KEY);
@@ -341,12 +409,11 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/setup/flush-coalesce") {
-        const key = url.searchParams.get("key") ?? "";
-        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+        if (!authorizeSetup(request, env)) {
           return json({ error: "unauthorized" }, 401);
         }
-        await flushCoalesce(env);
-        return json({ ok: true, flushed: true });
+        const flushed = await flushCoalesce(env);
+        return json({ ok: true, flushed });
       }
 
       if (request.method !== "POST") {
@@ -392,18 +459,27 @@ export default {
       const ua = (request.headers.get("user-agent") || "").toLowerCase();
       const fromNotion = ua.includes("notion") || Boolean(signature);
       if (token && fromNotion) {
-        try {
-          await env.RELAY_KV.put(TOKEN_KEY, token);
+        const existingToken = await env.RELAY_KV.get(TOKEN_KEY);
+        if (!existingToken) {
+          try {
+            await env.RELAY_KV.put(TOKEN_KEY, token);
+            console.log(
+              JSON.stringify({
+                event: "notion_handshake_stored",
+                hasToken: true,
+                hasSignature: Boolean(signature),
+              }),
+            );
+          } catch (err) {
+            console.log(JSON.stringify({ event: "handshake_kv_put_failed", error: String(err) }));
+          }
+        } else {
           console.log(
             JSON.stringify({
-              event: "notion_handshake_stored",
-              token_len: token.length,
-              token_suffix: token.slice(-8),
-              hasSignature: Boolean(signature),
+              event: "notion_handshake_ignored_existing_token",
+              hasToken: true,
             }),
           );
-        } catch (err) {
-          console.log(JSON.stringify({ event: "handshake_kv_put_failed", error: String(err) }));
         }
         return new Response("ok", { status: 200 });
       }
@@ -435,7 +511,6 @@ export default {
             event: "signature_fail",
             notion_type: notionType,
             hasToken: true,
-            token_suffix: storedToken.slice(-8),
           };
           await recordForward(env, fail);
           console.log(JSON.stringify(fail));
@@ -449,6 +524,7 @@ export default {
         };
         await recordForward(env, fail);
         console.log(JSON.stringify(fail));
+        return new Response("ok", { status: 200 });
       }
 
       // Defense in depth: subscription should already omit these.

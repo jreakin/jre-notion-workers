@@ -4,15 +4,16 @@ Cloudflare Worker that accepts **Notion Integration** webhooks, verifies signatu
 
 **Live service (do not break in this PR):** https://notion-comments-relay.johnreakin.workers.dev
 
-This module is the repo-owned source of truth. `src/index.ts` is the **verbatim live box SoT** (486 lines from `/workspace/notion-comments-relay` on the Grok Bot box), not a reconstruction. The live Worker continues to run from that ad-hoc path until cutover (below).
+This module is the repo-owned source of truth. `src/index.ts` is ported from the **live box SoT** (`/workspace/notion-comments-relay` on the Grok Bot box), with targeted security/correctness fixes from CodeRabbit review (setup auth header, token rotation guard, flush-after-2xx). The live Worker continues to run from that ad-hoc path until cutover (below).
 
 ## Purpose
 
 | Stage | Behavior |
 | --- | --- |
-| Notion → Worker | Handshake stores `verification_token` in KV; later events verified via `X-Notion-Signature` (HMAC-SHA256) |
+| Notion → Worker | Handshake stores `verification_token` in KV once; rotation via `POST /setup/verification-token` |
+| Verify | Later events verified via `X-Notion-Signature` (HMAC-SHA256) |
 | Filter | Drops `page.deleted` and `page.undeleted`; forwards other accepted events |
-| Coalesce | Buffers events for **45s** (`COALESCE_MS`) in KV namespace `RELAY_KV` |
+| Coalesce | Buffers events for **45s** (`COALESCE_MS`) in KV key `coalesce_buffer` |
 | Worker → CoS | POST batch to `COS_WEBHOOK_URL` with `Authorization: COS_WEBHOOK_AUTHORIZATION` |
 
 Forwarded batch shape:
@@ -48,7 +49,7 @@ Sibling to `packages/workers/` (recovered Notion Workers / Bun). This package us
 | --- | --- | --- |
 | `COS_WEBHOOK_URL` | yes | CoS Grok Bot webhook ingress URL |
 | `COS_WEBHOOK_AUTHORIZATION` | yes | `Authorization` header value for CoS |
-| `SETUP_SECRET` | yes | Gates `/setup/*` diagnostic routes |
+| `SETUP_SECRET` | yes | `X-Setup-Secret` header for `/setup/*` routes |
 | `NOTION_VERIFICATION_TOKEN` | optional | Fallback if token not yet stored in KV from Notion handshake |
 
 Set via Wrangler (see cutover). **Do not rotate** during repo migration — reuse existing live values.
@@ -61,13 +62,16 @@ Set via Wrangler (see cutover). **Do not rotate** during repo migration — reus
 
 Committed `wrangler.toml` uses placeholder `REPLACE_WITH_RELAY_KV_NAMESPACE_ID` so the live id is not required for CI. Replace locally before deploy.
 
-KV keys used by the Worker:
+KV keys used by the Worker (see `src/index.ts` constants):
 
-- `notion:verification_token` — Notion webhook verification token
-- `relay:pending` — buffered events JSON
-- `relay:flush_at` — scheduled flush timestamp (ms)
-- `relay:flush_lock` — short-lived flush mutex
-- `relay:last_flush` — metadata from last successful forward
+| Key | Purpose |
+| --- | --- |
+| `notion_verification_token` | Notion webhook verification token (one-time handshake store; rotate via setup route) |
+| `last_notion_post` | Debug snapshot of most recent POST to `/` |
+| `last_forward` | Most recent forward attempt metadata |
+| `forward_history` | Ring buffer of recent forward attempts (max 10) |
+| `coalesce_buffer` | Pending coalesced webhook payloads (JSON array) |
+| `coalesce_flush_scheduled` | Lock indicating a flush timer is active (TTL 180s) |
 
 ## Local development
 
@@ -103,15 +107,19 @@ Worker name in `wrangler.toml` is `notion-comments-relay` — deploy targets the
 
 ## Routes
 
+All `/setup/*` routes require header `X-Setup-Secret: <SETUP_SECRET>` (query params are not accepted).
+
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | `GET` | `/health` | none | `{ ok, service, coalesce_ms }` |
 | `POST` | `/` | Notion signature (after handshake) | Webhook ingress |
-| `GET` | `/setup` | `?secret=` or `X-Setup-Secret` | Overview + pending summary |
-| `GET` | `/setup/status` | setup secret | Pending window / flush schedule |
-| `GET` | `/setup/pending` | setup secret | Full pending event list |
-| `GET` | `/setup/verify` | setup secret | Config checks + optional CoS probe |
-| `GET` | `/setup/flush` | setup secret | Force flush pending batch to CoS |
+| `GET` | `/setup/verification-token` | `X-Setup-Secret` | Read stored verification token |
+| `POST` | `/setup/verification-token` | `X-Setup-Secret` | Rotate verification token (`{ "verification_token": "..." }`) |
+| `GET` | `/setup/last-post` | `X-Setup-Secret` | Last POST debug snapshot |
+| `GET` | `/setup/last-forward` | `X-Setup-Secret` | Last forward attempt |
+| `GET` | `/setup/forward-history` | `X-Setup-Secret` | Forward history ring buffer |
+| `GET` | `/setup/last-unsigned` | `X-Setup-Secret` | Alias of last-post (unsigned debug) |
+| `POST` | `/setup/flush-coalesce` | `X-Setup-Secret` | Force flush `coalesce_buffer` to CoS |
 
 ## Cutover (CoS / John)
 
@@ -136,7 +144,8 @@ Perform **after** this PR is merged. Do **not** deploy from the PR branch to pro
 6. **Prove end-to-end:**
    - Trigger a Notion `comment.created` or disposable `page.created` in a test page.
    - Within ~45s, confirm CoS ingress receives the coalesced batch and returns **200**.
-   - `GET /setup/status?secret=…` should show `pending_count: 0` after flush.
+   - `GET /setup/last-forward` with `X-Setup-Secret` should show a successful forward (`status` 2xx).
+   - Or force flush: `POST /setup/flush-coalesce` with `X-Setup-Secret`, then re-check `last-forward`.
 7. **Decommission ad-hoc copy** only after step 6 passes: delete `/workspace/notion-comments-relay` on the Grok Bot box.
 
 ## CI note
