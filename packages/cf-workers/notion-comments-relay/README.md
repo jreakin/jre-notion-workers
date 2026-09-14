@@ -143,7 +143,9 @@ Perform **after** this PR is merged. Do **not** deploy from the PR branch to pro
    Confirm URL: https://notion-comments-relay.johnreakin.workers.dev/health
 6. **Prove end-to-end:**
    - Trigger a Notion `comment.created` or disposable `page.created` in a test page.
-   - Within ~20s, confirm CoS ingress receives the coalesced batch and returns **200**.
+   - Under normal operation, CoS ingress should receive the batch within about **20 seconds** (the `waitUntil` coalesce window).
+   - If `waitUntil` was dropped, the cron safety flush may deliver within up to about **one minute** instead — allow that longer window before failing the check.
+   - Confirm CoS ingress returns **200** for the forwarded batch.
    - `GET /setup/last-forward` with `X-Setup-Secret` should show a successful forward (`status` 2xx).
    - Or force flush: `POST /setup/flush-coalesce` with `X-Setup-Secret`, then re-check `last-forward`.
 7. **Decommission ad-hoc copy** only after step 6 passes: delete `/workspace/notion-comments-relay` on the Grok Bot box.

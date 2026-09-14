@@ -18,6 +18,7 @@ const LAST_POST_KEY = "last_notion_post";
 const LAST_FORWARD_KEY = "last_forward";
 const COALESCE_BUF_KEY = "coalesce_buffer";
 const COALESCE_LOCK_KEY = "coalesce_flush_scheduled";
+const COALESCE_FLUSHING_KEY = "coalesce_flushing";
 const COALESCE_MS = 20_000;
 const COALESCE_MAX = 40;
 const FORWARD_HISTORY_KEY = "forward_history";
@@ -204,81 +205,137 @@ async function clearCoalesceLock(env: Env): Promise<void> {
   } catch {}
 }
 
-async function flushCoalesce(env: Env): Promise<boolean> {
-  const items = await readBuffer(env);
-
-  if (items.length === 0) {
-    console.log(JSON.stringify({ event: "coalesce_flush_empty" }));
-    await clearCoalesceLock(env);
-    return true;
+async function tryAcquireFlushLock(env: Env): Promise<string | null> {
+  const token = crypto.randomUUID();
+  await env.RELAY_KV.put(COALESCE_FLUSHING_KEY, token, { expirationTtl: 120 });
+  const current = await env.RELAY_KV.get(COALESCE_FLUSHING_KEY);
+  if (current !== token) {
+    return null;
   }
+  return token;
+}
 
-  if (!env.COS_WEBHOOK_URL || !env.COS_WEBHOOK_AUTHORIZATION) {
-    await recordForward(env, {
-      at: new Date().toISOString(),
-      event: "relay_not_configured",
-      coalesce: true,
-      count: items.length,
-    });
-    return false;
+async function releaseFlushLock(env: Env, token: string | null): Promise<void> {
+  if (!token) {
+    return;
   }
-
-  let status: number;
   try {
-    if (items.length === 1) {
-      const only = items[0];
-      status = await forwardRaw(env, only.body, only.signature, only.notion_type, {
-        coalesce: false,
-        count: 1,
-      });
-    } else {
-      const events = items.map((it) => {
-        try {
-          return JSON.parse(it.body);
-        } catch {
-          return { raw: it.body.slice(0, 500), parseOk: false, at: it.at };
-        }
-      });
-      const batchBody = JSON.stringify({
-        coalesce: true,
-        window_ms: COALESCE_MS,
-        count: events.length,
-        types: items.map((i) => i.notion_type),
-        events,
-      });
-      status = await forwardRaw(env, batchBody, null, "coalesce.batch", {
-        coalesce: true,
-        count: events.length,
-        sigOk: null,
-      });
+    const current = await env.RELAY_KV.get(COALESCE_FLUSHING_KEY);
+    if (current === token) {
+      await env.RELAY_KV.delete(COALESCE_FLUSHING_KEY);
     }
-  } catch (err) {
-    await recordForward(env, {
-      at: new Date().toISOString(),
-      event: "coalesce_forward_failed",
-      coalesce: true,
-      count: items.length,
-      error: String(err),
-    });
-    console.log(JSON.stringify({ event: "coalesce_forward_failed", error: String(err) }));
-    return false;
-  }
+  } catch {}
+}
 
-  if (status >= 200 && status < 300) {
-    await writeBuffer(env, []);
-    await clearCoalesceLock(env);
+async function restoreToBuffer(env: Env, items: CoalesceItem[]): Promise<void> {
+  if (items.length === 0) {
+    return;
+  }
+  const current = await readBuffer(env);
+  await writeBuffer(env, [...items, ...current]);
+}
+
+/** Atomically claim the current buffer snapshot for forwarding (clears KV buffer). */
+async function claimBatch(env: Env): Promise<CoalesceItem[]> {
+  const items = await readBuffer(env);
+  if (items.length === 0) {
+    return [];
+  }
+  await writeBuffer(env, []);
+  return items;
+}
+
+async function flushCoalesce(env: Env): Promise<boolean> {
+  const flushToken = await tryAcquireFlushLock(env);
+  if (!flushToken) {
+    console.log(JSON.stringify({ event: "coalesce_flush_skipped_busy" }));
     return true;
   }
 
-  await recordForward(env, {
-    at: new Date().toISOString(),
-    event: "coalesce_forward_non_2xx",
-    coalesce: true,
-    count: items.length,
-    status,
-  });
-  console.log(JSON.stringify({ event: "coalesce_forward_non_2xx", status, count: items.length }));
-  return false;
+  let claimed: CoalesceItem[] = [];
+  try {
+    claimed = await claimBatch(env);
+
+    if (claimed.length === 0) {
+      console.log(JSON.stringify({ event: "coalesce_flush_empty" }));
+      await clearCoalesceLock(env);
+      return true;
+    }
+
+    if (!env.COS_WEBHOOK_URL || !env.COS_WEBHOOK_AUTHORIZATION) {
+      await restoreToBuffer(env, claimed);
+      await recordForward(env, {
+        at: new Date().toISOString(),
+        event: "relay_not_configured",
+        coalesce: true,
+        count: claimed.length,
+      });
+      await clearCoalesceLock(env);
+      return false;
+    }
+
+    let status: number;
+    try {
+      if (claimed.length === 1) {
+        const only = claimed[0];
+        status = await forwardRaw(env, only.body, only.signature, only.notion_type, {
+          coalesce: false,
+          count: 1,
+        });
+      } else {
+        const events = claimed.map((it) => {
+          try {
+            return JSON.parse(it.body);
+          } catch {
+            return { raw: it.body.slice(0, 500), parseOk: false, at: it.at };
+          }
+        });
+        const batchBody = JSON.stringify({
+          coalesce: true,
+          window_ms: COALESCE_MS,
+          count: events.length,
+          types: claimed.map((i) => i.notion_type),
+          events,
+        });
+        status = await forwardRaw(env, batchBody, null, "coalesce.batch", {
+          coalesce: true,
+          count: events.length,
+          sigOk: null,
+        });
+      }
+    } catch (err) {
+      await restoreToBuffer(env, claimed);
+      await recordForward(env, {
+        at: new Date().toISOString(),
+        event: "coalesce_forward_failed",
+        coalesce: true,
+        count: claimed.length,
+        error: String(err),
+      });
+      console.log(JSON.stringify({ event: "coalesce_forward_failed", error: String(err) }));
+      await clearCoalesceLock(env);
+      return false;
+    }
+
+    if (status >= 200 && status < 300) {
+      await clearCoalesceLock(env);
+      return true;
+    }
+
+    await restoreToBuffer(env, claimed);
+    await recordForward(env, {
+      at: new Date().toISOString(),
+      event: "coalesce_forward_non_2xx",
+      coalesce: true,
+      count: claimed.length,
+      status,
+    });
+    console.log(JSON.stringify({ event: "coalesce_forward_non_2xx", status, count: claimed.length }));
+    await clearCoalesceLock(env);
+    return false;
+  } finally {
+    await releaseFlushLock(env, flushToken);
+  }
 }
 
 async function enqueueAndSchedule(
@@ -562,6 +619,14 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    await flushCoalesce(env);
+    try {
+      const flushed = await flushCoalesce(env);
+      if (!flushed) {
+        await clearCoalesceLock(env);
+      }
+    } catch (err) {
+      console.log(JSON.stringify({ event: "coalesce_scheduled_flush_failed", error: String(err) }));
+      await clearCoalesceLock(env);
+    }
   },
 };
