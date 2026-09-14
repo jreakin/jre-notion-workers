@@ -1,7 +1,8 @@
 /**
  * Notion Integration webhooks → Grok Bot CoS comments ingress relay.
  * - Drops page.deleted / page.undeleted (subscription off; defense in depth).
- * - Coalesces other signed events for ~45s into one Cos wake.
+ * - Coalesces other signed events for ~20s into one Cos wake.
+ * - Cron safety flush (~1m) calls flushCoalesce when waitUntil may have been dropped.
  */
 
 export interface Env {
@@ -17,7 +18,7 @@ const LAST_POST_KEY = "last_notion_post";
 const LAST_FORWARD_KEY = "last_forward";
 const COALESCE_BUF_KEY = "coalesce_buffer";
 const COALESCE_LOCK_KEY = "coalesce_flush_scheduled";
-const COALESCE_MS = 45_000;
+const COALESCE_MS = 20_000;
 const COALESCE_MAX = 40;
 const FORWARD_HISTORY_KEY = "forward_history";
 const FORWARD_HISTORY_MAX = 10;
@@ -558,5 +559,9 @@ export default {
       console.log(JSON.stringify({ event: "unhandled", error: String(err) }));
       return new Response("ok", { status: 200 });
     }
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    await flushCoalesce(env);
   },
 };

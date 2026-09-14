@@ -1,6 +1,6 @@
 # notion-comments-relay
 
-Cloudflare Worker that accepts **Notion Integration** webhooks, verifies signatures, coalesces events for ~45 seconds, and forwards a single batch to the **CoS Grok Bot** webhook ingress.
+Cloudflare Worker that accepts **Notion Integration** webhooks, verifies signatures, coalesces events for **20 seconds**, and forwards a single batch to the **CoS Grok Bot** webhook ingress. A cron trigger (`*/1 * * * *`) runs `flushCoalesce` as a safety net when `waitUntil` may have been dropped.
 
 **Live service (do not break in this PR):** https://notion-comments-relay.johnreakin.workers.dev
 
@@ -13,7 +13,7 @@ This module is the repo-owned source of truth. `src/index.ts` is ported from the
 | Notion → Worker | Handshake stores `verification_token` in KV once; rotation via `POST /setup/verification-token` |
 | Verify | Later events verified via `X-Notion-Signature` (HMAC-SHA256) |
 | Filter | Drops `page.deleted` and `page.undeleted`; forwards other accepted events |
-| Coalesce | Buffers events for **45s** (`COALESCE_MS`) in KV key `coalesce_buffer` |
+| Coalesce | Buffers events for **20s** (`COALESCE_MS`) in KV key `coalesce_buffer`; cron `*/1 * * * *` safety flush |
 | Worker → CoS | POST batch to `COS_WEBHOOK_URL` with `Authorization: COS_WEBHOOK_AUTHORIZATION` |
 
 Forwarded batch shape:
@@ -21,7 +21,7 @@ Forwarded batch shape:
 ```json
 {
   "coalesce": true,
-  "window_ms": 45000,
+  "window_ms": 20000,
   "count": 3,
   "types": ["comment.created", "page.properties_updated"],
   "events": [ /* raw Notion webhook bodies */ ]
@@ -111,7 +111,7 @@ All `/setup/*` routes require header `X-Setup-Secret: <SETUP_SECRET>` (query par
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/health` | none | `{ ok, service, coalesce_ms }` |
+| `GET` | `/health` | none | `{ ok, service, coalesce_ms: 20000 }` |
 | `POST` | `/` | Notion signature (after handshake) | Webhook ingress |
 | `GET` | `/setup/verification-token` | `X-Setup-Secret` | Read stored verification token |
 | `POST` | `/setup/verification-token` | `X-Setup-Secret` | Rotate verification token (`{ "verification_token": "..." }`) |
@@ -143,7 +143,7 @@ Perform **after** this PR is merged. Do **not** deploy from the PR branch to pro
    Confirm URL: https://notion-comments-relay.johnreakin.workers.dev/health
 6. **Prove end-to-end:**
    - Trigger a Notion `comment.created` or disposable `page.created` in a test page.
-   - Within ~45s, confirm CoS ingress receives the coalesced batch and returns **200**.
+   - Within ~20s, confirm CoS ingress receives the coalesced batch and returns **200**.
    - `GET /setup/last-forward` with `X-Setup-Secret` should show a successful forward (`status` 2xx).
    - Or force flush: `POST /setup/flush-coalesce` with `X-Setup-Secret`, then re-check `last-forward`.
 7. **Decommission ad-hoc copy** only after step 6 passes: delete `/workspace/notion-comments-relay` on the Grok Bot box.
