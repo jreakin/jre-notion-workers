@@ -10,3 +10,6 @@ id = "REPLACE_WITH_RELAY_KV_NAMESPACE_ID"  # live: 108f8eb2447e4f41aa5ab76de3cfc
 [observability]
 enabled = true
 head_sampling_rate = 1
+
+[triggers]
+crons = ["*/1 * * * *"]
