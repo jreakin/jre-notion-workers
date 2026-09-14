@@ -4,7 +4,7 @@ Cloudflare Worker that accepts **Notion Integration** webhooks, verifies signatu
 
 **Live service (do not break in this PR):** https://notion-comments-relay.johnreakin.workers.dev
 
-This module is the repo-owned source of truth. The live Worker continues to run from the ad-hoc `/workspace/notion-comments-relay` path on the Grok Bot box until cutover (below).
+This module is the repo-owned source of truth. `src/index.ts` is the **verbatim live box SoT** (486 lines from `/workspace/notion-comments-relay` on the Grok Bot box), not a reconstruction. The live Worker continues to run from that ad-hoc path until cutover (below).
 
 ## Purpose
 

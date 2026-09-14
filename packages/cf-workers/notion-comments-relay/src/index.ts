@@ -1,8 +1,7 @@
 /**
- * notion-comments-relay — Cloudflare Worker
- *
- * Accepts Notion Integration webhooks, verifies signatures, coalesces events
- * for ~45s, and forwards a batch to the CoS Grok Bot webhook ingress.
+ * Notion Integration webhooks → Grok Bot CoS comments ingress relay.
+ * - Drops page.deleted / page.undeleted (subscription off; defense in depth).
+ * - Coalesces other signed events for ~45s into one Cos wake.
  */
 
 export interface Env {
@@ -13,95 +12,55 @@ export interface Env {
   NOTION_VERIFICATION_TOKEN?: string;
 }
 
-const SERVICE_NAME = "notion-comments-relay";
+const TOKEN_KEY = "notion_verification_token";
+const LAST_POST_KEY = "last_notion_post";
+const LAST_FORWARD_KEY = "last_forward";
+const COALESCE_BUF_KEY = "coalesce_buffer";
+const COALESCE_LOCK_KEY = "coalesce_flush_scheduled";
 const COALESCE_MS = 45_000;
+const COALESCE_MAX = 40;
+const FORWARD_HISTORY_KEY = "forward_history";
+const FORWARD_HISTORY_MAX = 10;
 
-const KV_VERIFICATION_TOKEN = "notion:verification_token";
-const KV_PENDING = "relay:pending";
-const KV_FLUSH_AT = "relay:flush_at";
-const KV_FLUSH_LOCK = "relay:flush_lock";
-const KV_LAST_FLUSH = "relay:last_flush";
-
-const DROPPED_EVENT_TYPES = new Set(["page.deleted", "page.undeleted"]);
-
-const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" } as const;
-const TEXT_OK = new Response("ok", { status: 200 });
-
-interface PendingEvent {
-  received_at: string;
-  type: string;
-  body: unknown;
-}
-
-interface PendingState {
-  events: PendingEvent[];
-  window_started_at: string;
-}
-
-interface LastFlushMeta {
+type CoalesceItem = {
   at: string;
-  count: number;
-  types: string[];
-  cos_status: number;
+  notion_type: string | null;
+  body: string;
+  signature: string | null;
+};
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
 }
 
-interface CoalesceForwardBody {
-  coalesce: true;
-  window_ms: number;
-  count: number;
-  types: string[];
-  events: unknown[];
-}
-
-interface HandshakeBody {
-  verification_token?: string;
-}
-
-interface NotionWebhookBody {
-  type?: string;
-  verification_token?: string;
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
-
-function methodNotAllowed(): Response {
-  return jsonResponse({ error: "method_not_allowed" }, 405);
-}
-
-function unauthorized(): Response {
-  return jsonResponse({ error: "unauthorized" }, 401);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
+function findVerificationToken(parsed: Record<string, unknown>): string | null {
+  const direct = parsed.verification_token;
+  if (typeof direct === "string" && direct.length > 0) return direct;
+  const camel = parsed.verificationToken;
+  if (typeof camel === "string" && camel.length > 0) return camel;
+  const data = parsed.data;
+  if (data && typeof data === "object") {
+    const d = data as Record<string, unknown>;
+    if (typeof d.verification_token === "string" && d.verification_token.length > 0) {
+      return d.verification_token;
+    }
+    if (typeof d.verificationToken === "string" && d.verificationToken.length > 0) {
+      return d.verificationToken;
+    }
   }
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (const [k, v] of Object.entries(parsed)) {
+    if (
+      typeof v === "string" &&
+      v.startsWith("secret_") &&
+      (k.toLowerCase().includes("token") || k.toLowerCase().includes("verification"))
+    ) {
+      return v;
+    }
   }
-  return diff === 0;
-}
-
-async function hmacSha256Hex(key: string, message: string): Promise<string> {
-  const enc = new TextEncoder();
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(key),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(message));
-  return Array.from(new Uint8Array(signature))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return null;
 }
 
 async function verifyNotionSignature(
@@ -109,449 +68,419 @@ async function verifyNotionSignature(
   signatureHeader: string | null,
   verificationToken: string,
 ): Promise<boolean> {
-  if (!signatureHeader || !verificationToken) {
-    return false;
+  if (!signatureHeader?.startsWith("sha256=")) return false;
+  const expectedHex = signatureHeader.slice("sha256=".length);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(verificationToken),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(rawBody),
+  );
+  const computed = [...new Uint8Array(mac)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  if (computed.length !== expectedHex.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < computed.length; i++) {
+    mismatch |= computed.charCodeAt(i) ^ expectedHex.charCodeAt(i);
   }
-  const digest = await hmacSha256Hex(verificationToken, rawBody);
-  const expected = `sha256=${digest}`;
-  return timingSafeEqual(expected, signatureHeader);
+  return mismatch === 0;
 }
 
-function isHandshakeBody(parsed: NotionWebhookBody): boolean {
-  return typeof parsed.verification_token === "string" && parsed.verification_token.length > 0;
+function cosAuthHeader(env: Env): string {
+  return env.COS_WEBHOOK_AUTHORIZATION.startsWith("Bearer ")
+    ? env.COS_WEBHOOK_AUTHORIZATION
+    : `Bearer ${env.COS_WEBHOOK_AUTHORIZATION}`;
 }
 
-function shouldDropEvent(eventType: string | undefined): boolean {
-  if (!eventType) {
-    return false;
-  }
-  return DROPPED_EVENT_TYPES.has(eventType);
+async function recordForward(env: Env, result: Record<string, unknown>): Promise<void> {
+  try {
+    await env.RELAY_KV.put(LAST_FORWARD_KEY, JSON.stringify(result));
+  } catch {}
+  try {
+    const raw = await env.RELAY_KV.get(FORWARD_HISTORY_KEY);
+    const hist: unknown[] = raw ? (JSON.parse(raw) as unknown[]) : [];
+    hist.unshift(result);
+    await env.RELAY_KV.put(
+      FORWARD_HISTORY_KEY,
+      JSON.stringify(hist.slice(0, FORWARD_HISTORY_MAX)),
+    );
+  } catch {}
 }
 
-function uniqueTypes(events: PendingEvent[]): string[] {
-  const seen = new Set<string>();
-  for (const event of events) {
-    seen.add(event.type);
-  }
-  return [...seen].sort();
-}
-
-async function readVerificationToken(env: Env): Promise<string | null> {
-  const fromKv = await env.RELAY_KV.get(KV_VERIFICATION_TOKEN);
-  if (fromKv) {
-    return fromKv;
-  }
-  if (env.NOTION_VERIFICATION_TOKEN) {
-    return env.NOTION_VERIFICATION_TOKEN;
-  }
-  return null;
-}
-
-async function storeVerificationToken(env: Env, token: string): Promise<void> {
-  await env.RELAY_KV.put(KV_VERIFICATION_TOKEN, token);
-}
-
-async function readPending(env: Env): Promise<PendingState> {
-  const raw = await env.RELAY_KV.get(KV_PENDING, "json");
-  if (!raw || typeof raw !== "object") {
-    return { events: [], window_started_at: new Date().toISOString() };
-  }
-  const candidate = raw as Partial<PendingState>;
-  if (!Array.isArray(candidate.events)) {
-    return { events: [], window_started_at: new Date().toISOString() };
-  }
-  return {
-    events: candidate.events as PendingEvent[],
-    window_started_at:
-      typeof candidate.window_started_at === "string"
-        ? candidate.window_started_at
-        : new Date().toISOString(),
+async function forwardRaw(
+  env: Env,
+  body: string,
+  signature: string | null,
+  notionType: string | null,
+  meta: Record<string, unknown> = {},
+): Promise<number> {
+  const forwardHeaders: Record<string, string> = {
+    "content-type": "application/json",
+    authorization: cosAuthHeader(env),
   };
-}
+  if (signature) forwardHeaders["x-notion-signature"] = signature;
 
-async function writePending(env: Env, pending: PendingState): Promise<void> {
-  await env.RELAY_KV.put(KV_PENDING, JSON.stringify(pending));
-}
-
-async function clearPending(env: Env): Promise<void> {
-  await env.RELAY_KV.delete(KV_PENDING);
-  await env.RELAY_KV.delete(KV_FLUSH_AT);
-}
-
-async function readFlushAt(env: Env): Promise<number | null> {
-  const raw = await env.RELAY_KV.get(KV_FLUSH_AT);
-  if (!raw) {
-    return null;
-  }
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : null;
-}
-
-async function writeFlushAt(env: Env, flushAtMs: number): Promise<void> {
-  await env.RELAY_KV.put(KV_FLUSH_AT, String(flushAtMs));
-}
-
-async function acquireFlushLock(env: Env): Promise<boolean> {
-  const existing = await env.RELAY_KV.get(KV_FLUSH_LOCK);
-  if (existing) {
-    return false;
-  }
-  await env.RELAY_KV.put(KV_FLUSH_LOCK, new Date().toISOString(), { expirationTtl: 120 });
-  return true;
-}
-
-async function releaseFlushLock(env: Env): Promise<void> {
-  await env.RELAY_KV.delete(KV_FLUSH_LOCK);
-}
-
-async function writeLastFlush(env: Env, meta: LastFlushMeta): Promise<void> {
-  await env.RELAY_KV.put(KV_LAST_FLUSH, JSON.stringify(meta));
-}
-
-async function readLastFlush(env: Env): Promise<LastFlushMeta | null> {
-  const raw = await env.RELAY_KV.get(KV_LAST_FLUSH, "json");
-  if (!raw || typeof raw !== "object") {
-    return null;
-  }
-  return raw as LastFlushMeta;
-}
-
-async function enqueueEvent(env: Env, eventType: string, body: unknown): Promise<void> {
-  const pending = await readPending(env);
-  if (pending.events.length === 0) {
-    pending.window_started_at = new Date().toISOString();
-  }
-  pending.events.push({
-    received_at: new Date().toISOString(),
-    type: eventType,
+  const upstream = await fetch(env.COS_WEBHOOK_URL, {
+    method: "POST",
+    headers: forwardHeaders,
     body,
   });
-  await writePending(env, pending);
-
-  const existingFlushAt = await readFlushAt(env);
-  if (existingFlushAt === null) {
-    const flushAt = Date.now() + COALESCE_MS;
-    await writeFlushAt(env, flushAt);
-  }
-}
-
-async function forwardBatch(env: Env, pending: PendingState): Promise<LastFlushMeta> {
-  const types = uniqueTypes(pending.events);
-  const payload: CoalesceForwardBody = {
-    coalesce: true,
-    window_ms: COALESCE_MS,
-    count: pending.events.length,
-    types,
-    events: pending.events.map((event) => event.body),
-  };
-
-  const response = await fetch(env.COS_WEBHOOK_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: env.COS_WEBHOOK_AUTHORIZATION,
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const meta: LastFlushMeta = {
+  const upstreamText = await upstream.text();
+  const result = {
     at: new Date().toISOString(),
-    count: pending.events.length,
-    types,
-    cos_status: response.status,
+    event: "forwarded",
+    status: upstream.status,
+    notion_type: notionType,
+    upstream_preview: upstreamText.slice(0, 200),
+    ...meta,
   };
-  await writeLastFlush(env, meta);
-  return meta;
+  await recordForward(env, result);
+  console.log(
+    JSON.stringify({
+      event: result.event,
+      status: result.status,
+      notion_type: result.notion_type,
+      coalesce: meta.coalesce ?? false,
+      count: meta.count,
+    }),
+  );
+  return upstream.status;
 }
 
-async function flushPending(env: Env): Promise<LastFlushMeta | null> {
-  const locked = await acquireFlushLock(env);
-  if (!locked) {
-    return null;
-  }
-
+async function readBuffer(env: Env): Promise<CoalesceItem[]> {
   try {
-    const pending = await readPending(env);
-    if (pending.events.length === 0) {
-      await clearPending(env);
-      return null;
-    }
-
-    const meta = await forwardBatch(env, pending);
-    await clearPending(env);
-    return meta;
-  } finally {
-    await releaseFlushLock(env);
+    const raw = await env.RELAY_KV.get(COALESCE_BUF_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as CoalesceItem[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 
-async function scheduleFlush(env: Env, flushAtMs: number): Promise<void> {
-  const delay = Math.max(0, flushAtMs - Date.now());
-  await sleep(delay);
+async function writeBuffer(env: Env, items: CoalesceItem[]): Promise<void> {
+  if (items.length === 0) {
+    try {
+      await env.RELAY_KV.delete(COALESCE_BUF_KEY);
+    } catch {}
+    return;
+  }
+  await env.RELAY_KV.put(COALESCE_BUF_KEY, JSON.stringify(items.slice(-COALESCE_MAX)));
+}
 
-  const currentFlushAt = await readFlushAt(env);
-  if (currentFlushAt === null || currentFlushAt > Date.now()) {
+async function flushCoalesce(env: Env): Promise<void> {
+  const items = await readBuffer(env);
+  await writeBuffer(env, []);
+  try {
+    await env.RELAY_KV.delete(COALESCE_LOCK_KEY);
+  } catch {}
+
+  if (items.length === 0) {
+    console.log(JSON.stringify({ event: "coalesce_flush_empty" }));
     return;
   }
 
-  await flushPending(env);
-}
-
-function setupSecretFromRequest(request: Request): string | null {
-  const url = new URL(request.url);
-  const fromQuery = url.searchParams.get("secret");
-  if (fromQuery) {
-    return fromQuery;
-  }
-  const fromHeader = request.headers.get("x-setup-secret");
-  if (fromHeader) {
-    return fromHeader;
-  }
-  return null;
-}
-
-function requireSetupSecret(request: Request, env: Env): boolean {
-  if (!env.SETUP_SECRET) {
-    return false;
-  }
-  const provided = setupSecretFromRequest(request);
-  return provided !== null && timingSafeEqual(provided, env.SETUP_SECRET);
-}
-
-function secretStatus(env: Env): Record<string, boolean> {
-  return {
-    COS_WEBHOOK_URL: Boolean(env.COS_WEBHOOK_URL),
-    COS_WEBHOOK_AUTHORIZATION: Boolean(env.COS_WEBHOOK_AUTHORIZATION),
-    SETUP_SECRET: Boolean(env.SETUP_SECRET),
-    NOTION_VERIFICATION_TOKEN: Boolean(env.NOTION_VERIFICATION_TOKEN),
-  };
-}
-
-async function handleHealth(): Promise<Response> {
-  return jsonResponse({
-    ok: true,
-    service: SERVICE_NAME,
-    coalesce_ms: COALESCE_MS,
-  });
-}
-
-async function handleSetupRoot(request: Request, env: Env): Promise<Response> {
-  if (!requireSetupSecret(request, env)) {
-    return unauthorized();
-  }
-  const token = await readVerificationToken(env);
-  const pending = await readPending(env);
-  const lastFlush = await readLastFlush(env);
-  const flushAt = await readFlushAt(env);
-  return jsonResponse({
-    ok: true,
-    service: SERVICE_NAME,
-    coalesce_ms: COALESCE_MS,
-    secrets: secretStatus(env),
-    notion_verification_token_present: Boolean(token),
-    pending_count: pending.events.length,
-    flush_at: flushAt ? new Date(flushAt).toISOString() : null,
-    last_flush: lastFlush,
-  });
-}
-
-async function handleSetupStatus(request: Request, env: Env): Promise<Response> {
-  if (!requireSetupSecret(request, env)) {
-    return unauthorized();
-  }
-  const pending = await readPending(env);
-  const flushAt = await readFlushAt(env);
-  const lastFlush = await readLastFlush(env);
-  return jsonResponse({
-    ok: true,
-    pending_count: pending.events.length,
-    window_started_at: pending.window_started_at,
-    flush_at: flushAt ? new Date(flushAt).toISOString() : null,
-    last_flush: lastFlush,
-    types: uniqueTypes(pending.events),
-  });
-}
-
-async function handleSetupPending(request: Request, env: Env): Promise<Response> {
-  if (!requireSetupSecret(request, env)) {
-    return unauthorized();
-  }
-  const pending = await readPending(env);
-  return jsonResponse({
-    ok: true,
-    count: pending.events.length,
-    events: pending.events,
-  });
-}
-
-async function handleSetupVerify(request: Request, env: Env): Promise<Response> {
-  if (!requireSetupSecret(request, env)) {
-    return unauthorized();
+  if (!env.COS_WEBHOOK_URL || !env.COS_WEBHOOK_AUTHORIZATION) {
+    await recordForward(env, {
+      at: new Date().toISOString(),
+      event: "relay_not_configured",
+      coalesce: true,
+      count: items.length,
+    });
+    return;
   }
 
-  const token = await readVerificationToken(env);
-  const checks = {
-    cos_webhook_url: Boolean(env.COS_WEBHOOK_URL),
-    cos_webhook_authorization: Boolean(env.COS_WEBHOOK_AUTHORIZATION),
-    setup_secret: Boolean(env.SETUP_SECRET),
-    notion_verification_token: Boolean(token),
-    kv_bound: Boolean(env.RELAY_KV),
-  };
+  if (items.length === 1) {
+    const only = items[0];
+    await forwardRaw(env, only.body, only.signature, only.notion_type, {
+      coalesce: false,
+      count: 1,
+    });
+    return;
+  }
 
-  let cosProbeStatus: number | null = null;
-  let cosProbeError: string | null = null;
-
-  if (env.COS_WEBHOOK_URL && env.COS_WEBHOOK_AUTHORIZATION) {
+  const events = items.map((it) => {
     try {
-      const probe = await fetch(env.COS_WEBHOOK_URL, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: env.COS_WEBHOOK_AUTHORIZATION,
-        },
-        body: JSON.stringify({
-          coalesce: true,
-          window_ms: COALESCE_MS,
-          count: 0,
-          types: [],
-          events: [],
-          probe: true,
-        }),
-      });
-      cosProbeStatus = probe.status;
-    } catch (error: unknown) {
-      cosProbeError = error instanceof Error ? error.message : "unknown_error";
+      return JSON.parse(it.body);
+    } catch {
+      return { raw: it.body.slice(0, 500), parseOk: false, at: it.at };
     }
-  }
-
-  return jsonResponse({
-    ok: Object.values(checks).every(Boolean),
-    checks,
-    cos_probe_status: cosProbeStatus,
-    cos_probe_error: cosProbeError,
+  });
+  const batchBody = JSON.stringify({
+    coalesce: true,
+    window_ms: COALESCE_MS,
+    count: events.length,
+    types: items.map((i) => i.notion_type),
+    events,
+  });
+  await forwardRaw(env, batchBody, null, "coalesce.batch", {
+    coalesce: true,
+    count: events.length,
+    sigOk: null,
   });
 }
 
-async function handleSetupFlush(request: Request, env: Env): Promise<Response> {
-  if (!requireSetupSecret(request, env)) {
-    return unauthorized();
-  }
-  const meta = await flushPending(env);
-  return jsonResponse({
-    ok: true,
-    flushed: meta !== null,
-    last_flush: meta,
-  });
-}
-
-async function handleSetup(request: Request, env: Env, pathname: string): Promise<Response> {
-  if (request.method !== "GET") {
-    return methodNotAllowed();
-  }
-
-  if (pathname === "/setup" || pathname === "/setup/") {
-    return handleSetupRoot(request, env);
-  }
-  if (pathname === "/setup/status") {
-    return handleSetupStatus(request, env);
-  }
-  if (pathname === "/setup/pending") {
-    return handleSetupPending(request, env);
-  }
-  if (pathname === "/setup/verify") {
-    return handleSetupVerify(request, env);
-  }
-  if (pathname === "/setup/flush") {
-    return handleSetupFlush(request, env);
-  }
-
-  return jsonResponse({ error: "not_found" }, 404);
-}
-
-async function handleNotionWebhook(
-  request: Request,
+async function enqueueAndSchedule(
   env: Env,
   ctx: ExecutionContext,
-): Promise<Response> {
-  const rawBody = await request.text();
-  let parsed: NotionWebhookBody = {};
-  try {
-    parsed = JSON.parse(rawBody) as NotionWebhookBody;
-  } catch {
-    // Notion expects 200 after accept; malformed payloads are ignored.
-    return TEXT_OK;
+  item: CoalesceItem,
+): Promise<void> {
+  const buf = await readBuffer(env);
+  buf.push(item);
+  await writeBuffer(env, buf);
+
+  const already = await env.RELAY_KV.get(COALESCE_LOCK_KEY);
+  if (already) {
+    console.log(
+      JSON.stringify({
+        event: "coalesce_buffered",
+        notion_type: item.notion_type,
+        buffer_size: buf.length,
+        flush_already_scheduled: true,
+      }),
+    );
+    return;
   }
 
-  const signature = request.headers.get("x-notion-signature");
+  await env.RELAY_KV.put(COALESCE_LOCK_KEY, new Date().toISOString(), {
+    expirationTtl: 180,
+  });
+  console.log(
+    JSON.stringify({
+      event: "coalesce_flush_scheduled",
+      notion_type: item.notion_type,
+      buffer_size: buf.length,
+      wait_ms: COALESCE_MS,
+    }),
+  );
 
-  if (isHandshakeBody(parsed)) {
-    const token = parsed.verification_token;
-    if (token) {
-      await storeVerificationToken(env, token);
-    }
-    return TEXT_OK;
-  }
-
-  const verificationToken = await readVerificationToken(env);
-  if (verificationToken) {
-    const trusted = await verifyNotionSignature(rawBody, signature, verificationToken);
-    if (!trusted) {
-      console.warn("[notion-comments-relay] signature verification failed");
-      return TEXT_OK;
-    }
-  } else if (signature) {
-    console.warn("[notion-comments-relay] signature present but no verification token configured");
-    return TEXT_OK;
-  }
-
-  const eventType = typeof parsed.type === "string" ? parsed.type : "unknown";
-  if (shouldDropEvent(eventType)) {
-    console.log(`[notion-comments-relay] dropped ${eventType}`);
-    return TEXT_OK;
-  }
-
-  await enqueueEvent(env, eventType, parsed);
-
-  const flushAt = await readFlushAt(env);
-  if (flushAt !== null) {
-    ctx.waitUntil(scheduleFlush(env, flushAt));
-  }
-
-  return TEXT_OK;
-}
-
-async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const url = new URL(request.url);
-  const { pathname } = url;
-
-  if (pathname === "/health") {
-    if (request.method !== "GET") {
-      return methodNotAllowed();
-    }
-    return handleHealth();
-  }
-
-  if (pathname === "/setup" || pathname.startsWith("/setup/")) {
-    return handleSetup(request, env, pathname);
-  }
-
-  if (pathname === "/" || pathname === "") {
-    if (request.method !== "POST") {
-      return methodNotAllowed();
-    }
-    return handleNotionWebhook(request, env, ctx);
-  }
-
-  if (request.method === "POST") {
-    // Non-root POST paths acknowledge without side effects (compat with ad-hoc probes).
-    return TEXT_OK;
-  }
-
-  return methodNotAllowed();
+  ctx.waitUntil(
+    (async () => {
+      await new Promise((r) => setTimeout(r, COALESCE_MS));
+      try {
+        await flushCoalesce(env);
+      } catch (err) {
+        console.log(JSON.stringify({ event: "coalesce_flush_failed", error: String(err) }));
+        try {
+          await env.RELAY_KV.delete(COALESCE_LOCK_KEY);
+        } catch {}
+      }
+    })(),
+  );
 }
 
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return handleRequest(request, env, ctx);
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    try {
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/health") {
+        return json({ ok: true, service: "notion-comments-relay", coalesce_ms: COALESCE_MS });
+      }
+
+      if (request.method === "GET" && url.pathname === "/setup/verification-token") {
+        const key = url.searchParams.get("key") ?? "";
+        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+          return json({ error: "unauthorized" }, 401);
+        }
+        const token =
+          (await env.RELAY_KV.get(TOKEN_KEY)) ?? env.NOTION_VERIFICATION_TOKEN ?? null;
+        if (!token) {
+          return json({
+            ok: false,
+            message: "No verification_token stored yet. Create the Notion subscription first.",
+          });
+        }
+        return json({ ok: true, verification_token: token });
+      }
+
+      if (request.method === "GET" && url.pathname === "/setup/last-post") {
+        const key = url.searchParams.get("key") ?? "";
+        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+          return json({ error: "unauthorized" }, 401);
+        }
+        const raw = await env.RELAY_KV.get(LAST_POST_KEY);
+        if (!raw) return json({ ok: false, message: "No POST captured yet." });
+        return json({ ok: true, last: JSON.parse(raw) });
+      }
+
+      if (request.method === "GET" && url.pathname === "/setup/last-forward") {
+        const key = url.searchParams.get("key") ?? "";
+        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+          return json({ error: "unauthorized" }, 401);
+        }
+        const raw = await env.RELAY_KV.get(LAST_FORWARD_KEY);
+        if (!raw) return json({ ok: false, message: "No forward attempt recorded yet." });
+        return json({ ok: true, last: JSON.parse(raw) });
+      }
+
+      if (request.method === "GET" && url.pathname === "/setup/forward-history") {
+        const key = url.searchParams.get("key") ?? "";
+        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+          return json({ error: "unauthorized" }, 401);
+        }
+        const raw = await env.RELAY_KV.get(FORWARD_HISTORY_KEY);
+        return json({ ok: true, history: raw ? JSON.parse(raw) : [] });
+      }
+
+      if (request.method === "GET" && url.pathname === "/setup/last-unsigned") {
+        const key = url.searchParams.get("key") ?? "";
+        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+          return json({ error: "unauthorized" }, 401);
+        }
+        const raw = await env.RELAY_KV.get(LAST_POST_KEY);
+        if (!raw) return json({ ok: false, message: "No POST captured yet." });
+        return json({ ok: true, last: JSON.parse(raw) });
+      }
+
+      if (request.method === "POST" && url.pathname === "/setup/flush-coalesce") {
+        const key = url.searchParams.get("key") ?? "";
+        if (!env.SETUP_SECRET || key !== env.SETUP_SECRET) {
+          return json({ error: "unauthorized" }, 401);
+        }
+        await flushCoalesce(env);
+        return json({ ok: true, flushed: true });
+      }
+
+      if (request.method !== "POST") {
+        return json({ error: "method_not_allowed" }, 405);
+      }
+
+      const rawBody = await request.text();
+      let parsed: Record<string, unknown> = {};
+      let parseOk = true;
+      try {
+        parsed = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+      } catch {
+        parseOk = false;
+      }
+
+      const signature = request.headers.get("X-Notion-Signature");
+      const token = parseOk ? findVerificationToken(parsed) : null;
+      const notionType =
+        typeof parsed.type === "string"
+          ? parsed.type
+          : typeof parsed.event_name === "string"
+            ? parsed.event_name
+            : null;
+
+      const debug = {
+        at: new Date().toISOString(),
+        parseOk,
+        len: rawBody.length,
+        keys: parseOk ? Object.keys(parsed) : [],
+        hasVerificationToken: Boolean(token),
+        hasSignature: Boolean(signature),
+        contentType: request.headers.get("content-type"),
+        userAgent: request.headers.get("user-agent"),
+        bodyPreview: rawBody.slice(0, 500),
+        notion_type: notionType,
+      };
+      try {
+        await env.RELAY_KV.put(LAST_POST_KEY, JSON.stringify(debug));
+      } catch (err) {
+        console.log(JSON.stringify({ event: "debug_kv_put_failed", error: String(err) }));
+      }
+
+      const ua = (request.headers.get("user-agent") || "").toLowerCase();
+      const fromNotion = ua.includes("notion") || Boolean(signature);
+      if (token && fromNotion) {
+        try {
+          await env.RELAY_KV.put(TOKEN_KEY, token);
+          console.log(
+            JSON.stringify({
+              event: "notion_handshake_stored",
+              token_len: token.length,
+              token_suffix: token.slice(-8),
+              hasSignature: Boolean(signature),
+            }),
+          );
+        } catch (err) {
+          console.log(JSON.stringify({ event: "handshake_kv_put_failed", error: String(err) }));
+        }
+        return new Response("ok", { status: 200 });
+      }
+      if (token && !fromNotion) {
+        console.log(JSON.stringify({ event: "ignored_non_notion_token_post", ua }));
+        return new Response("ok", { status: 200 });
+      }
+
+      if (!signature) {
+        console.log(
+          JSON.stringify({
+            event: "unsigned_post_ack",
+            keys: debug.keys,
+            len: debug.len,
+            parseOk,
+          }),
+        );
+        return new Response("ok", { status: 200 });
+      }
+
+      const storedToken =
+        (await env.RELAY_KV.get(TOKEN_KEY)) ?? env.NOTION_VERIFICATION_TOKEN ?? "";
+      let sigOk: boolean | null = null;
+      if (storedToken) {
+        sigOk = await verifyNotionSignature(rawBody, signature, storedToken);
+        if (!sigOk) {
+          const fail = {
+            at: new Date().toISOString(),
+            event: "signature_fail",
+            notion_type: notionType,
+            hasToken: true,
+            token_suffix: storedToken.slice(-8),
+          };
+          await recordForward(env, fail);
+          console.log(JSON.stringify(fail));
+          return new Response("ok", { status: 200 });
+        }
+      } else {
+        const fail = {
+          at: new Date().toISOString(),
+          event: "no_verification_token",
+          notion_type: notionType,
+        };
+        await recordForward(env, fail);
+        console.log(JSON.stringify(fail));
+      }
+
+      // Defense in depth: subscription should already omit these.
+      if (notionType === "page.deleted" || notionType === "page.undeleted") {
+        const dropped = {
+          at: new Date().toISOString(),
+          event: "dropped_deleted_event",
+          notion_type: notionType,
+          sigOk,
+        };
+        await recordForward(env, dropped);
+        console.log(JSON.stringify(dropped));
+        return new Response("ok", { status: 200 });
+      }
+
+      if (!env.COS_WEBHOOK_URL || !env.COS_WEBHOOK_AUTHORIZATION) {
+        const fail = { at: new Date().toISOString(), event: "relay_not_configured" };
+        await recordForward(env, fail);
+        console.log(JSON.stringify(fail));
+        return new Response("ok", { status: 200 });
+      }
+
+      await enqueueAndSchedule(env, ctx, {
+        at: new Date().toISOString(),
+        notion_type: notionType,
+        body: rawBody,
+        signature,
+      });
+      return new Response("ok", { status: 200 });
+    } catch (err) {
+      console.log(JSON.stringify({ event: "unhandled", error: String(err) }));
+      return new Response("ok", { status: 200 });
+    }
   },
 };
