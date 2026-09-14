@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file.
 Release Please maintains this file going forward from v1.0.0.
 
+## [1.3.1](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.3.0...jre-notion-workers-v1.3.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* use GitHub Item Sync relation for Time Log GitHub links ([#19](https://github.com/jreakin/jre-notion-workers/issues/19)) ([4a3586b](https://github.com/jreakin/jre-notion-workers/commit/4a3586b2ad0eaabd7c28fcca8b3d6b2713061858))
+
 ## [1.3.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.2.0...jre-notion-workers-v1.3.0) (2026-08-21)
 
 
