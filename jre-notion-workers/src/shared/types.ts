@@ -1060,3 +1060,44 @@ export type ValidateRelationIntegrityOutput =
       summary: string;
     }
   | { success: false; error: string };
+
+// --- pr-estimate-writer ---
+export interface PrEstimateWriterInput {
+  /** Default true — live writes require dry_run=false AND PR_ESTIMATE_WRITER_LIVE=1. */
+  dry_run?: boolean;
+  /** Filter to specific repos (e.g. jreakin/v0-quorum-report-redesign-concep). */
+  repo_filter?: string[];
+  /** Client name hint for backfill scope (Quorum Report). */
+  client_filter?: string;
+  /** Cap items processed (testing). */
+  max_items?: number;
+  /** Override current date for period rule (YYYY-MM-DD). */
+  as_of_date?: string;
+  backfill?: boolean;
+}
+
+export interface PrEstimateWriterRowResult {
+  github_item_id: string;
+  github_url: string;
+  action: "created" | "updated" | "skipped" | "error";
+  hours: number | null;
+  weighted_lines: number | null;
+  over_cap: boolean;
+  reason?: string;
+}
+
+export type PrEstimateWriterOutput =
+  | {
+      success: true;
+      dry_run: boolean;
+      items_scanned: number;
+      created: number;
+      updated: number;
+      skipped: number;
+      errors: number;
+      total_hours: number;
+      rows: PrEstimateWriterRowResult[];
+      summary: string;
+    }
+  | { success: false; error: string };
+

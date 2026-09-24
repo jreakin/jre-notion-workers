@@ -25,6 +25,7 @@ import { executeValidateDatabaseReferences } from "./workers/validate-database-r
 import { executeValidateRelationIntegrity } from "./workers/validate-relation-integrity.js";
 import { executeEstimateGitHubHours } from "./workers/estimate-github-hours.js";
 import { executeSyncTimeLog } from "./workers/sync-time-log.js";
+import { executePrEstimateWriter } from "./workers/pr-estimate-writer.js";
 import { executeWriteAgentOpsRun } from "./workers/write-agent-ops-run.js";
 import { executeNormalizeAgentOpsOptions } from "./workers/normalize-agent-ops-options.js";
 import { executeValidateClientShareScope } from "./workers/validate-client-share-scope.js";
@@ -61,6 +62,7 @@ import type {
   ValidateRelationIntegrityInput,
   EstimateGitHubHoursInput,
   SyncTimeLogInput,
+  PrEstimateWriterInput,
   WriteAgentOpsRunInput,
   NormalizeAgentOpsOptionsInput,
   ClientShareScopeInput,
@@ -484,6 +486,25 @@ worker.tool("estimate-github-hours", {
   }),
   execute: (input) =>
     executeEstimateGitHubHours(input as unknown as EstimateGitHubHoursInput) as never,
+});
+
+
+// ── pr-estimate-writer ───────────────────────────────────────────────
+
+worker.tool("pr-estimate-writer", {
+  title: "PR Estimate Writer",
+  description:
+    "Writes PR-based hour estimates to Time Log (Source=PR estimate) and Est. Hours on GitHub Items. Dry-run by default; live requires dry_run=false and PR_ESTIMATE_WRITER_LIVE=1.",
+  schema: j.object({
+    dry_run: j.boolean().nullable(),
+    repo_filter: j.array(j.string()).nullable(),
+    client_filter: j.string().nullable(),
+    max_items: j.number().nullable(),
+    as_of_date: j.string().nullable(),
+    backfill: j.boolean().nullable(),
+  }),
+  execute: (input, context) =>
+    executePrEstimateWriter(input as unknown as PrEstimateWriterInput, getNotionClient()) as never,
 });
 
 // ── sync-time-log ──────────────────────────────────────────────────────
