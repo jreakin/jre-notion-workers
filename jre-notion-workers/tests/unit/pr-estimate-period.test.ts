@@ -13,6 +13,19 @@ describe("pr-estimate-period", () => {
     expect(r.descriptionSuffix).toBeNull();
   });
 
+  test("empty billing status is unknown — does not mark merge month billed", () => {
+    const r = assignPeriodDate({
+      mergeDate: "2026-02-20",
+      projectId: "proj-1",
+      existingRowsForProject: [
+        { projectId: "proj-1", date: "2026-02-10", billingStatus: "" },
+      ],
+      asOfDate: "2026-04-05",
+    });
+    expect(r.mergeMonthBilled).toBe(false);
+    expect(r.date).toBe("2026-02-20");
+  });
+
   test("late PR lands in next open period when merge month billed", () => {
     const r = assignPeriodDate({
       mergeDate: "2026-02-20",

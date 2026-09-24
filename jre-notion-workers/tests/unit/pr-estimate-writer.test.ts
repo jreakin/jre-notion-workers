@@ -85,6 +85,35 @@ describe("pr-estimate-writer", () => {
     expect(store.estHoursUpdates[0]?.hours).toBe(5.25);
   });
 
+  test("PR estimate row with empty billing status skipped on rerun", async () => {
+    const store = new MemoryPrEstimateStore();
+    store.items = [item];
+    store.timeLogRows.push({
+      id: "tl-1",
+      githubItemId: "gh-1",
+      githubUrl: item.githubUrl,
+      description: "old",
+      hours: 4,
+      date: "2026-03-10",
+      source: PR_ESTIMATE_SOURCE,
+      billingStatus: "",
+      billable: false,
+      projectIds: ["proj-1"],
+      clientIds: ["client-1"],
+    });
+
+    const result = await processMergedPr({
+      item,
+      store,
+      github: mockGithub(),
+      dryRun: false,
+    });
+
+    expect(result.action).toBe("skipped");
+    expect(result.reason).toContain("unknown");
+    expect(store.timeLogRows[0]!.hours).toBe(4);
+  });
+
   test("idempotency updates existing PR estimate row", async () => {
     const store = new MemoryPrEstimateStore();
     store.items = [item];
