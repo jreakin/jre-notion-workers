@@ -41,8 +41,11 @@ function readParentDataSourceId(parent: Record<string, unknown> | null): string 
   if (!parent) return null;
   const direct = readString(parent.data_source_id);
   if (direct) return direct;
+  const databaseId = readString(parent.database_id);
+  if (databaseId) return databaseId;
   const nested = asRecord(parent.parent);
-  return nested ? readString(nested.data_source_id) : null;
+  if (!nested) return null;
+  return readString(nested.data_source_id) ?? readString(nested.database_id);
 }
 
 function pageIdFromParent(parent: Record<string, unknown> | null): string | null {

@@ -3,17 +3,17 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "packageManager": "bun@1.2.18",
+  "packageManager": "bun@1.4.0",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "types": "wrangler types",
     "check": "tsc --noEmit",
-    "test": "bun test tests/wake-gate.test.ts tests/serialize-key.test.ts && bun test tests/forwarding-unchanged.test.ts"
+    "test": "bun test tests/"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250910.0",
-    "bun-types": "1.2.18",
+    "bun-types": "1.4.0",
     "typescript": "^5.9.2",
     "wrangler": "^4.131.0"
   }

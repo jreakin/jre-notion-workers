@@ -1,5 +1,3 @@
-import type { Env } from "../env.js";
-
 export interface SerializedWorkContext {
   pageIds: string[];
 }
@@ -90,7 +88,6 @@ async function drainMemoryLane(key: string): Promise<void> {
  * Callers must pass the same `work` for every waiter on a key; only the leader's work runs.
  */
 export async function runSerializedByKey<T>(
-  _env: Env,
   key: string,
   opts: { pageId?: string },
   work: WorkFn<T>,

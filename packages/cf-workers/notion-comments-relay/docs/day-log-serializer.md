@@ -12,7 +12,7 @@ There is **no** Day Log create/write path under `packages/cf-workers/notion-comm
 
 ## Shipped helper (isolate-only)
 
-`src/day-log/serialize-key.ts` exports `runSerializedByKey(env, key, { pageId? }, work)`:
+`src/day-log/serialize-key.ts` exports `runSerializedByKey(key, { pageId? }, work)`:
 
 - Per-key mutual exclusion **inside one Worker isolate** (microtask-coalesced waiters).
 - Bursts in the **same isolate** coalesce: one `work({ pageIds })` sees every page id accumulated for that key.

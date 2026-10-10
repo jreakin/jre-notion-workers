@@ -6,6 +6,10 @@ export interface WakeRelevantSnapshot {
   needsJohn: boolean;
   sensitive: boolean;
   kind: string | null;
+  titleMatchedTemplate: boolean;
+  sourceRepo: string | null;
+  documentType: string | null;
+  inTrash: boolean;
 }
 
 export interface GatePageInputs {

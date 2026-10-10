@@ -3,11 +3,8 @@ import { evaluateAdDocsGate, applyDuplicateSkip, gateLogInputs } from "../src/wa
 import type { GatePageInputs } from "../src/wake-gate/wake-gate-types.js";
 import { AD_DOCS_DATA_SOURCE_ID } from "../src/wake-gate/wake-gate-types.js";
 import { parseWebhookForWakeGate, titleFromNotionUrlSlug } from "../src/wake-gate/payload-parse.js";
-import {
-  isTestOrTemplateTitlePrefix,
-  titleEndsWithEmDashTemplate,
-  isTemplateLikeTitle,
-} from "../src/wake-gate/title-match.js";
+import { isTemplateLikeTitle } from "../src/wake-gate/title-match.js";
+import { resetPageFetchCache } from "../src/wake-gate/page-fetch-cache.js";
 import { evaluateSafety } from "../src/wake-gate/notion-safety.js";
 import { idInCsvSet } from "../src/wake-gate/env-parse.js";
 import { gateInputsFromNotionPage } from "../src/wake-gate/notion-properties.js";
@@ -38,19 +35,16 @@ function baseInputs(overrides: Partial<GatePageInputs> = {}): GatePageInputs {
 }
 
 describe("title-match", () => {
-  test("whole-word Test/Template prefix with colon only", () => {
-    expect(isTestOrTemplateTitlePrefix("Test: something")).toBe(true);
-    expect(isTestOrTemplateTitlePrefix("Template: draft")).toBe(true);
-    expect(isTestOrTemplateTitlePrefix("Test-driven development notes")).toBe(false);
-    expect(isTestOrTemplateTitlePrefix("Template-based pricing")).toBe(false);
-    expect(isTestOrTemplateTitlePrefix("Template- draft")).toBe(false);
-    expect(isTestOrTemplateTitlePrefix("Contest: no")).toBe(false);
-  });
-  test("em dash template suffix on full joined title", () => {
+  test("spec regex table", () => {
+    expect(isTemplateLikeTitle("test: x")).toBe(true);
+    expect(isTemplateLikeTitle("Template - x")).toBe(true);
+    expect(isTemplateLikeTitle("  Template: x")).toBe(true);
+    expect(isTemplateLikeTitle("TEST: x")).toBe(true);
+    expect(isTemplateLikeTitle("Test-driven dev")).toBe(true);
+    expect(isTemplateLikeTitle("Contemplate the roadmap")).toBe(false);
+    expect(isTemplateLikeTitle("Testimony")).toBe(false);
     const title = "Q3 \u2014 Template Review: real decision doc";
-    expect(titleEndsWithEmDashTemplate(title)).toBe(false);
     expect(isTemplateLikeTitle(title)).toBe(false);
-    expect(isTemplateLikeTitle("Foo \u2014 Template")).toBe(true);
   });
 });
 
@@ -134,9 +128,17 @@ describe("ad-docs gate rules", () => {
     expect(evaluateAdDocsGate(baseInputs({ sensitive: true }), {}).reason).toBe("sensitive");
     expect(evaluateAdDocsGate(baseInputs({ kind: "Decision" }), {}).reason).toBe("kind_decision");
   });
-  test("ade source repo skip wins over agent digest", () => {
+  test("ade source repo with agent digest is would_log_only", () => {
     const r = evaluateAdDocsGate(
       baseInputs({ sourceRepo: "jre-agent-dev-cli", documentType: "Agent Digest" }),
+      {},
+    );
+    expect(r.decision).toBe("would_log_only");
+    expect(r.reason).toBe("ade_agent_digest");
+  });
+  test("ade source repo alone still skips", () => {
+    const r = evaluateAdDocsGate(
+      baseInputs({ sourceRepo: "jre-agent-dev-cli", documentType: "Report" }),
       {},
     );
     expect(r.decision).toBe("would_skip");
@@ -159,12 +161,13 @@ describe("ad-docs gate rules", () => {
   });
   test("duplicate only on page events", () => {
     const base = evaluateAdDocsGate(baseInputs(), {});
-    const pageDup = applyDuplicateSkip(base, baseInputs(), true);
+    const pageDup = applyDuplicateSkip(base, baseInputs(), true, "default_wake");
     expect(pageDup.reason).toBe("duplicate_within_60s");
     const commentDup = applyDuplicateSkip(
       base,
       baseInputs({ notionEventType: "comment.created" }),
       true,
+      "default_wake",
     );
     expect(commentDup.reason).toBe("default_wake");
   });
@@ -231,6 +234,7 @@ describe("shadow runner", () => {
 
   beforeEach(() => {
     logs = [];
+    resetPageFetchCache();
     origFetch = globalThis.fetch;
     origLog = console.log;
     console.log = ((...args: unknown[]) => {
@@ -241,6 +245,7 @@ describe("shadow runner", () => {
   afterEach(() => {
     globalThis.fetch = origFetch;
     console.log = origLog;
+    resetPageFetchCache();
   });
 
   function mockEnv(overrides: Partial<Env> = {}): Env {
@@ -286,7 +291,7 @@ describe("shadow runner", () => {
     expect(line.reason).not.toBe("not_ad_docs");
   });
 
-  test("AbortError maps to error:timeout", async () => {
+  test("AbortError maps to error:AbortError without message body", async () => {
     globalThis.fetch = mock(async () => {
       const err = new Error("The operation was aborted");
       err.name = "AbortError";
@@ -298,7 +303,8 @@ describe("shadow runner", () => {
       "page.properties_updated",
     );
     const line = JSON.parse(logs[0] ?? "{}");
-    expect(line.reason).toBe("error:timeout");
+    expect(line.reason).toBe("error:AbortError");
+    expect(line.reason).not.toContain("aborted");
   });
 
   test("dedupe KV put only when WAKE_GATE_DEDUPE=1 and not duplicate", async () => {
@@ -314,12 +320,17 @@ describe("shadow runner", () => {
       },
     };
     globalThis.fetch = mock(async () => Response.json(page)) as unknown as typeof fetch;
+    const pageCreated = {
+      type: "page.created",
+      entity: { id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", type: "page" },
+      data: { parent: { data_source_id: AD_DOCS_DATA_SOURCE_ID } },
+    };
     const envOff = mockEnv({ NOTION_API_TOKEN: "t" });
-    await runShadowWakeGates(envOff, integrationFixture as Record<string, unknown>, "page.properties_updated");
+    await runShadowWakeGates(envOff, pageCreated, "page.created");
     expect((envOff as Env & { _puts: string[] })._puts.filter((k) => k.startsWith("wake_gate:dedupe:"))).toHaveLength(0);
 
     const envOn = mockEnv({ NOTION_API_TOKEN: "t", WAKE_GATE_DEDUPE: "1" });
-    await runShadowWakeGates(envOn, integrationFixture as Record<string, unknown>, "page.properties_updated");
+    await runShadowWakeGates(envOn, pageCreated, "page.created");
     expect((envOn as Env & { _puts: string[] })._puts.some((k) => k.startsWith("wake_gate:dedupe:"))).toBe(true);
   });
 
@@ -356,5 +367,63 @@ describe("shadow runner", () => {
     await runShadowWakeGates(mockEnv(), integrationFixture as Record<string, unknown>, "page.properties_updated");
     const line = JSON.parse(logs[0] ?? "{}");
     expect(line.event).toBe(SHADOW_LOG_EVENT);
+  });
+
+  test("comment with webhook data_source_id skips Notion fetch", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = mock(async () => {
+      fetchCalls += 1;
+      return Response.json({
+        parent: { data_source_id: AD_DOCS_DATA_SOURCE_ID },
+        properties: {
+          Name: { type: "title", title: [{ plain_text: "Doc" }] },
+          "Needs John": { type: "checkbox", checkbox: false },
+          Sensitive: { type: "checkbox", checkbox: false },
+          Kind: { type: "select", select: { name: "Other" } },
+          "Source Repo": { type: "rich_text", rich_text: [{ plain_text: "x" }] },
+          "Document Type": { type: "select", select: { name: "Report" } },
+        },
+      });
+    }) as unknown as typeof fetch;
+    await runShadowWakeGates(
+      mockEnv({ NOTION_API_TOKEN: "t" }),
+      {
+        type: "comment.created",
+        entity: { id: "c", type: "comment" },
+        data: {
+          page_id: "p-webhook",
+          parent: { type: "data_source_id", data_source_id: AD_DOCS_DATA_SOURCE_ID },
+        },
+      },
+      "comment.created",
+    );
+    expect(fetchCalls).toBe(1);
+  });
+
+  test("comment page fetch cache avoids repeat Notion GET within TTL", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = mock(async () => {
+      fetchCalls += 1;
+      return Response.json({
+        parent: { database_id: AD_DOCS_DATA_SOURCE_ID },
+        properties: {
+          Name: { type: "title", title: [{ plain_text: "Doc" }] },
+          "Needs John": { type: "checkbox", checkbox: false },
+          Sensitive: { type: "checkbox", checkbox: false },
+          Kind: { type: "select", select: { name: "Other" } },
+          "Source Repo": { type: "rich_text", rich_text: [{ plain_text: "x" }] },
+          "Document Type": { type: "select", select: { name: "Report" } },
+        },
+      });
+    }) as unknown as typeof fetch;
+    const fixture = {
+      type: "comment.created",
+      entity: { id: "c1", type: "comment" },
+      data: { page_id: "same-page", parent: { type: "page", id: "same-page" } },
+    };
+    const env = mockEnv({ NOTION_API_TOKEN: "t" });
+    await runShadowWakeGates(env, fixture, "comment.created");
+    await runShadowWakeGates(env, fixture, "comment.created");
+    expect(fetchCalls).toBe(1);
   });
 });

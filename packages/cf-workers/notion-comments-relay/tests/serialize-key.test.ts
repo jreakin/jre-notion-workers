@@ -38,9 +38,9 @@ describe("serialize-key", () => {
     };
     const key = "day-log:2026-10-08";
     const [a, b, c] = await Promise.all([
-      runSerializedByKey(env, key, { pageId: "p1" }, work),
-      runSerializedByKey(env, key, { pageId: "p2" }, work),
-      runSerializedByKey(env, key, { pageId: "p3" }, work),
+      runSerializedByKey(key, { pageId: "p1" }, work),
+      runSerializedByKey(key, { pageId: "p2" }, work),
+      runSerializedByKey(key, { pageId: "p3" }, work),
     ]);
     expect(runs).toBe(1);
     expect(a).toEqual(["p1", "p2", "p3"]);

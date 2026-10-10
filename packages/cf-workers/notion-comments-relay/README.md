@@ -156,7 +156,7 @@ Perform **after** this PR is merged. Do **not** deploy from the PR branch to pro
 
 ## CI note
 
-Root CI runs `bun run check` under `jre-notion-workers/` only. This module is excluded until a dedicated check is added. Run `bun run check` locally in this directory before deploy.
+`.github/workflows/ci-quality.yml` runs `bun install --frozen-lockfile`, `bun run check`, and `bun run test` in this directory (Bun **1.4.0**, lockfile v2). Root `jre-notion-workers` typecheck runs in the same workflow.
 
 ## AD Docs shadow wake gate (BCH)
 
@@ -170,13 +170,15 @@ This deployment is subscribed as a **Notion Integration webhook** ingress (see P
 
 ### AD Docs data source
 
-Gate evaluation runs only when `data.parent.data_source_id` (or automation `parent.data_source_id`) is `2e97d7f5-6298-804c-b8a5-000b18b72684` (AD Docs). Other databases log `not_ad_docs` and skip Notion fetches.
+Gate evaluation runs when the webhook already carries `data.parent.data_source_id` / `database_id` for AD Docs (`2e97d7f5-6298-804c-b8a5-000b18b72684`), or after a **single** Notion page GET (Notion-Version `2025-09-03`, with `database_id` fallback) for `comment.*` events. Other databases log `not_ad_docs` (sampled) without evaluating rules. Comment events use a per-isolate page cache (60s TTL) to avoid repeat GETs.
 
 ### Rules (summary)
 
 1. **Wake:** Needs John, Sensitive, or Kind ∈ {Decision, Brief} (wake reasons beat skip rules).
-2. **ADE noise:** `Source Repo` text `jre-agent-dev-cli` → `would_skip` (**Source Repo rule wins** — even when `Document Type` = Agent Digest). `Document Type` = Agent Digest without that repo → `would_wake` (`agent_digest_needs_review`). Legacy **`Doc Type`** also has an Agent Digest option; it is **not** used for this rule.
-3. **Template / test / trash / duplicate:** title ends with `— Template` (em dash), or whole-word `Test` / `Template` prefix before `: ` or `-`, or `in_trash`, or duplicate page id within 60s with unchanged wake fields (Needs John, Sensitive, Kind). Skipping a page **only** because it lacks Client/Project relations is **not** implemented without a template/test title (open question for Abstract Secretary).
+2. **ADE noise:** `Source Repo` = `jre-agent-dev-cli` **and** `Document Type` = Agent Digest → `would_log_only` (`ade_agent_digest`, matches harness). `Source Repo` = `jre-agent-dev-cli` alone → `would_skip` (`ade_source_repo`). `Document Type` = Agent Digest without that repo → `would_wake` (`agent_digest_needs_review`). Legacy **`Doc Type`** is **not** used.
+3. **Template / test / trash / duplicate:** title matches `/^\s*(template|test)\b[:\s-]/i` **only when `Source Repo` is unset**; `in_trash` (including `archived` on fetched pages); duplicate within 60s **only for `page.*`** when the prior shadow decision was also `default_wake` and wake-relevant fields match (Needs John, Sensitive, Kind, title-match flag, Source Repo, Document Type, in_trash). Skipping **only** for missing Client/Project relations is **not** implemented.
+
+**Skip / log reasons (shadow):** `ade_source_repo`, `template_or_test_title`, `in_trash`, `fleet_bot_echo`, `duplicate_within_60s`, `not_ad_docs` (sampled counter only). **Log-only:** `ade_agent_digest`.
 
 **Safety (fail open to wake):** Submitted property ids in `updated_properties`, John-authored comments, missing/unknown inputs, Notion fetch errors/timeouts (~3s), missing `NOTION_API_TOKEN`.
 
@@ -187,7 +189,7 @@ Gate evaluation runs only when `data.parent.data_source_id` (or automation `pare
 | `NOTION_API_TOKEN` | Fetch page properties for Integration events when not bound elsewhere |
 | `JOHN_NOTION_USER_IDS` | Comma-separated Notion user ids |
 | `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | Fleet bot echo skip on `comment.*` only |
-| `SUBMITTED_PROPERTY_IDS` | Comma-separated opaque property ids |
+| `SUBMITTED_PROPERTY_IDS` | Comma-separated opaque property ids (URL-encode ids that contain commas, e.g. `H%3D%3F%3E` for `H=?>`) |
 | `WAKE_GATE_KV_RING` | Set to `1` for optional KV ring buffer of truncated decisions (default off) |
 | `WAKE_GATE_DEDUPE` | Set to `1` to write dedupe keys `wake_gate:dedupe:{pageId}` (TTL ~65s). **Default off** — each enabled put counts toward the relay's `RELAY_KV` daily quota |
 
@@ -201,7 +203,9 @@ No Day Log writer lives in this repository. See `docs/day-log-serializer.md` for
 
 ```bash
 cd packages/cf-workers/notion-comments-relay
-bun install
+bun install --frozen-lockfile
 bun run check
-bun test
+bun run test
 ```
+
+Shadow JSON logs omit raw titles and author ids; they include `title_length` and `title_matched_template` only. `page_id` is omitted from routine shadow lines (sampled `not_ad_docs` lines omit it as well). Fail-open `error:` reasons log the exception **name** only (e.g. `error:AbortError`).
