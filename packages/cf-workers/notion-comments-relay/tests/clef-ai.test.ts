@@ -1,6 +1,28 @@
 import { describe, expect, test } from "bun:test";
-import { buildClefAiRunArguments, clefInputKeys, invokeClefFlash } from "../src/wake-gate/clef-ai.js";
+import {
+  buildClefAiRunArguments,
+  clefInputKeys,
+  invokeClefFlash,
+  parseClefAiResponse,
+} from "../src/wake-gate/clef-ai.js";
 import type { Env } from "../src/env.js";
+
+describe("parseClefAiResponse", () => {
+  test("rejects out-of-range probabilities and bad choice", () => {
+    expect(
+      parseClefAiResponse(
+        { answers: { q_action: { type: "noul", noul: 2 }, q_dup: { type: "noul", noul: 0 }, q_when: { type: "choice", choice: "now" } } },
+        "m",
+      ),
+    ).toBeNull();
+    expect(
+      parseClefAiResponse(
+        { answers: { q_action: { type: "noul", noul: 0.5 }, q_dup: { type: "noul", noul: 0.1 }, q_when: { type: "choice", choice: "later" } } },
+        "m",
+      ),
+    ).toBeNull();
+  });
+});
 
 describe("clef-ai", () => {
   test("clef AI.run input is only model state questions; gateway on arg 3", async () => {

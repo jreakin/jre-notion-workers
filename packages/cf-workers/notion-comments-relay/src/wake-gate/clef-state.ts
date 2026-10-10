@@ -5,6 +5,7 @@ import {
   CLEF_TITLE_MAX_CHARS,
 } from "./clef-thresholds.js";
 import { isJohn } from "./gate-context-safety.js";
+import { idInNotionIdSet } from "./notion-ids.js";
 import type { GateEventContext } from "./gate-event-types.js";
 
 export type ClefEventSource = "notion_comment" | "notion_page" | "capture_queue" | "github_merge";
@@ -27,6 +28,11 @@ function sanitizeField(value: string): string {
     out += value[i];
   }
   return out.trim();
+}
+
+function encodeStateTextField(value: string, maxChars: number): string {
+  const clean = truncateCodePoints(value, maxChars);
+  return JSON.stringify(clean);
 }
 
 function truncateCodePoints(value: string, maxChars: number): string {
@@ -75,7 +81,7 @@ export function authorKind(ctx: GateEventContext): "john" | "agent" | "bot" | "o
     return "john";
   }
   const authorId = ctx.authorId;
-  if (authorId && ctx.fleetCommentsBotIds.has(authorId)) {
+  if (authorId && idInNotionIdSet(authorId, ctx.fleetCommentsBotIds)) {
     return "bot";
   }
   const kind = ctx.properties?.kind?.toLowerCase() ?? "";
@@ -154,8 +160,8 @@ export function buildClefStateString(
     `target_lane=${targetLane}`,
     `page_events_60s=${pageEventsLast60s}`,
     `bot_echo=${isBotEcho}`,
-    `title=${truncateCodePoints(props.title ?? "", CLEF_TITLE_MAX_CHARS)}`,
-    `snippet=${readSnippetFromPayload(parsed)}`,
+    `title=${encodeStateTextField(props.title ?? "", CLEF_TITLE_MAX_CHARS)}`,
+    `snippet=${encodeStateTextField(readSnippetFromPayload(parsed), CLEF_SNIPPET_MAX_CHARS)}`,
   ];
   return truncateStateSafe(lines.join("\n"));
 }

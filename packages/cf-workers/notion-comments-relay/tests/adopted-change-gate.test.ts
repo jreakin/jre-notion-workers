@@ -4,7 +4,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decideAdoptedChangeGate } from "../src/wake-gate/adopted-change-gate.js";
 import { isFleetLocksParent, readPageParentIds } from "../src/wake-gate/notion-ids.js";
-import { parseFleetLocksFieldsFromNotionPage } from "../src/wake-gate/fleet-locks-properties.js";
+import {
+  FLEET_LOCKS_NON_SUBMITTED_PROPERTY_ID_VALUES,
+  parseFleetLocksFieldsFromNotionPage,
+} from "../src/wake-gate/fleet-locks-properties.js";
 import type { GateEventContext } from "../src/wake-gate/gate-event-types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -35,8 +38,8 @@ function fleetCtx(overrides: Partial<GateEventContext> = {}): GateEventContext {
     johnUserIds: new Set([JOHN]),
     fleetCommentsBotIds: new Set(),
     submittedPropertyIds: new Set(),
-    nonSubmittedPropertyIds: new Set(),
-    updatedPropertyIds: [],
+    nonSubmittedPropertyIds: new Set(FLEET_LOCKS_NON_SUBMITTED_PROPERTY_ID_VALUES),
+    updatedPropertyIds: ["yDiF"],
     fleetLocksDataSourceId: FLEET_DS,
     fleetLocksDatabaseId: FLEET_DB,
     fleetLocksParentKnown: true,

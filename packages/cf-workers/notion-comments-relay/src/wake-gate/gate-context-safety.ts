@@ -1,5 +1,6 @@
 import { decodeNotionPropertyId } from "./fleet-locks-properties.js";
 import type { GateEventContext } from "./gate-event-types.js";
+import { idInNotionIdSet } from "./notion-ids.js";
 
 export function isTruthyFlag(value: unknown): boolean {
   if (value === false || value === null || value === undefined) {
@@ -34,7 +35,11 @@ export function submittedPropertyChanged(ctx: GateEventContext): boolean {
     return true;
   }
   const ids = ctx.updatedPropertyIds;
+  const notionType = ctx.notionType || "";
   if (!ids.length) {
+    if (notionType === "page.properties_updated") {
+      return true;
+    }
     return false;
   }
   const submitted = normalizedIdSet(ctx.submittedPropertyIds);
@@ -51,7 +56,7 @@ export function submittedPropertyChanged(ctx: GateEventContext): boolean {
 
 export function isJohn(ctx: GateEventContext): boolean {
   const ids = ctx.webhookAuthorIds ?? (ctx.authorId ? [ctx.authorId] : []);
-  if (ids.some((id) => ctx.johnUserIds.has(id))) {
+  if (ids.some((id) => idInNotionIdSet(id, ctx.johnUserIds))) {
     return true;
   }
   const name = ctx.authorName;
@@ -64,7 +69,7 @@ export function isJohn(ctx: GateEventContext): boolean {
 
 export function anyJohnUserId(johnUserIds: Set<string>, candidateIds: Iterable<string>): boolean {
   for (const id of candidateIds) {
-    if (johnUserIds.has(id)) {
+    if (idInNotionIdSet(id, johnUserIds)) {
       return true;
     }
   }

@@ -1,5 +1,5 @@
 import { adoptedChangeGateName } from "./adopted-change-gate.js";
-import { notionIdsEqual } from "./notion-ids.js";
+import { idInNotionIdSet } from "./notion-ids.js";
 import { FLEET_LOCKS_STATUS_ADOPTED } from "./fleet-locks-properties.js";
 import { isJohn, isTruthyFlag, submittedPropertyChanged } from "./gate-context-safety.js";
 import type { GateEventContext, WakeGateDecision } from "./gate-event-types.js";
@@ -17,6 +17,21 @@ function mentionUserId(mention: Record<string, unknown>): string | undefined {
     return user.id;
   }
   return undefined;
+}
+
+function isJohnMentionNode(rec: Record<string, unknown>, ctx: GateEventContext): boolean {
+  if (rec.type !== "mention") {
+    return false;
+  }
+  const mention = asRecord(rec.mention);
+  if (!mention) {
+    return false;
+  }
+  const userId = mentionUserId(mention);
+  if (userId && isJohn({ ...ctx, authorId: userId, webhookAuthorIds: [userId] })) {
+    return true;
+  }
+  return false;
 }
 
 function isBotMentionNode(rec: Record<string, unknown>, ctx: GateEventContext): boolean {
@@ -38,26 +53,28 @@ function isBotMentionNode(rec: Record<string, unknown>, ctx: GateEventContext): 
     }
   }
   const userId = mentionUserId(mention);
-  if (userId) {
-    if (isJohn({ ...ctx, authorId: userId, webhookAuthorIds: [userId] })) {
-      return false;
-    }
-    for (const botId of ctx.fleetCommentsBotIds) {
-      if (notionIdsEqual(userId, botId)) {
-        return true;
-      }
-    }
+  if (
+    userId &&
+    !isJohn({ ...ctx, authorId: userId, webhookAuthorIds: [userId] }) &&
+    idInNotionIdSet(userId, ctx.fleetCommentsBotIds)
+  ) {
+    return true;
   }
   return false;
 }
 
-function walkForBotMention(value: unknown, ctx: GateEventContext, depth = 0): boolean {
+function walkMentions(
+  value: unknown,
+  ctx: GateEventContext,
+  depth: number,
+  onNode: (rec: Record<string, unknown>) => boolean,
+): boolean {
   if (depth > 12 || value === null || value === undefined) {
     return false;
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
-      if (walkForBotMention(entry, ctx, depth + 1)) {
+      if (walkMentions(entry, ctx, depth + 1, onNode)) {
         return true;
       }
     }
@@ -67,14 +84,14 @@ function walkForBotMention(value: unknown, ctx: GateEventContext, depth = 0): bo
     return false;
   }
   const rec = value as Record<string, unknown>;
-  if (isBotMentionNode(rec, ctx)) {
+  if (onNode(rec)) {
     return true;
   }
   if (typeof rec.plain_text === "string" && CHEAP_BOT_PLAIN_MENTION.test(rec.plain_text)) {
     return true;
   }
   for (const child of Object.values(rec)) {
-    if (walkForBotMention(child, ctx, depth + 1)) {
+    if (walkMentions(child, ctx, depth + 1, onNode)) {
       return true;
     }
   }
@@ -85,7 +102,43 @@ export function payloadHasBotMention(
   parsed: Record<string, unknown>,
   ctx: GateEventContext,
 ): boolean {
-  return walkForBotMention(parsed, ctx);
+  return walkMentions(parsed, ctx, 0, (rec) => isBotMentionNode(rec, ctx));
+}
+
+export function payloadHasJohnMention(
+  parsed: Record<string, unknown>,
+  ctx: GateEventContext,
+): boolean {
+  return walkMentions(parsed, ctx, 0, (rec) => isJohnMentionNode(rec, ctx));
+}
+
+function commentPayloadHasInspectableContent(parsed: Record<string, unknown>): boolean {
+  const data = asRecord(parsed.data);
+  if (!data) {
+    return false;
+  }
+  if (typeof data.text === "string" && data.text.trim() !== "") {
+    return true;
+  }
+  const rich = data.rich_text ?? data.content;
+  if (!Array.isArray(rich) || rich.length === 0) {
+    return false;
+  }
+  for (const part of rich) {
+    const rec = asRecord(part);
+    if (rec && typeof rec.plain_text === "string" && rec.plain_text.trim() !== "") {
+      return true;
+    }
+    if (rec?.type === "mention") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isFleetCommentsBotAuthor(ctx: GateEventContext): boolean {
+  const ids = ctx.webhookAuthorIds ?? (ctx.authorId ? [ctx.authorId] : []);
+  return ids.some((id) => idInNotionIdSet(id, ctx.fleetCommentsBotIds));
 }
 
 function structuredIrreversible(ctx: GateEventContext): boolean {
@@ -116,11 +169,26 @@ export function clefHardOverrideReason(
   if (!parseOk) {
     return "unparseable_payload";
   }
+  if (ctx.johnUserIds.size === 0) {
+    return "john_ids_unset";
+  }
+  if (ctx.fleetCommentsBotIds.size === 0) {
+    return "bot_ids_unset";
+  }
+  if (isFleetCommentsBotAuthor(ctx)) {
+    return "fleet_bot_author";
+  }
   if (ctx.notionFetchFailReason) {
     return ctx.notionFetchFailReason;
   }
   if (ctx.isCommentEvent && isJohn(ctx)) {
     return "john_authored";
+  }
+  if (ctx.isCommentEvent && !commentPayloadHasInspectableContent(parsed)) {
+    return "comment_content_unavailable";
+  }
+  if (payloadHasJohnMention(parsed, ctx)) {
+    return "john_mention";
   }
   if (submittedPropertyChanged(ctx)) {
     return "submitted_changed";
@@ -131,6 +199,9 @@ export function clefHardOverrideReason(
   }
   if (ctx.fleetLocksFields?.statusName === FLEET_LOCKS_STATUS_ADOPTED) {
     return "adopted_status";
+  }
+  if (!ctx.propertiesAvailable) {
+    return "properties_unavailable";
   }
   const props = ctx.properties;
   if (isTruthyFlag(props?.needsJohn) || isTruthyFlag(props?.sensitive)) {

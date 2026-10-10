@@ -12,6 +12,18 @@ export function notionIdsEqual(a: string, b: string): boolean {
   return normalizeNotionUuid(a) === normalizeNotionUuid(b);
 }
 
+export function idInNotionIdSet(id: string | undefined, ids: Set<string>): boolean {
+  if (!id) {
+    return false;
+  }
+  for (const candidate of ids) {
+    if (notionIdsEqual(id, candidate)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function isValidNotionPageId(pageId: string): boolean {
   const trimmed = pageId.trim();
   if (!trimmed) {

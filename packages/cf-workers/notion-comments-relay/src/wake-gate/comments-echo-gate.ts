@@ -75,6 +75,7 @@ export function decideCommentsEchoGate(ctx: GateEventContext): WakeGateDecision 
     }
     return wake(gateName, "default_wake", ctx);
   } catch (err) {
-    return wake(gateName, `error:${String(err)}`, ctx);
+    const name = err instanceof Error ? err.name : "Error";
+    return wake(gateName, `error:${name}`, ctx);
   }
 }

@@ -85,7 +85,7 @@ describe("clef KV ring hygiene", () => {
       actually_ran: "coalesce_enqueued",
       reason: "test",
     };
-    await appendClefShadowLog(env(), entry);
+    await appendClefShadowLog({ ...env(), CLEF_RING: "1" }, entry);
     const raw = store.get("clef_shadow_log");
     expect(raw).toBeTruthy();
     expect(raw).not.toContain(rawPageId);

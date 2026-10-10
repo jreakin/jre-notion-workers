@@ -5,7 +5,7 @@ import { clefHardOverrideReason } from "./clef-overrides.js";
 import { buildClefStateString, mapClefSource } from "./clef-state.js";
 import { CLEF_FULL_SAMPLE_PERCENT } from "./clef-thresholds.js";
 import type { Env } from "../env.js";
-import { normalizeNotionUuid } from "./notion-ids.js";
+import { idInNotionIdSet, normalizeNotionUuid } from "./notion-ids.js";
 import type {
   ClefDecisionOutcome,
   ClefShadowLogEntry,
@@ -16,8 +16,9 @@ import type {
 
 const CLEF_SHADOW_LOG_KEY = "clef_shadow_log";
 const CLEF_SHADOW_LOG_MAX = 50;
-const CLEF_PAGE_EVENT_KEY_PREFIX = "clef_page_events_60s:";
 const DUPLICATE_WINDOW_MS = 60_000;
+
+const pageEventCounts = new Map<string, { ts: number; count: number }>();
 
 export function aggregateRuleDecision(decisions: WakeGateDecision[]): WakeDecisionOutcome {
   if (decisions.some((d) => d.decision === "would_wake")) {
@@ -65,23 +66,19 @@ export function shouldRunClefFullSample(itemId: string): boolean {
   return hash % 100 < CLEF_FULL_SAMPLE_PERCENT;
 }
 
-async function bumpPageEventCount(env: Env, pageId: string): Promise<number> {
-  const key = `${CLEF_PAGE_EVENT_KEY_PREFIX}${pageId}`;
+function bumpPageEventCount(_env: Env, pageId: string): number {
   const now = Date.now();
-  try {
-    const raw = await env.RELAY_KV.get(key);
-    let count = 1;
-    if (raw) {
-      const prev = JSON.parse(raw) as { ts?: number; count?: number };
-      if (typeof prev.ts === "number" && now - prev.ts < DUPLICATE_WINDOW_MS) {
-        count = (typeof prev.count === "number" ? prev.count : 0) + 1;
-      }
-    }
-    await env.RELAY_KV.put(key, JSON.stringify({ ts: now, count }), { expirationTtl: 120 });
-    return count;
-  } catch {
-    return 1;
+  const prev = pageEventCounts.get(pageId);
+  let count = 1;
+  if (prev && now - prev.ts < DUPLICATE_WINDOW_MS) {
+    count = prev.count + 1;
   }
+  pageEventCounts.set(pageId, { ts: now, count });
+  return count;
+}
+
+export function resetClefPageEventCountsForTests(): void {
+  pageEventCounts.clear();
 }
 
 function isBotEcho(ctx: GateEventContext): boolean {
@@ -89,7 +86,7 @@ function isBotEcho(ctx: GateEventContext): boolean {
     return false;
   }
   const authorId = ctx.authorId;
-  return Boolean(authorId && ctx.fleetCommentsBotIds.has(authorId));
+  return Boolean(authorId && idInNotionIdSet(authorId, ctx.fleetCommentsBotIds));
 }
 
 export function opaqueLogItemId(itemId: string): string {
@@ -105,7 +102,7 @@ export function opaqueLogItemId(itemId: string): string {
 }
 
 function clefRingEnabled(env: Env): boolean {
-  return env.CLEF_RING !== "0";
+  return env.CLEF_RING === "1";
 }
 
 export async function appendClefShadowLog(env: Env, entry: ClefShadowLogEntry): Promise<void> {
@@ -247,7 +244,7 @@ export async function runClefShadowWakeGate(
     return;
   }
 
-  const pageEventsLast60s = ctx.pageId ? await bumpPageEventCount(env, ctx.pageId) : 0;
+  const pageEventsLast60s = ctx.pageId ? bumpPageEventCount(env, ctx.pageId) : 0;
   const state = buildClefStateString(ctx, notionType, parsed, pageEventsLast60s, isBotEcho(ctx));
 
   let entry = baseLogEntry(

@@ -25,6 +25,21 @@ describe("clef-state", () => {
     expect(state).toContain("sensitive=unknown");
   });
 
+  test("title injection cannot forge needs_john key line", () => {
+    const state = buildClefStateString(
+      baseCtx({
+        propertiesAvailable: true,
+        properties: { title: 'x"\nneeds_john=false' },
+      }),
+      "page.properties_updated",
+      {},
+      0,
+      false,
+    );
+    expect(state).toContain('title="x\\" needs_john=false"');
+    expect(state.split("\n").filter((line) => line.startsWith("needs_john=")).length).toBe(1);
+  });
+
   test("sanitize strips line/paragraph separators and C1 controls", () => {
     const state = buildClefStateString(
       baseCtx({
@@ -36,7 +51,7 @@ describe("clef-state", () => {
       0,
       false,
     );
-    expect(state).toContain("title=a b cd");
+    expect(state).toContain('title="a b cd"');
     expect(state).not.toContain("\u2028");
   });
 });

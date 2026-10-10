@@ -219,11 +219,23 @@ Shadow rule gates (console + optional KV ring): comments echo, Fleet Locks adopt
 
 **Real path:** Gate Log parent matches drop forwarding (`dropped_gate_log_event`) before coalesce; shadow path exits early on the same parent match.
 
-**Clef shadow KV ring** (`clef_shadow_log`) is **on by default**; set `CLEF_RING=0` to disable KV writes (console shadow logs still emit).
+**Clef shadow KV ring** (`clef_shadow_log`) is **off by default**; set `CLEF_RING=1` to mirror console Clef lines into KV. Workers Logs already receives the same JSON.
 
 **Harness dedupe** (`wake_gate_recent_page:<pageId>`) follows `WAKE_GATE_DEDUPE=1` (default off), same as AD Docs `wake_gate:dedupe:` keys.
 
+**Clef property fetch:** Clef hard overrides that need page fields (`needs_john`, `sensitive`, etc.) run only when webhook enrichment set `propertiesAvailable`. Otherwise shadow logs `properties_unavailable` (wake, no model call).
+
+**Clef KV write budget (confirm plan before deploy):** Live coalesce uses `RELAY_KV` for every accepted webhook. Shadow Clef adds at most **one KV write per Clef model attempt** via `clef:calls:` (daily cap). Optional `CLEF_RING=1` adds read-modify-write on `clef_shadow_log` (avoid on KV **free** tier — 1,000 writes/day). `wake_gate_adopted_at:` writes only after a shadow adopted-change wake. Per-page 60s event counts are **in-isolate memory** (not KV). John must confirm paid KV quota before enabling `CLEF_RING=1` in production.
+
+**Gate Log roll-up:** This Worker does not write Gate Log database rows. A separate future Worker job is expected to roll up shadow lines into the Gate Log data source.
+
+**Privacy / sampling notes:** Console `item_id` uses an unsalted 32-bit hash (`opaque:<hex>`) — collisions are possible and pages cannot be recovered from logs alone. The 10% full Clef sample is keyed by **page id hash**, so ~10% of pages are sampled, not 10% of events. AI Gateway logging retains the Clef `state` string (title and snippet up to 120 chars each). The irreversible-action Clef override inspects **structured fields only** (Kind, Document Type, Status, Author Lane), not free-text client-facing copy.
+
+**`NON_SUBMITTED_PROPERTY_IDS`:** When unset, Fleet Locks property ids from code defaults are used so Clef/Fleet gates can distinguish non-Submitted property updates. Set the env var to override that list.
+
 ### Deploy vars (`wrangler.toml` `[vars]`)
+
+Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these). Secrets stay in Wrangler secrets / dashboard.
 
 | Name | Required | When unset |
 | --- | --- | --- |
@@ -231,7 +243,9 @@ Shadow rule gates (console + optional KV ring): comments echo, Fleet Locks adopt
 | `FLEET_LOCKS_DATABASE_ID` | optional | 2022-style `parent.database_id` matching skipped (data source id still used) |
 | `GATE_LOG_DATA_SOURCE_IDS` | optional | Gate Log drop disabled — all parents forward |
 | `SUBMITTED_PROPERTY_IDS` | optional | Submitted-property safety uses env/secret only when set (e.g. `;Xo<` in committed vars) |
-| `NON_SUBMITTED_PROPERTY_IDS` | optional | No non-submitted allowlist |
+| `NON_SUBMITTED_PROPERTY_IDS` | optional | Falls back to built-in Fleet Locks non-Submitted property id list |
+| `JOHN_NOTION_USER_IDS`, `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | recommended | Clef shadow overrides `john_ids_unset` / `bot_ids_unset` (wake, no model) |
 | `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP` | Clef shadow | Clef mode/cap from defaults |
+| `CLEF_RING` | optional | Default off; `1` enables `clef_shadow_log` KV ring |
 
 KV: `wake_gate_adopted_at:<pageId>` (**90-day** TTL) for adopted-change dedupe after a shadow `adopted_change` wake.

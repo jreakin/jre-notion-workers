@@ -3,7 +3,7 @@ export interface Env {
   AI?: Ai;
   /** Comma-separated property IDs known to be non-Submitted (optional allowlist). */
   NON_SUBMITTED_PROPERTY_IDS?: string;
-  /** Set to "0" to disable Clef shadow KV ring (on by default). */
+  /** Set to "1" to enable Clef shadow KV ring (default off; Workers Logs mirror console). */
   CLEF_RING?: string;
   /** Notion data source id for Fleet: Locks (adopted-change gate). */
   FLEET_LOCKS_DATA_SOURCE_ID?: string;

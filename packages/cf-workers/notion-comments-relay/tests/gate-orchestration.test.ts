@@ -66,7 +66,10 @@ describe("gate-orchestration enrich", () => {
       {
         type: "page.properties_updated",
         entity: { id: PAGE_ID, type: "page" },
-        data: { parent: { data_source_id: FLEET_DS }, updated_properties: [] },
+        data: {
+          parent: { data_source_id: FLEET_DS },
+          updated_properties: ["]GbO"],
+        },
       },
       "page.properties_updated",
       "{}",
@@ -79,6 +82,25 @@ describe("gate-orchestration enrich", () => {
     expect(fleetDecision?.decision).toBe("would_wake");
     expect(fleetDecision?.reason).toBe("notion_page_unreadable");
     expect(kvPuts.some((k) => k.startsWith("wake_gate_adopted_at:"))).toBe(false);
+  });
+
+  test("comment events use data.page_id for context pageId", async () => {
+    const env = mockEnv();
+    await runHarnessRuleShadowGates(
+      env,
+      {
+        type: "comment.created",
+        entity: { id: "comment-entity-id", type: "comment" },
+        data: { page_id: PAGE_ID, parent: { data_source_id: FLEET_DS } },
+      },
+      "comment.created",
+      "{}",
+      true,
+    );
+    const clefLine = logs
+      .map((l) => JSON.parse(l))
+      .find((o) => o.stream === "clef_wake_shadow");
+    expect(clefLine?.item_id).not.toBe("comment-entity-id");
   });
 
   test("harness recent-page dedupe KV only when WAKE_GATE_DEDUPE=1", async () => {

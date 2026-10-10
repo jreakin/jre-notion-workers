@@ -4,8 +4,8 @@ import type { GateEventContext } from "./gate-event-types.js";
 
 export const GATE_LOG_DROP_REASON = "gate_log_event";
 
-function parseNormalizedIdSet(raw: string | undefined): Set<string> {
-  if (!raw) {
+function parseNormalizedIdSet(raw: unknown): Set<string> {
+  if (typeof raw !== "string" || !raw.trim()) {
     return new Set();
   }
   const out = new Set<string>();

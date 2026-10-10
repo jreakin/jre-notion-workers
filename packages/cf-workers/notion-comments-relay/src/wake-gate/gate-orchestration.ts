@@ -14,6 +14,7 @@ import {
 } from "./notion-ids.js";
 import { fetchNotionPage } from "./notion-page-fetch.js";
 import {
+  FLEET_LOCKS_NON_SUBMITTED_PROPERTY_ID_VALUES,
   parseAdDocsPropertiesFromNotionPage,
   parseFleetLocksFieldsFromNotionPage,
   readPageAuthorId,
@@ -35,8 +36,8 @@ const ADOPTED_AT_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 90;
 const DUPLICATE_WINDOW_MS = 60_000;
 const MAX_FIELD_LEN = 200;
 
-function parseIdSet(raw: string | undefined): Set<string> {
-  if (!raw) {
+function parseIdSet(raw: unknown): Set<string> {
+  if (typeof raw !== "string" || !raw.trim()) {
     return new Set();
   }
   return new Set(
@@ -47,9 +48,20 @@ function parseIdSet(raw: string | undefined): Set<string> {
   );
 }
 
-function trimOptionalEnvId(raw: string | undefined): string | undefined {
-  const trimmed = raw?.trim();
+function trimOptionalEnvId(raw: unknown): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const trimmed = raw.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function buildNonSubmittedPropertyIds(env: Env): Set<string> {
+  const fromEnv = parseIdSet(env.NON_SUBMITTED_PROPERTY_IDS);
+  if (fromEnv.size > 0) {
+    return fromEnv;
+  }
+  return new Set(FLEET_LOCKS_NON_SUBMITTED_PROPERTY_ID_VALUES);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -142,24 +154,29 @@ export function buildGateContext(
   }
   const authorId = webhookAuthorIds[0];
 
-  const pageId = typeof entity?.id === "string" ? entity.id : undefined;
+  const isCommentEvent =
+    notionType === "comment.created" ||
+    notionType === "comment.updated" ||
+    notionType === "comment.deleted";
+
+  let pageId = typeof entity?.id === "string" ? entity.id : undefined;
+  if (isCommentEvent && typeof data?.page_id === "string" && data.page_id.length > 0) {
+    pageId = data.page_id;
+  }
 
   const updatedPropertyIds: string[] = [];
   const rawUpdated = data?.updated_properties ?? data?.updated_property_ids;
   if (Array.isArray(rawUpdated)) {
     for (const p of rawUpdated) {
-      updatedPropertyIds.push(String(p));
+      if (typeof p === "string") {
+        updatedPropertyIds.push(p);
+      }
     }
   }
 
   const enriched = readEnrichedProperties(parsed);
   const propertiesAvailable = Boolean(enriched);
   const properties: NotionPageProperties = enriched ?? {};
-
-  const isCommentEvent =
-    notionType === "comment.created" ||
-    notionType === "comment.updated" ||
-    notionType === "comment.deleted";
 
   const webhookParent = readWebhookParent(data);
   const webhookParentKnown = webhookParentIsFleetLocks(
@@ -187,7 +204,7 @@ export function buildGateContext(
     johnUserIds: parseIdSet(env.JOHN_NOTION_USER_IDS),
     fleetCommentsBotIds: parseIdSet(env.FLEET_COMMENTS_BOT_NOTION_USER_IDS),
     submittedPropertyIds: parseIdSet(env.SUBMITTED_PROPERTY_IDS),
-    nonSubmittedPropertyIds: parseIdSet(env.NON_SUBMITTED_PROPERTY_IDS),
+    nonSubmittedPropertyIds: buildNonSubmittedPropertyIds(env),
     updatedPropertyIds,
     fleetLocksDataSourceId: trimOptionalEnvId(env.FLEET_LOCKS_DATA_SOURCE_ID),
     fleetLocksDatabaseId: trimOptionalEnvId(env.FLEET_LOCKS_DATABASE_ID),
