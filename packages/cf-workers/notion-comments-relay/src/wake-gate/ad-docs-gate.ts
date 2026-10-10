@@ -1,4 +1,9 @@
-import type { GatePageInputs, ShadowGateResult, WakeDecision, WakeRelevantSnapshot } from "./wake-gate-types.js";
+import type {
+  GatePageInputs,
+  ShadowGateResult,
+  WakeDecision,
+  WakeRelevantSnapshot,
+} from "./wake-gate-types.js";
 import { evaluateSafety } from "./notion-safety.js";
 import type { SafetyEnv } from "./notion-safety.js";
 import { isTemplateLikeTitle } from "./title-match.js";
@@ -6,16 +11,33 @@ import { isTemplateLikeTitle } from "./title-match.js";
 const ADE_SOURCE_REPO = "jre-agent-dev-cli";
 const AGENT_DIGEST_DOC_TYPE = "Agent Digest";
 
+function sourceRepoIsSet(sourceRepo: string | null): boolean {
+  return sourceRepo !== null && sourceRepo.trim().length > 0;
+}
+
 export function wakeRelevantSnapshot(inputs: GatePageInputs): WakeRelevantSnapshot {
+  const title = inputs.title ?? "";
   return {
     needsJohn: inputs.needsJohn === true,
     sensitive: inputs.sensitive === true,
     kind: inputs.kind,
+    titleMatchedTemplate: isTemplateLikeTitle(title),
+    sourceRepo: inputs.sourceRepo,
+    documentType: inputs.documentType,
+    inTrash: inputs.inTrash,
   };
 }
 
 export function snapshotsEqual(a: WakeRelevantSnapshot, b: WakeRelevantSnapshot): boolean {
-  return a.needsJohn === b.needsJohn && a.sensitive === b.sensitive && a.kind === b.kind;
+  return (
+    a.needsJohn === b.needsJohn &&
+    a.sensitive === b.sensitive &&
+    a.kind === b.kind &&
+    a.titleMatchedTemplate === b.titleMatchedTemplate &&
+    a.sourceRepo === b.sourceRepo &&
+    a.documentType === b.documentType &&
+    a.inTrash === b.inTrash
+  );
 }
 
 function result(
@@ -29,19 +51,28 @@ function result(
     pageId: inputs.pageId,
     dataSourceId: inputs.dataSourceId,
     notionEventType: inputs.notionEventType,
-    inputs: {
-      title: inputs.title,
-      needsJohn: inputs.needsJohn,
-      sensitive: inputs.sensitive,
-      kind: inputs.kind,
-      sourceRepo: inputs.sourceRepo,
-      documentType: inputs.documentType,
-      inTrash: inputs.inTrash,
-      hasClientsRelation: inputs.hasClientsRelation,
-      hasProjectRelation: inputs.hasProjectRelation,
-      updatedPropertyIds: inputs.updatedPropertyIds,
-      authorUserIds: inputs.authorUserIds,
-    },
+    inputs: gateLogInputs(inputs, { decision, reason }),
+  };
+}
+
+export function gateLogInputs(
+  inputs: GatePageInputs,
+  result?: Pick<ShadowGateResult, "decision" | "reason">,
+): Record<string, unknown> {
+  const title = inputs.title ?? "";
+  return {
+    title_length: title.length,
+    title_matched_template: isTemplateLikeTitle(title),
+    needsJohn: inputs.needsJohn,
+    sensitive: inputs.sensitive,
+    kind: inputs.kind,
+    sourceRepo: inputs.sourceRepo,
+    documentType: inputs.documentType,
+    inTrash: inputs.inTrash,
+    hasClientsRelation: inputs.hasClientsRelation,
+    hasProjectRelation: inputs.hasProjectRelation,
+    updated_property_count: inputs.updatedPropertyIds.length,
+    ...(result ? { decision: result.decision, gate_reason: result.reason } : {}),
   };
 }
 
@@ -64,6 +95,9 @@ export function evaluateAdDocsGate(inputs: GatePageInputs, env: SafetyEnv): Shad
     return result("would_wake", "kind_brief", inputs);
   }
 
+  if (inputs.sourceRepo === ADE_SOURCE_REPO && inputs.documentType === AGENT_DIGEST_DOC_TYPE) {
+    return result("would_log_only", "ade_agent_digest", inputs);
+  }
   if (inputs.sourceRepo === ADE_SOURCE_REPO) {
     return result("would_skip", "ade_source_repo", inputs);
   }
@@ -75,15 +109,8 @@ export function evaluateAdDocsGate(inputs: GatePageInputs, env: SafetyEnv): Shad
   if (inputs.inTrash) {
     return result("would_skip", "in_trash", inputs);
   }
-  if (isTemplateLikeTitle(title)) {
+  if (isTemplateLikeTitle(title) && !sourceRepoIsSet(inputs.sourceRepo)) {
     return result("would_skip", "template_or_test_title", inputs);
-  }
-  if (
-    isTemplateLikeTitle(title) &&
-    inputs.hasClientsRelation === false &&
-    inputs.hasProjectRelation === false
-  ) {
-    return result("would_skip", "orphan_template_no_client_project", inputs);
   }
 
   if (safety.fleetEchoSkip) {
@@ -97,11 +124,17 @@ export function applyDuplicateSkip(
   base: ShadowGateResult,
   inputs: GatePageInputs,
   isDuplicate: boolean,
+  priorReason: string | null,
 ): ShadowGateResult {
-  if (!isDuplicate) {
+  const isPageEvent = inputs.notionEventType?.startsWith("page.") ?? false;
+  if (!isPageEvent || !isDuplicate) {
     return base;
   }
-  if (base.decision === "would_wake" && base.reason === "default_wake") {
+  if (
+    priorReason === "default_wake" &&
+    base.decision === "would_wake" &&
+    base.reason === "default_wake"
+  ) {
     return result("would_skip", "duplicate_within_60s", inputs);
   }
   return base;

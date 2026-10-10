@@ -6,6 +6,10 @@ export interface WakeRelevantSnapshot {
   needsJohn: boolean;
   sensitive: boolean;
   kind: string | null;
+  titleMatchedTemplate: boolean;
+  sourceRepo: string | null;
+  documentType: string | null;
+  inTrash: boolean;
 }
 
 export interface GatePageInputs {
@@ -21,8 +25,10 @@ export interface GatePageInputs {
   hasClientsRelation: boolean | null;
   hasProjectRelation: boolean | null;
   updatedPropertyIds: string[];
+  updatedPropertiesKnown?: boolean;
   notionEventType: string | null;
   authorUserIds: string[];
+  schemaNeedsPropertyFetch?: boolean;
 }
 
 export interface ShadowGateResult {
@@ -43,4 +49,6 @@ export interface ParsedWakePayload {
   authorUserIds: string[];
   notionEventType: string | null;
   isAutomationPageObject: boolean;
+  isCommentEvent: boolean;
+  updatedPropertiesKnown: boolean;
 }

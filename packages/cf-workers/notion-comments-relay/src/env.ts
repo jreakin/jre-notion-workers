@@ -14,4 +14,8 @@ export interface Env {
   SUBMITTED_PROPERTY_IDS?: string;
   /** Set to `1` to append truncated decisions to KV ring buffer (default off). */
   WAKE_GATE_KV_RING?: string;
+  /** Set to `1` to persist page dedupe keys in KV (default off; each put counts toward RELAY_KV quota). */
+  WAKE_GATE_DEDUPE?: string;
+  /** Notion database id for AD Docs (2022-06-28 page parent); non-secret. Pair with data source id in gate logic. */
+  AD_DOCS_DATABASE_ID?: string;
 }

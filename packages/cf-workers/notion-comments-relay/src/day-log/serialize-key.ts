@@ -1,8 +1,3 @@
-import type { Env } from "../env.js";
-
-const BUF_PREFIX = "daylog:buf:";
-const LOCK_TTL_SEC = 30;
-
 export interface SerializedWorkContext {
   pageIds: string[];
 }
@@ -33,6 +28,12 @@ function laneFor(key: string): MemoryLane {
   return lane;
 }
 
+function deleteLaneIfIdle(key: string, lane: MemoryLane): void {
+  if (!lane.running && lane.waiters.length === 0 && lane.pendingPageIds.length === 0) {
+    memoryLanes.delete(key);
+  }
+}
+
 function scheduleDrain(key: string): void {
   const lane = laneFor(key);
   if (lane.drainScheduled || lane.running) {
@@ -43,19 +44,6 @@ function scheduleDrain(key: string): void {
     lane.drainScheduled = false;
     void drainMemoryLane(key);
   });
-}
-
-async function persistPageId(env: Env, key: string, pageId: string): Promise<void> {
-  try {
-    const raw = await env.RELAY_KV.get(`${BUF_PREFIX}${key}`);
-    const buf: string[] = raw ? (JSON.parse(raw) as string[]) : [];
-    buf.push(pageId);
-    await env.RELAY_KV.put(`${BUF_PREFIX}${key}`, JSON.stringify([...new Set(buf)]), {
-      expirationTtl: LOCK_TTL_SEC,
-    });
-  } catch {
-    // KV optional
-  }
 }
 
 async function drainMemoryLane(key: string): Promise<void> {
@@ -74,6 +62,7 @@ async function drainMemoryLane(key: string): Promise<void> {
         break;
       }
       try {
+        // Followers' work functions are ignored; leader work must be identical and idempotent.
         const value = await leader.work({ pageIds: batchIds });
         for (const w of batch) {
           w.resolve(value);
@@ -88,12 +77,17 @@ async function drainMemoryLane(key: string): Promise<void> {
     lane.running = false;
     if (lane.waiters.length > 0) {
       scheduleDrain(key);
+    } else {
+      deleteLaneIfIdle(key, lane);
     }
   }
 }
 
+/**
+ * Per-isolate serialization only. Does not coordinate across Worker isolates or requests.
+ * Callers must pass the same `work` for every waiter on a key; only the leader's work runs.
+ */
 export async function runSerializedByKey<T>(
-  env: Env,
   key: string,
   opts: { pageId?: string },
   work: WorkFn<T>,
@@ -112,10 +106,7 @@ export async function runSerializedByKey<T>(
     scheduleDrain(key);
   });
 
-  if (opts.pageId) {
-    void persistPageId(env, key, opts.pageId);
-  }
-
+  deleteLaneIfIdle(key, lane);
   return result;
 }
 

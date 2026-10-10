@@ -22,22 +22,43 @@ function readAuthors(parsed: Record<string, unknown>): string[] {
   return ids;
 }
 
-function readUpdatedProperties(data: Record<string, unknown>): string[] {
+function readUpdatedProperties(data: Record<string, unknown>): { ids: string[]; known: boolean } {
+  if (!("updated_properties" in data)) {
+    return { ids: [], known: false };
+  }
   const raw = data.updated_properties;
-  if (!Array.isArray(raw)) return [];
+  if (!Array.isArray(raw)) {
+    return { ids: [], known: true };
+  }
   const ids: string[] = [];
   for (const item of raw) {
     if (typeof item === "string" && item.length > 0) ids.push(item);
   }
-  return ids;
+  return { ids, known: true };
 }
 
 function readParentDataSourceId(parent: Record<string, unknown> | null): string | null {
   if (!parent) return null;
   const direct = readString(parent.data_source_id);
   if (direct) return direct;
+  const databaseId = readString(parent.database_id);
+  if (databaseId) return databaseId;
   const nested = asRecord(parent.parent);
-  return nested ? readString(nested.data_source_id) : null;
+  if (!nested) return null;
+  return readString(nested.data_source_id) ?? readString(nested.database_id);
+}
+
+function pageIdFromParent(parent: Record<string, unknown> | null): string | null {
+  if (!parent) return null;
+  const parentType = readString(parent.type);
+  if (parentType === "page") {
+    return readString(parent.id);
+  }
+  return (
+    readString(parent.page_id) ??
+    readString(parent.pageId) ??
+    (parentType === "page_id" ? readString(parent.id) : null)
+  );
 }
 
 export function titleFromNotionUrlSlug(url: string): string | null {
@@ -64,10 +85,13 @@ export function parseWebhookForWakeGate(parsed: Record<string, unknown>): Parsed
       authorUserIds: [],
       notionEventType: null,
       isAutomationPageObject: false,
+      isCommentEvent: false,
+      updatedPropertiesKnown: false,
     };
   }
   const notionEventType =
     readString(parsed.type) ?? readString(parsed.event_name) ?? readString(parsed.event);
+  const isCommentEvent = notionEventType !== null && notionEventType.startsWith("comment.");
   const data = asRecord(parsed.data);
   const authors = readAuthors(parsed);
 
@@ -87,6 +111,8 @@ export function parseWebhookForWakeGate(parsed: Record<string, unknown>): Parsed
       authorUserIds: authors,
       notionEventType,
       isAutomationPageObject: true,
+      isCommentEvent,
+      updatedPropertiesKnown: true,
     };
   }
 
@@ -97,27 +123,25 @@ export function parseWebhookForWakeGate(parsed: Record<string, unknown>): Parsed
   let pageId: string | null = null;
   if (entityType === "page" && entityId) {
     pageId = entityId;
+  } else if (entityType === "comment" && data) {
+    pageId = readString(data.page_id) ?? pageIdFromParent(asRecord(data.parent));
   } else if (data) {
-    const parent = asRecord(data.parent);
-    if (parent) {
-      pageId =
-        readString(parent.page_id) ??
-        readString(parent.pageId) ??
-        (readString(parent.type) === "page_id" ? readString(parent.id) : null);
-    }
+    pageId = readString(data.page_id) ?? pageIdFromParent(asRecord(data.parent));
   }
 
+  const updated = data ? readUpdatedProperties(data) : { ids: [], known: false };
   const dataSourceId = data ? readParentDataSourceId(asRecord(data.parent)) : null;
-  const updatedPropertyIds = data ? readUpdatedProperties(data) : [];
 
   return {
     pageId,
     dataSourceId,
     inTrash: null,
     titleFromAutomation: null,
-    updatedPropertyIds,
+    updatedPropertyIds: updated.ids,
     authorUserIds: authors,
     notionEventType,
     isAutomationPageObject: false,
+    isCommentEvent,
+    updatedPropertiesKnown: updated.known,
   };
 }

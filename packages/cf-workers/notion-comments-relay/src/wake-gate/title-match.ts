@@ -1,14 +1,6 @@
-const EM_DASH_TEMPLATE_SUFFIX = "\u2014 Template";
-
-export function titleEndsWithEmDashTemplate(title: string): boolean {
-  return title.endsWith(EM_DASH_TEMPLATE_SUFFIX);
-}
-
-/** Whole-word Test/Template prefix followed by ": " or "-" (not substring matches). */
-export function isTestOrTemplateTitlePrefix(title: string): boolean {
-  return /^(Test|Template)(:\s|-)/.test(title);
-}
+/** Case-insensitive whole-word test/template prefix with colon, space, or hyphen. */
+const TEMPLATE_TITLE_PREFIX = /^\s*(template|test)\b[:\s-]/i;
 
 export function isTemplateLikeTitle(title: string): boolean {
-  return titleEndsWithEmDashTemplate(title) || isTestOrTemplateTitlePrefix(title);
+  return TEMPLATE_TITLE_PREFIX.test(title);
 }
