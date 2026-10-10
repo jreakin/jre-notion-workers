@@ -39,7 +39,7 @@ packages/cf-workers/notion-comments-relay/
 ├── src/day-log/      # Day Log serializer helper
 ├── tests/            # bun test
 ├── fixtures/         # webhook payload fixtures
-├── wrangler.toml     # Worker name + KV binding (placeholder namespace id)
+├── wrangler.toml     # Worker name, pinned account_id, KV binding (placeholder namespace id)
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -108,6 +108,8 @@ wrangler deploy
 ```
 
 Worker name in `wrangler.toml` is `notion-comments-relay` — deploy targets the **existing** Worker so `*.johnreakin.workers.dev` URL is unchanged.
+
+`account_id` is pinned in `wrangler.toml` (`e83f342a6c0f6e20b80697363714bf7b`, John's personal Cloudflare account). That is a non-secret identifier: it prevents a Quorum-account `wrangler` token from deploying this Worker to the wrong account.
 
 ## Routes
 
