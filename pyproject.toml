@@ -1,12 +1,10 @@
 [project]
-name = "jre-notion-workers-repo"
+name = "jre-notion-workers-repo-gates"
 version = "0.0.0"
-requires-python = ">=3.12"
-dependencies = []
-
-[dependency-groups]
-dev = ["pytest>=8.0"]
+description = "Minimal pytest target for verify-completion when TASK.md is present (TypeScript app uses Bun)."
+requires-python = ">=3.11"
+dependencies = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
-pythonpath = ["."]
+python_files = ["test_*.py"]
