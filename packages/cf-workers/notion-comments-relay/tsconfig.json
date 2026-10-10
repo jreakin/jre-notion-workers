@@ -7,13 +7,15 @@
       "ES2022"
     ],
     "types": [
-      "@cloudflare/workers-types"
+      "@cloudflare/workers-types",
+      "bun-types"
     ],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true
   },
   "include": [
-    "src"
+    "src",
+    "tests"
   ]
 }

@@ -175,7 +175,7 @@ Gate evaluation runs only when `data.parent.data_source_id` (or automation `pare
 ### Rules (summary)
 
 1. **Wake:** Needs John, Sensitive, or Kind ∈ {Decision, Brief} (wake reasons beat skip rules).
-2. **ADE noise:** `Source Repo` text `jre-agent-dev-cli` → `would_skip`. `Document Type` = Agent Digest without that repo → `would_wake` (`agent_digest_needs_review`). Legacy **`Doc Type`** also has an Agent Digest option; it is **not** used for this rule.
+2. **ADE noise:** `Source Repo` text `jre-agent-dev-cli` → `would_skip` (**Source Repo rule wins** — even when `Document Type` = Agent Digest). `Document Type` = Agent Digest without that repo → `would_wake` (`agent_digest_needs_review`). Legacy **`Doc Type`** also has an Agent Digest option; it is **not** used for this rule.
 3. **Template / test / trash / duplicate:** title ends with `— Template` (em dash), or whole-word `Test` / `Template` prefix before `: ` or `-`, or `in_trash`, or duplicate page id within 60s with unchanged wake fields (Needs John, Sensitive, Kind). Skipping a page **only** because it lacks Client/Project relations is **not** implemented without a template/test title (open question for Abstract Secretary).
 
 **Safety (fail open to wake):** Submitted property ids in `updated_properties`, John-authored comments, missing/unknown inputs, Notion fetch errors/timeouts (~3s), missing `NOTION_API_TOKEN`.
@@ -189,12 +189,13 @@ Gate evaluation runs only when `data.parent.data_source_id` (or automation `pare
 | `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | Fleet bot echo skip on `comment.*` only |
 | `SUBMITTED_PROPERTY_IDS` | Comma-separated opaque property ids |
 | `WAKE_GATE_KV_RING` | Set to `1` for optional KV ring buffer of truncated decisions (default off) |
+| `WAKE_GATE_DEDUPE` | Set to `1` to write dedupe keys `wake_gate:dedupe:{pageId}` (TTL ~65s). **Default off** — each enabled put counts toward the relay's `RELAY_KV` daily quota |
 
-KV: dedupe keys `wake_gate:dedupe:{pageId}` (try/caught). Optional ring `wake_gate:ring`.
+KV: optional dedupe keys `wake_gate:dedupe:{pageId}` when `WAKE_GATE_DEDUPE=1` (try/caught, TTL ~65s). Optional ring `wake_gate:ring` when `WAKE_GATE_KV_RING=1`.
 
 ### Day Log serializer
 
-No Day Log writer lives in this repository. See `docs/day-log-serializer.md` for the reusable `runSerializedByKey` helper (KV + in-isolate coalescing) intended for the writer that creates Day Log pages.
+No Day Log writer lives in this repository. See `docs/day-log-serializer.md` for `runSerializedByKey` (in-isolate coalescing only — **not** a cross-isolate Day Log fix).
 
 ### Tests
 

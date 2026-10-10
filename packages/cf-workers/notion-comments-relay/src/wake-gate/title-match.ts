@@ -4,9 +4,9 @@ export function titleEndsWithEmDashTemplate(title: string): boolean {
   return title.endsWith(EM_DASH_TEMPLATE_SUFFIX);
 }
 
-/** Whole-word Test/Template prefix followed by ": " or "-" (not substring matches). */
+/** Whole-word Test/Template prefix followed by ":" only (not substring matches). */
 export function isTestOrTemplateTitlePrefix(title: string): boolean {
-  return /^(Test|Template)(:\s|-)/.test(title);
+  return /^(Test|Template)\b:/.test(title);
 }
 
 export function isTemplateLikeTitle(title: string): boolean {

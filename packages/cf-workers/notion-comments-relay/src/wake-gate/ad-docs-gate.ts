@@ -1,4 +1,9 @@
-import type { GatePageInputs, ShadowGateResult, WakeDecision, WakeRelevantSnapshot } from "./wake-gate-types.js";
+import type {
+  GatePageInputs,
+  ShadowGateResult,
+  WakeDecision,
+  WakeRelevantSnapshot,
+} from "./wake-gate-types.js";
 import { evaluateSafety } from "./notion-safety.js";
 import type { SafetyEnv } from "./notion-safety.js";
 import { isTemplateLikeTitle } from "./title-match.js";
@@ -29,19 +34,28 @@ function result(
     pageId: inputs.pageId,
     dataSourceId: inputs.dataSourceId,
     notionEventType: inputs.notionEventType,
-    inputs: {
-      title: inputs.title,
-      needsJohn: inputs.needsJohn,
-      sensitive: inputs.sensitive,
-      kind: inputs.kind,
-      sourceRepo: inputs.sourceRepo,
-      documentType: inputs.documentType,
-      inTrash: inputs.inTrash,
-      hasClientsRelation: inputs.hasClientsRelation,
-      hasProjectRelation: inputs.hasProjectRelation,
-      updatedPropertyIds: inputs.updatedPropertyIds,
-      authorUserIds: inputs.authorUserIds,
-    },
+    inputs: gateLogInputs(inputs, { decision, reason }),
+  };
+}
+
+export function gateLogInputs(
+  inputs: GatePageInputs,
+  result?: Pick<ShadowGateResult, "decision" | "reason">,
+): Record<string, unknown> {
+  const title = inputs.title ?? "";
+  return {
+    title_length: title.length,
+    title_matched_template: isTemplateLikeTitle(title),
+    needsJohn: inputs.needsJohn,
+    sensitive: inputs.sensitive,
+    kind: inputs.kind,
+    sourceRepo: inputs.sourceRepo,
+    documentType: inputs.documentType,
+    inTrash: inputs.inTrash,
+    hasClientsRelation: inputs.hasClientsRelation,
+    hasProjectRelation: inputs.hasProjectRelation,
+    updated_property_count: inputs.updatedPropertyIds.length,
+    ...(result ? { decision: result.decision, gate_reason: result.reason } : {}),
   };
 }
 
@@ -78,13 +92,6 @@ export function evaluateAdDocsGate(inputs: GatePageInputs, env: SafetyEnv): Shad
   if (isTemplateLikeTitle(title)) {
     return result("would_skip", "template_or_test_title", inputs);
   }
-  if (
-    isTemplateLikeTitle(title) &&
-    inputs.hasClientsRelation === false &&
-    inputs.hasProjectRelation === false
-  ) {
-    return result("would_skip", "orphan_template_no_client_project", inputs);
-  }
 
   if (safety.fleetEchoSkip) {
     return result("would_skip", "fleet_bot_echo", inputs);
@@ -98,7 +105,8 @@ export function applyDuplicateSkip(
   inputs: GatePageInputs,
   isDuplicate: boolean,
 ): ShadowGateResult {
-  if (!isDuplicate) {
+  const isPageEvent = inputs.notionEventType?.startsWith("page.") ?? false;
+  if (!isPageEvent || !isDuplicate) {
     return base;
   }
   if (base.decision === "would_wake" && base.reason === "default_wake") {
