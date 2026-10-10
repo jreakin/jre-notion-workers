@@ -3,8 +3,11 @@ import {
   fetchNotionPage,
   NOTION_VERSION_LEGACY,
   NOTION_VERSION_PAGE,
-  readDataSourceFromPageParent,
+  pageBelongsToAdDocs,
+  readPageParentIds,
 } from "../src/wake-gate/notion-page-fetch.js";
+
+const TEST_AD_DOCS_DATABASE_ID = "11111111-1111-4111-8111-111111111111";
 import { AD_DOCS_DATA_SOURCE_ID } from "../src/wake-gate/wake-gate-types.js";
 import { resetPageFetchCache } from "../src/wake-gate/page-fetch-cache.js";
 import { runShadowWakeGates } from "../src/wake-gate/wake-gate-shadow.js";
@@ -19,17 +22,26 @@ describe("notion page fetch", () => {
     resetPageFetchCache();
   });
 
-  test("readDataSourceFromPageParent prefers data_source_id then database_id", () => {
+  test("readPageParentIds separates data_source_id and database_id", () => {
     expect(
-      readDataSourceFromPageParent({
+      readPageParentIds({
         parent: { type: "data_source_id", data_source_id: "ds-1" },
       }),
-    ).toBe("ds-1");
+    ).toEqual({ dataSourceId: "ds-1", databaseId: null });
     expect(
-      readDataSourceFromPageParent({
-        parent: { type: "database_id", database_id: AD_DOCS_DATA_SOURCE_ID },
+      readPageParentIds({
+        parent: { type: "database_id", database_id: TEST_AD_DOCS_DATABASE_ID },
       }),
-    ).toBe(AD_DOCS_DATA_SOURCE_ID);
+    ).toEqual({ dataSourceId: null, databaseId: TEST_AD_DOCS_DATABASE_ID });
+  });
+
+  test("pageBelongsToAdDocs matches database_id via AD_DOCS_DATABASE_ID env", () => {
+    const m = pageBelongsToAdDocs(
+      { parent: { database_id: TEST_AD_DOCS_DATABASE_ID }, properties: {} },
+      { AD_DOCS_DATABASE_ID: TEST_AD_DOCS_DATABASE_ID },
+    );
+    expect(m.isAdDocs).toBe(true);
+    expect(m.matchedVia).toBe("database_id");
   });
 
   test("fetch uses Notion-Version header and URL-encodes page id", async () => {
@@ -43,7 +55,7 @@ describe("notion page fetch", () => {
         version: headers?.["notion-version"] ?? null,
       });
       return Response.json({
-        parent: { database_id: AD_DOCS_DATA_SOURCE_ID },
+        parent: { database_id: TEST_AD_DOCS_DATABASE_ID },
         properties: {},
       });
     }) as unknown as typeof fetch;
@@ -67,14 +79,8 @@ describe("notion page fetch", () => {
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const version =
         (init?.headers as Record<string, string> | undefined)?.["notion-version"] ?? "";
-      if (version === NOTION_VERSION_LEGACY) {
-        return Response.json({
-          parent: { type: "database_id", database_id: AD_DOCS_DATA_SOURCE_ID },
-          properties: {},
-        });
-      }
       return Response.json({
-        parent: { type: "data_source_id", data_source_id: AD_DOCS_DATA_SOURCE_ID },
+        parent: { type: "database_id", database_id: TEST_AD_DOCS_DATABASE_ID },
         properties: {
           Name: { type: "title", title: [{ plain_text: "Comment target" }] },
           "Needs John": { type: "checkbox", checkbox: true },
@@ -98,6 +104,7 @@ describe("notion page fetch", () => {
       COS_WEBHOOK_AUTHORIZATION: "a",
       SETUP_SECRET: "s",
       NOTION_API_TOKEN: "t",
+      AD_DOCS_DATABASE_ID: TEST_AD_DOCS_DATABASE_ID,
     } as Env;
 
     await runShadowWakeGates(

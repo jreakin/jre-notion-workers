@@ -170,7 +170,7 @@ This deployment is subscribed as a **Notion Integration webhook** ingress (see P
 
 ### AD Docs data source
 
-Gate evaluation runs when the webhook already carries `data.parent.data_source_id` / `database_id` for AD Docs (`2e97d7f5-6298-804c-b8a5-000b18b72684`), or after a **single** Notion page GET (Notion-Version `2025-09-03`, with `database_id` fallback) for `comment.*` events. Other databases log `not_ad_docs` (sampled) without evaluating rules. Comment events use a per-isolate page cache (60s TTL) to avoid repeat GETs.
+Gate evaluation runs when the webhook already carries `data.parent.data_source_id` for AD Docs (`2e97d7f5-6298-804c-b8a5-000b18b72684`), or when a page GET parent matches that data source id or `AD_DOCS_DATABASE_ID` (2022-06-28 `database_id` parent). Other databases log `not_ad_docs` (sampled). For `comment.*`, a per-isolate cache (60s TTL, bounded) stores **only** whether the page parent is AD Docs (`ad_docs` / `not_ad_docs`) so repeat comments on non-AD pages skip the parent GET; **properties are always fetched fresh** for AD Docs evaluation.
 
 ### Rules (summary)
 
@@ -192,6 +192,7 @@ Gate evaluation runs when the webhook already carries `data.parent.data_source_i
 | `SUBMITTED_PROPERTY_IDS` | Comma-separated opaque property ids (URL-encode ids that contain commas, e.g. `H%3D%3F%3E` for `H=?>`) |
 | `WAKE_GATE_KV_RING` | Set to `1` for optional KV ring buffer of truncated decisions (default off) |
 | `WAKE_GATE_DEDUPE` | Set to `1` to write dedupe keys `wake_gate:dedupe:{pageId}` (TTL ~65s). **Default off** — each enabled put counts toward the relay's `RELAY_KV` daily quota |
+| `AD_DOCS_DATABASE_ID` | Notion **database** id for AD Docs pages whose parent only exposes `database_id` (Notion-Version 2022-06-28). Non-secret; pair with the data source id above. Shadow logs include `database_id` when membership matched via database parent. |
 
 KV: optional dedupe keys `wake_gate:dedupe:{pageId}` when `WAKE_GATE_DEDUPE=1` (try/caught, TTL ~65s). Optional ring `wake_gate:ring` when `WAKE_GATE_KV_RING=1`.
 

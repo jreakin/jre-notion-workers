@@ -16,11 +16,12 @@ import {
 } from "./ad-docs-gate.js";
 import {
   fetchNotionPage,
-  readDataSourceFromPageParent,
+  pageBelongsToAdDocs,
+  readPageParentIds,
 } from "./notion-page-fetch.js";
 import {
-  getCachedNotionPage,
-  setCachedNotionPage,
+  getCachedCommentParentResolution,
+  setCachedCommentParentResolution,
 } from "./page-fetch-cache.js";
 
 const DEDUPE_TTL_SEC = 60;
@@ -110,7 +111,7 @@ async function appendRing(env: Env, line: string): Promise<void> {
   }
 }
 
-function logShadow(result: ShadowGateResult): void {
+function logShadow(result: ShadowGateResult, logIds?: { database_id?: string }): void {
   if (result.reason === "not_ad_docs") {
     notAdDocsCounter += 1;
     if (notAdDocsCounter % NOT_AD_DOCS_SAMPLE !== 1) {
@@ -136,6 +137,7 @@ function logShadow(result: ShadowGateResult): void {
       decision: result.decision,
       reason: result.reason,
       data_source_id: result.dataSourceId,
+      ...(logIds?.database_id ? { database_id: logIds.database_id } : {}),
       notion_type: result.notionEventType,
       inputs: result.inputs,
       at: new Date().toISOString(),
@@ -169,24 +171,44 @@ function isPageEvent(notionType: string | null): boolean {
   return notionType !== null && notionType.startsWith("page.");
 }
 
-async function loadNotionPage(
-  token: string,
-  pageId: string,
-  allowCache: boolean,
-): Promise<Record<string, unknown>> {
-  if (allowCache) {
-    const cached = getCachedNotionPage(pageId);
-    if (cached) return cached;
-  }
-  const page = await fetchNotionPage(token, pageId);
-  if (allowCache) {
-    setCachedNotionPage(pageId, page);
-  }
-  return page;
-}
-
 function isAdDocsDataSourceId(dsId: string | null): boolean {
   return dsId !== null && dsId === AD_DOCS_DATA_SOURCE_ID;
+}
+
+async function resolveCommentParentForAdDocs(
+  env: Env,
+  token: string,
+  pageId: string,
+): Promise<
+  | { adDocs: true; dataSourceId: string; databaseId: string | null; matchedVia: "data_source_id" | "database_id" }
+  | { adDocs: false }
+> {
+  const cached = getCachedCommentParentResolution(pageId);
+  if (cached === "not_ad_docs") {
+    return { adDocs: false };
+  }
+  if (cached === "ad_docs") {
+    return {
+      adDocs: true,
+      dataSourceId: AD_DOCS_DATA_SOURCE_ID,
+      databaseId: null,
+      matchedVia: "data_source_id",
+    };
+  }
+
+  const page = await fetchNotionPage(token, pageId);
+  const membership = pageBelongsToAdDocs(page, env);
+  if (!membership.isAdDocs) {
+    setCachedCommentParentResolution(pageId, "not_ad_docs");
+    return { adDocs: false };
+  }
+  setCachedCommentParentResolution(pageId, "ad_docs");
+  return {
+    adDocs: true,
+    dataSourceId: AD_DOCS_DATA_SOURCE_ID,
+    databaseId: membership.databaseId,
+    matchedVia: membership.matchedVia ?? "data_source_id",
+  };
 }
 
 export async function runShadowWakeGates(
@@ -198,6 +220,7 @@ export async function runShadowWakeGates(
     const payload = parseWebhookForWakeGate(parsed);
     const eventType = payload.notionEventType ?? notionType;
     let dsId = payload.dataSourceId;
+    let parentDatabaseIdForLog: string | undefined;
 
     if (!isAdDocsDataSourceId(dsId) && payload.isCommentEvent) {
       if (!payload.pageId) {
@@ -217,21 +240,24 @@ export async function runShadowWakeGates(
         return;
       }
       try {
-        const page = await loadNotionPage(token, payload.pageId, true);
-        dsId = readDataSourceFromPageParent(page);
+        const resolved = await resolveCommentParentForAdDocs(env, token, payload.pageId);
+        if (!resolved.adDocs) {
+          logShadow({
+            decision: "would_wake",
+            reason: "comment_unresolved",
+            pageId: payload.pageId,
+            dataSourceId: dsId,
+            notionEventType: eventType,
+            inputs: { comment_unresolved: true },
+          });
+          return;
+        }
+        dsId = resolved.dataSourceId;
+        if (resolved.matchedVia === "database_id" && resolved.databaseId) {
+          parentDatabaseIdForLog = resolved.databaseId;
+        }
       } catch (err) {
         logShadow(failOpen(errorReasonFromUnknown(err), parsed));
-        return;
-      }
-      if (!isAdDocsDataSourceId(dsId)) {
-        logShadow({
-          decision: "would_wake",
-          reason: "comment_unresolved",
-          pageId: payload.pageId,
-          dataSourceId: dsId,
-          notionEventType: eventType,
-          inputs: { comment_unresolved: true },
-        });
         return;
       }
     } else if (!isAdDocsDataSourceId(dsId)) {
@@ -274,8 +300,15 @@ export async function runShadowWakeGates(
     }
 
     try {
-      const page = await loadNotionPage(token, payload.pageId, payload.isCommentEvent);
-      const resolvedDs = dsId ?? readDataSourceFromPageParent(page);
+      const page = await fetchNotionPage(token, payload.pageId);
+      const parentIds = readPageParentIds(page);
+      const membership = pageBelongsToAdDocs(page, env);
+      const resolvedDs =
+        dsId ??
+        (membership.isAdDocs ? AD_DOCS_DATA_SOURCE_ID : parentIds.dataSourceId);
+      if (membership.matchedVia === "database_id" && membership.databaseId) {
+        parentDatabaseIdForLog = membership.databaseId;
+      }
       inputs = gateInputsFromNotionPage(page, {
         pageId: payload.pageId,
         dataSourceId: resolvedDs,
@@ -328,7 +361,10 @@ export async function runShadowWakeGates(
       ...result,
       inputs: gateLogInputs(inputs, result),
     };
-    logShadow(logged);
+    logShadow(
+      logged,
+      parentDatabaseIdForLog ? { database_id: parentDatabaseIdForLog } : undefined,
+    );
     await appendRing(env, JSON.stringify({ decision: result.decision, reason: result.reason }));
   } catch (err) {
     logShadow(failOpen(errorReasonFromUnknown(err), parsed));

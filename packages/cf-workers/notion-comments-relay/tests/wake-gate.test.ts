@@ -400,30 +400,4 @@ describe("shadow runner", () => {
     expect(fetchCalls).toBe(1);
   });
 
-  test("comment page fetch cache avoids repeat Notion GET within TTL", async () => {
-    let fetchCalls = 0;
-    globalThis.fetch = mock(async () => {
-      fetchCalls += 1;
-      return Response.json({
-        parent: { database_id: AD_DOCS_DATA_SOURCE_ID },
-        properties: {
-          Name: { type: "title", title: [{ plain_text: "Doc" }] },
-          "Needs John": { type: "checkbox", checkbox: false },
-          Sensitive: { type: "checkbox", checkbox: false },
-          Kind: { type: "select", select: { name: "Other" } },
-          "Source Repo": { type: "rich_text", rich_text: [{ plain_text: "x" }] },
-          "Document Type": { type: "select", select: { name: "Report" } },
-        },
-      });
-    }) as unknown as typeof fetch;
-    const fixture = {
-      type: "comment.created",
-      entity: { id: "c1", type: "comment" },
-      data: { page_id: "same-page", parent: { type: "page", id: "same-page" } },
-    };
-    const env = mockEnv({ NOTION_API_TOKEN: "t" });
-    await runShadowWakeGates(env, fixture, "comment.created");
-    await runShadowWakeGates(env, fixture, "comment.created");
-    expect(fetchCalls).toBe(1);
-  });
 });
