@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
+import { clefDailyCapKey } from "../src/wake-gate/clef-daily-cap.js";
 import { runClefShadowWakeGate, resetClefPageEventCountsForTests } from "../src/wake-gate/clef-wake-gate.js";
 import type { Env } from "../src/env.js";
 import type { GateEventContext, WakeGateDecision } from "../src/wake-gate/gate-event-types.js";
@@ -127,5 +128,74 @@ describe("runClefShadowWakeGate flow", () => {
       wakeDecision(),
     );
     expect(logs.some((l) => l.includes("clef_wake_shadow"))).toBe(true);
+  });
+
+  test("clef_daily_cap when KV counter at cap", async () => {
+    const store = new Map<string, string>([[clefDailyCapKey(), "1"]]);
+    await runClefShadowWakeGate(
+      env({
+        CLEF_DAILY_CALL_CAP: "1",
+        RELAY_KV: {
+          get: async (k: string) => store.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            store.set(k, v);
+          },
+          delete: async () => {},
+          list: async () => ({ keys: [], list_complete: true, cacheStatus: null }),
+          getWithMetadata: async () => ({ value: null, metadata: null, cacheStatus: null }),
+        } as unknown as KVNamespace,
+        AI: { run: async () => ({ answers: {} }) } as unknown as Ai,
+      }),
+      baseCtx(),
+      "page.properties_updated",
+      {},
+      true,
+      wakeDecision(),
+    );
+    expect(lastClefLog().reason).toBe("clef_daily_cap");
+    expect(lastClefLog().model).toBeNull();
+  });
+
+  test("clef_mode_invalid when global KV mode is bogus", async () => {
+    const store = new Map<string, string>([["clef:mode:global", "not-a-mode"]]);
+    await runClefShadowWakeGate(
+      env({
+        RELAY_KV: {
+          get: async (k: string) => store.get(k) ?? null,
+          put: async () => {},
+          delete: async () => {},
+          list: async () => ({ keys: [], list_complete: true, cacheStatus: null }),
+          getWithMetadata: async () => ({ value: null, metadata: null, cacheStatus: null }),
+        } as unknown as KVNamespace,
+      }),
+      baseCtx(),
+      "page.properties_updated",
+      {},
+      true,
+      wakeDecision(),
+    );
+    expect(String(lastClefLog().reason)).toContain("clef_mode_invalid");
+  });
+
+  test("clef_cap_invalid when daily counter is non-numeric", async () => {
+    const store = new Map<string, string>([[clefDailyCapKey(), "nope"]]);
+    await runClefShadowWakeGate(
+      env({
+        RELAY_KV: {
+          get: async (k: string) => store.get(k) ?? null,
+          put: async () => {},
+          delete: async () => {},
+          list: async () => ({ keys: [], list_complete: true, cacheStatus: null }),
+          getWithMetadata: async () => ({ value: null, metadata: null, cacheStatus: null }),
+        } as unknown as KVNamespace,
+        AI: { run: async () => ({ answers: {} }) } as unknown as Ai,
+      }),
+      baseCtx(),
+      "page.properties_updated",
+      {},
+      true,
+      wakeDecision(),
+    );
+    expect(lastClefLog().reason).toBe("clef_cap_invalid");
   });
 });

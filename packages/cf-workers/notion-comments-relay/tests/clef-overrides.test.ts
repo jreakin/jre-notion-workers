@@ -29,6 +29,16 @@ describe("clefHardOverrideReason", () => {
     expect(reason).toBe("properties_unavailable");
   });
 
+  test("override order: john_ids_unset before properties_unavailable", () => {
+    const reason = clefHardOverrideReason(
+      baseCtx({ johnUserIds: new Set(), propertiesAvailable: false }),
+      {},
+      true,
+      [],
+    );
+    expect(reason).toBe("john_ids_unset");
+  });
+
   test("john_ids_unset and bot_ids_unset", () => {
     expect(clefHardOverrideReason(baseCtx({ johnUserIds: new Set() }), {}, true, [])).toBe(
       "john_ids_unset",
