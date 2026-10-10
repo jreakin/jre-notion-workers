@@ -6,6 +6,11 @@
  */
 
 import type { Env } from "./env.js";
+import { buildGateContext } from "./wake-gate/gate-orchestration.js";
+import {
+  GATE_LOG_DROP_REASON,
+  gateLogBlocksForward,
+} from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 
 export type { Env } from "./env.js";
@@ -602,7 +607,24 @@ export default {
         return new Response("ok", { status: 200 });
       }
 
-      ctx.waitUntil(runShadowWakeGates(env, parsed, notionType));
+      if (parseOk) {
+        const gateCtx = buildGateContext(parsed, notionType, rawBody, env);
+        if (gateLogBlocksForward(true, gateCtx, env)) {
+          const dropped = {
+            at: new Date().toISOString(),
+            event: "dropped_gate_log_event",
+            notion_type: notionType,
+            reason: GATE_LOG_DROP_REASON,
+            sigOk,
+          };
+          await recordForward(env, dropped);
+          console.log(JSON.stringify(dropped));
+          return new Response("ok", { status: 200 });
+        }
+        ctx.waitUntil(runShadowWakeGates(env, parsed, notionType, rawBody, true));
+      } else {
+        ctx.waitUntil(runShadowWakeGates(env, {}, notionType, rawBody, false));
+      }
 
       await enqueueAndSchedule(env, ctx, {
         at: new Date().toISOString(),

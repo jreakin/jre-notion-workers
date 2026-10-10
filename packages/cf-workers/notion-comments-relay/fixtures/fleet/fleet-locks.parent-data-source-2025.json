@@ -1,0 +1,9 @@
+{
+  "parent": { "type": "data_source_id", "data_source_id": "6e0a45b3-eb3f-448f-b215-49e002bfeff3" },
+  "properties": {
+    "Status": { "id": "%5DGbO", "type": "select", "select": { "name": "Adopted" } },
+    "Adopted At": { "id": "yDiF", "type": "date", "date": { "start": "2026-10-01T12:00:00.000Z" } },
+    "Adopted By": { "id": "jmwP", "type": "people", "people": [{ "object": "user", "id": "user-john-001" }] },
+    "Grandfathered": { "id": "H%3D%3F%3E", "type": "checkbox", "checkbox": false }
+  }
+}

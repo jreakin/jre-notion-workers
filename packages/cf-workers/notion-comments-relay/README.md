@@ -210,3 +210,11 @@ bun run test
 ```
 
 Shadow JSON logs omit raw titles and author ids; they include `title_length` and `title_matched_template` only. `page_id` is omitted from routine shadow lines (sampled `not_ad_docs` lines omit it as well). Fail-open `error:` reasons log the exception **name** only (e.g. `error:AbortError`).
+
+## Wake gates (LOCK-61)
+
+Shadow rule gates (console + optional KV ring): comments echo, Fleet Locks adopted-change (`fleet_locks_adopted_change`), Clef second stage (Workers AI, daily cap, 10% full sample). AD Docs shadow gate (`ad_docs_wake_gate_shadow`) remains in `wake-gate-shadow.ts` with PR #30 improvements.
+
+**Real path:** Gate Log parent matches drop forwarding (`dropped_gate_log_event`) before coalesce; shadow path exits early on the same parent match.
+
+Env vars (see `wrangler.toml` `[vars]`): `FLEET_LOCKS_DATA_SOURCE_ID`, `GATE_LOG_DATA_SOURCE_IDS`, `GATE_LOG_BOT_NOTION_USER_IDS`, `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP`. KV: `wake_gate_adopted_at:<pageId>` (30-day TTL) for adopted-change dedupe.
