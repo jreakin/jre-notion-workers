@@ -1,5 +1,5 @@
 import { adoptedChangeGateName, decideAdoptedChangeGate } from "./adopted-change-gate.js";
-import { runClefShadowWakeGate } from "./clef-wake-gate.js";
+import { opaqueLogItemId, runClefShadowWakeGate } from "./clef-wake-gate.js";
 import { decideCommentsEchoGate } from "./comments-echo-gate.js";
 import type { Env } from "../env.js";
 import {
@@ -31,7 +31,7 @@ const SHADOW_LOG_KEY = "wake_gate_shadow_log";
 const SHADOW_LOG_MAX = 50;
 const RECENT_PAGE_KEY_PREFIX = "wake_gate_recent_page:";
 const ADOPTED_AT_KEY_PREFIX = "wake_gate_adopted_at:";
-const ADOPTED_AT_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const ADOPTED_AT_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 90;
 const DUPLICATE_WINDOW_MS = 60_000;
 const MAX_FIELD_LEN = 200;
 
@@ -45,6 +45,11 @@ function parseIdSet(raw: string | undefined): Set<string> {
       .map((s) => s.trim())
       .filter(Boolean),
   );
+}
+
+function trimOptionalEnvId(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -159,8 +164,8 @@ export function buildGateContext(
   const webhookParent = readWebhookParent(data);
   const webhookParentKnown = webhookParentIsFleetLocks(
     webhookParent,
-    env.FLEET_LOCKS_DATA_SOURCE_ID,
-    env.FLEET_LOCKS_DATABASE_ID,
+    trimOptionalEnvId(env.FLEET_LOCKS_DATA_SOURCE_ID),
+    trimOptionalEnvId(env.FLEET_LOCKS_DATABASE_ID),
   );
 
   const ctx: GateEventContext = {
@@ -184,8 +189,8 @@ export function buildGateContext(
     submittedPropertyIds: parseIdSet(env.SUBMITTED_PROPERTY_IDS),
     nonSubmittedPropertyIds: parseIdSet(env.NON_SUBMITTED_PROPERTY_IDS),
     updatedPropertyIds,
-    fleetLocksDataSourceId: env.FLEET_LOCKS_DATA_SOURCE_ID,
-    fleetLocksDatabaseId: env.FLEET_LOCKS_DATABASE_ID,
+    fleetLocksDataSourceId: trimOptionalEnvId(env.FLEET_LOCKS_DATA_SOURCE_ID),
+    fleetLocksDatabaseId: trimOptionalEnvId(env.FLEET_LOCKS_DATABASE_ID),
     fleetLocksParentKnown: webhookParentKnown,
     webhookIndicatedFleetLocks: webhookParentKnown === true,
   };
@@ -285,26 +290,33 @@ export async function enrichContextFromNotionPage(
 
   const page = fetched.page;
   const parent = readPageParentIds(page);
-  const fleetDs = ctx.fleetLocksDataSourceId?.trim();
-  const fleetDb = ctx.fleetLocksDatabaseId?.trim();
+  const fleetDs = ctx.fleetLocksDataSourceId;
+  const fleetDb = ctx.fleetLocksDatabaseId;
   if (fleetDs || fleetDb) {
     const fetchedParentKnown = isFleetLocksParent(parent, fleetDs, fleetDb);
     if (ctx.webhookIndicatedFleetLocks && !fetchedParentKnown) {
-      ctx.fleetLocksParentKnown = true;
-      ctx.notionFetchFailReason = ctx.notionFetchFailReason ?? "notion_page_unreadable";
+      ctx.fleetLocksParentKnown = false;
+      ctx.notionFetchFailReason = "notion_page_unreadable";
+      console.log(
+        JSON.stringify({
+          event: "wake_gate_parent_mismatch",
+          sub_reason: "parent_mismatch",
+          notion_type: notionType,
+        }),
+      );
     } else {
       ctx.fleetLocksParentKnown = fetchedParentKnown;
-    }
-    if (ctx.fleetLocksParentKnown) {
-      const fields = parseFleetLocksFieldsFromNotionPage(page);
-      ctx.fleetLocksFields = fields;
-      ctx.fleetLocksAdoptedAt = fields.adoptedAt;
-      const userIds = readPageUserIds(page);
-      ctx.pageCreatedById = userIds.createdById;
-      ctx.pageLastEditedById = userIds.lastEditedById;
-      ctx.pageAuthorId = readPageAuthorId(page, notionType, ctx.authorId);
-      if (fields.parseOk) {
-        await loadAdoptedAtDedupe(env, ctx);
+      if (ctx.fleetLocksParentKnown) {
+        const fields = parseFleetLocksFieldsFromNotionPage(page);
+        ctx.fleetLocksFields = fields;
+        ctx.fleetLocksAdoptedAt = fields.adoptedAt;
+        const userIds = readPageUserIds(page);
+        ctx.pageCreatedById = userIds.createdById;
+        ctx.pageLastEditedById = userIds.lastEditedById;
+        ctx.pageAuthorId = readPageAuthorId(page, notionType, ctx.authorId);
+        if (fields.parseOk) {
+          await loadAdoptedAtDedupe(env, ctx);
+        }
       }
     }
   }
@@ -332,7 +344,7 @@ function propertiesSubmittedRefresh(ctx: GateEventContext): void {
 }
 
 async function markDuplicateIfNeeded(env: Env, ctx: GateEventContext): Promise<void> {
-  if (!ctx.pageId) {
+  if (env.WAKE_GATE_DEDUPE !== "1" || !ctx.pageId) {
     return;
   }
   try {
@@ -397,7 +409,7 @@ async function logGateLogDrop(
   const entry: ClefShadowLogEntry = {
     ts: new Date().toISOString(),
     gate: "clef_wake",
-    item_id: ctx.pageId ?? "unknown",
+    item_id: opaqueLogItemId(ctx.pageId ?? "unknown"),
     source: "notion_page",
     event: notionType,
     rule_decision: "would_skip",

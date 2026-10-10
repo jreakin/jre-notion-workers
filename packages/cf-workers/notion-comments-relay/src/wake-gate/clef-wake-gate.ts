@@ -92,7 +92,7 @@ function isBotEcho(ctx: GateEventContext): boolean {
   return Boolean(authorId && ctx.fleetCommentsBotIds.has(authorId));
 }
 
-function opaqueLogItemId(itemId: string): string {
+export function opaqueLogItemId(itemId: string): string {
   if (itemId === "unknown" || itemId.trim() === "") {
     return itemId;
   }
@@ -117,7 +117,7 @@ export async function appendClefShadowLog(env: Env, entry: ClefShadowLogEntry): 
   try {
     const raw = await env.RELAY_KV.get(CLEF_SHADOW_LOG_KEY);
     const hist: ClefShadowLogEntry[] = raw ? (JSON.parse(raw) as ClefShadowLogEntry[]) : [];
-    hist.unshift(entry);
+    hist.unshift(logged);
     await env.RELAY_KV.put(
       CLEF_SHADOW_LOG_KEY,
       JSON.stringify(hist.slice(0, CLEF_SHADOW_LOG_MAX)),

@@ -358,18 +358,15 @@ describe("shadow runner", () => {
       fixture,
       "comment.created",
     );
-    const line = logs
-      .map((l) => JSON.parse(l))
-      .find((o) => o.gate_name === "notion_comments_echo_drop");
-    expect(line?.decision).toBe("would_skip");
-    expect(line?.reason).toBe("fleet_comments_bot_echo");
+    const line = JSON.parse(logs[0] ?? "{}");
+    expect(line.decision).toBe("would_skip");
+    expect(line.reason).toBe("fleet_bot_echo");
   });
 
   test("shadow logs use SHADOW_LOG_EVENT", async () => {
     await runShadowWakeGates(mockEnv(), integrationFixture as Record<string, unknown>, "page.properties_updated");
-    const adLine = logs.map((l) => JSON.parse(l)).find((o) => o.event === SHADOW_LOG_EVENT);
-    expect(adLine).toBeTruthy();
-    const line = adLine as Record<string, unknown>;
+    const line = JSON.parse(logs[0] ?? "{}");
+    expect(line.event).toBe(SHADOW_LOG_EVENT);
   });
 
   test("comment with webhook data_source_id skips Notion fetch", async () => {

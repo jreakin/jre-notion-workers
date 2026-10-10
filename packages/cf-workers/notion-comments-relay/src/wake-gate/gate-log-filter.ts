@@ -39,22 +39,6 @@ function parentIdsMatchGateLog(ctx: GateEventContext, gateLogIds: Set<string>): 
   return false;
 }
 
-export function isGateLogIntegrationBot(ctx: GateEventContext, env: Env): boolean {
-  const bots = parseNormalizedIdSet(env.GATE_LOG_BOT_NOTION_USER_IDS);
-  if (!bots.size) {
-    return false;
-  }
-  const authorIds = ctx.webhookAuthorIds ?? (ctx.authorId ? [ctx.authorId] : []);
-  for (const authorId of authorIds) {
-    for (const botId of bots) {
-      if (notionIdsEqual(authorId, botId)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 export function isGateLogDataSourceEvent(ctx: GateEventContext, env: Env): boolean {
   const gateLogIds = parseNormalizedIdSet(env.GATE_LOG_DATA_SOURCE_IDS);
   return parentIdsMatchGateLog(ctx, gateLogIds);

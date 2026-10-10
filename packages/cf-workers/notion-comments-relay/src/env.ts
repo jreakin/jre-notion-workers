@@ -17,8 +17,6 @@ export interface Env {
   CLEF_DEFAULT_MODE?: string;
   /** Comma-separated Gate Log data source / database ids — drop before rule gates. */
   GATE_LOG_DATA_SOURCE_IDS?: string;
-  /** Comma-separated Notion user ids for Gate Log integration bot (optional). */
-  GATE_LOG_BOT_NOTION_USER_IDS?: string;
 
   COS_WEBHOOK_URL: string;
   COS_WEBHOOK_AUTHORIZATION: string;

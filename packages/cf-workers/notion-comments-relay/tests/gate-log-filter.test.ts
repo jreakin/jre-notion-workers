@@ -3,15 +3,12 @@ import type { Env } from "../src/env.js";
 import {
   gateLogBlocksForward,
   isGateLogDataSourceEvent,
-  isGateLogIntegrationBot,
   shouldDropGateLogEvent,
 } from "../src/wake-gate/gate-log-filter.js";
 import type { GateEventContext } from "../src/wake-gate/gate-event-types.js";
 
 const GATE_DS = "af0ab5b0-2d9d-42bb-9621-526198146e46";
 const GATE_DB = "b25a26f0-5464-476b-afb3-da4257e2a53b";
-const GATE_BOT = "3d87d7f5-6298-8165-8af9-0027a153ccbd";
-
 function env(overrides: Partial<Env> = {}): Env {
   return {
     RELAY_KV: {} as KVNamespace,
@@ -19,7 +16,6 @@ function env(overrides: Partial<Env> = {}): Env {
     COS_WEBHOOK_AUTHORIZATION: "y",
     SETUP_SECRET: "z",
     GATE_LOG_DATA_SOURCE_IDS: `${GATE_DS},${GATE_DB}`,
-    GATE_LOG_BOT_NOTION_USER_IDS: GATE_BOT,
     ...overrides,
   };
 }
@@ -47,13 +43,10 @@ describe("gate-log-filter", () => {
     expect(isGateLogDataSourceEvent(c, env())).toBe(true);
   });
 
-  test("gate log bot author alone does not drop without parent match", () => {
+  test("non gate-log parent does not drop", () => {
     const c = ctx({
-      isCommentEvent: true,
-      authorId: "3D87D7F5-6298-8165-8AF9-0027A153CCBD",
-      webhookAuthorIds: ["3D87D7F5-6298-8165-8AF9-0027A153CCBD"],
+      webhookParentDataSourceId: "00000000-0000-0000-0000-000000000001",
     });
-    expect(isGateLogIntegrationBot(c, env())).toBe(true);
     expect(shouldDropGateLogEvent(c, env())).toBe(false);
     expect(gateLogBlocksForward(true, c, env())).toBe(false);
   });

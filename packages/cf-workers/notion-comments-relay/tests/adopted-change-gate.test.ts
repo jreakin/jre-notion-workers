@@ -84,4 +84,17 @@ describe("adopted-change-gate", () => {
     expect(d.decision).toBe("would_skip");
     expect(d.reason).toBe("adopted_already_woken");
   });
+
+  test("parent mismatch after webhook fleet hint is unreadable not lock_not_adopted", () => {
+    const d = decideAdoptedChangeGate(
+      fleetCtx({
+        webhookIndicatedFleetLocks: true,
+        fleetLocksParentKnown: false,
+        notionFetchFailReason: "notion_page_unreadable",
+        fleetLocksFields: undefined,
+      }),
+    );
+    expect(d.decision).toBe("would_wake");
+    expect(d.reason).toBe("notion_page_unreadable");
+  });
 });

@@ -162,7 +162,7 @@ Perform **after** this PR is merged. Do **not** deploy from the PR branch to pro
 
 ## AD Docs shadow wake gate (BCH)
 
-**Shadow mode only:** after Notion signature verification and before coalesce enqueue, the Worker runs `runShadowWakeGates` inside `ctx.waitUntil`. It logs one JSON line (`event: ad_docs_wake_gate_shadow`) to Workers Logs with `would_wake`, `would_skip`, or `would_log_only`, a reason, and the inputs it saw. It **never** drops, delays, or alters forwarded payloads or the downstream ad-docs-webhook routine.
+**Shadow mode only:** after Notion signature verification and before coalesce enqueue, the Worker runs `runShadowWakeGates` inside `ctx.waitUntil`. It logs one JSON line (`event: ad_docs_wake_gate_shadow`) to Workers Logs with `would_wake`, `would_skip`, or `would_log_only`, a reason, and the inputs it saw. It **never** drops, delays, or alters forwarded payloads for AD Docs shadow evaluation — except the **Gate Log real-path drop** (see LOCK-61 below), which stops forwarding before coalesce when the webhook parent matches Gate Log.
 
 ### Payload shapes this Worker actually receives
 
@@ -219,4 +219,19 @@ Shadow rule gates (console + optional KV ring): comments echo, Fleet Locks adopt
 
 **Real path:** Gate Log parent matches drop forwarding (`dropped_gate_log_event`) before coalesce; shadow path exits early on the same parent match.
 
-Env vars (see `wrangler.toml` `[vars]`): `FLEET_LOCKS_DATA_SOURCE_ID`, `GATE_LOG_DATA_SOURCE_IDS`, `GATE_LOG_BOT_NOTION_USER_IDS`, `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP`. KV: `wake_gate_adopted_at:<pageId>` (30-day TTL) for adopted-change dedupe.
+**Clef shadow KV ring** (`clef_shadow_log`) is **on by default**; set `CLEF_RING=0` to disable KV writes (console shadow logs still emit).
+
+**Harness dedupe** (`wake_gate_recent_page:<pageId>`) follows `WAKE_GATE_DEDUPE=1` (default off), same as AD Docs `wake_gate:dedupe:` keys.
+
+### Deploy vars (`wrangler.toml` `[vars]`)
+
+| Name | Required | When unset |
+| --- | --- | --- |
+| `FLEET_LOCKS_DATA_SOURCE_ID` | recommended | Fleet Locks adopted-change gate fails open (`fleet_locks_data_source_unset`); no Fleet parent fetch targeting |
+| `FLEET_LOCKS_DATABASE_ID` | optional | 2022-style `parent.database_id` matching skipped (data source id still used) |
+| `GATE_LOG_DATA_SOURCE_IDS` | optional | Gate Log drop disabled — all parents forward |
+| `SUBMITTED_PROPERTY_IDS` | optional | Submitted-property safety uses env/secret only when set (e.g. `;Xo<` in committed vars) |
+| `NON_SUBMITTED_PROPERTY_IDS` | optional | No non-submitted allowlist |
+| `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP` | Clef shadow | Clef mode/cap from defaults |
+
+KV: `wake_gate_adopted_at:<pageId>` (**90-day** TTL) for adopted-change dedupe after a shadow `adopted_change` wake.

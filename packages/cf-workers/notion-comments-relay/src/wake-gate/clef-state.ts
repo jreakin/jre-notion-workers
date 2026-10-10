@@ -17,7 +17,11 @@ function sanitizeField(value: string): string {
       out += " ";
       continue;
     }
-    if (code < 0x20 || code === 0x7f) {
+    if (code === 0x2028 || code === 0x2029) {
+      out += " ";
+      continue;
+    }
+    if (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
       continue;
     }
     out += value[i];
@@ -85,7 +89,7 @@ function triStateFlag(
   ctx: GateEventContext,
   value: boolean | undefined,
 ): "true" | "false" | "unknown" {
-  if (ctx.isCommentEvent && !ctx.propertiesAvailable) {
+  if (!ctx.propertiesAvailable) {
     return "unknown";
   }
   return value === true ? "true" : "false";

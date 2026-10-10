@@ -37,7 +37,6 @@ function makeEnv(kvStore: Map<string, string>): Env {
     SETUP_SECRET: "setup",
     NOTION_VERIFICATION_TOKEN: "secret_test_token",
     GATE_LOG_DATA_SOURCE_IDS: `af0ab5b0-2d9d-42bb-9621-526198146e46,${GATE_DB}`,
-    GATE_LOG_BOT_NOTION_USER_IDS: GATE_BOT,
     FLEET_COMMENTS_BOT_NOTION_USER_IDS: GATE_BOT,
   };
 }
