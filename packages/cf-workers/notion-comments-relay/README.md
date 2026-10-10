@@ -35,6 +35,10 @@ Notion always receives HTTP **200** with body `ok` after the Worker accepts a pa
 ```
 packages/cf-workers/notion-comments-relay/
 ├── src/index.ts      # Worker entry
+├── src/wake-gate/    # AD Docs shadow gate (rules + shadow runner)
+├── src/day-log/      # Day Log serializer helper
+├── tests/            # bun test
+├── fixtures/         # webhook payload fixtures
 ├── wrangler.toml     # Worker name + KV binding (placeholder namespace id)
 ├── package.json
 ├── tsconfig.json
@@ -153,3 +157,50 @@ Perform **after** this PR is merged. Do **not** deploy from the PR branch to pro
 ## CI note
 
 Root CI runs `bun run check` under `jre-notion-workers/` only. This module is excluded until a dedicated check is added. Run `bun run check` locally in this directory before deploy.
+
+## AD Docs shadow wake gate (BCH)
+
+**Shadow mode only:** after Notion signature verification and before coalesce enqueue, the Worker runs `runShadowWakeGates` inside `ctx.waitUntil`. It logs one JSON line (`event: ad_docs_wake_gate_shadow`) to Workers Logs with `would_wake`, `would_skip`, or `would_log_only`, a reason, and the inputs it saw. It **never** drops, delays, or alters forwarded payloads or the downstream ad-docs-webhook routine.
+
+### Payload shapes this Worker actually receives
+
+This deployment is subscribed as a **Notion Integration webhook** ingress (see Purpose table above). It receives signed Integration events (`entity`, `authors`, `data.parent.data_source_id`, `data.updated_properties`, etc.).
+
+**Notion automation** payloads shaped like `data.object = "page"` with empty `properties` (the shape sent to the separate **ad-docs-webhook** routine) are **not** expected on this Worker URL unless routing is changed. The gate still parses that shape for tests and future wiring; for those events it fails open with `needs_property_fetch` because properties are empty.
+
+### AD Docs data source
+
+Gate evaluation runs only when `data.parent.data_source_id` (or automation `parent.data_source_id`) is `2e97d7f5-6298-804c-b8a5-000b18b72684` (AD Docs). Other databases log `not_ad_docs` and skip Notion fetches.
+
+### Rules (summary)
+
+1. **Wake:** Needs John, Sensitive, or Kind ∈ {Decision, Brief} (wake reasons beat skip rules).
+2. **ADE noise:** `Source Repo` text `jre-agent-dev-cli` → `would_skip`. `Document Type` = Agent Digest without that repo → `would_wake` (`agent_digest_needs_review`). Legacy **`Doc Type`** also has an Agent Digest option; it is **not** used for this rule.
+3. **Template / test / trash / duplicate:** title ends with `— Template` (em dash), or whole-word `Test` / `Template` prefix before `: ` or `-`, or `in_trash`, or duplicate page id within 60s with unchanged wake fields (Needs John, Sensitive, Kind). Skipping a page **only** because it lacks Client/Project relations is **not** implemented without a template/test title (open question for Abstract Secretary).
+
+**Safety (fail open to wake):** Submitted property ids in `updated_properties`, John-authored comments, missing/unknown inputs, Notion fetch errors/timeouts (~3s), missing `NOTION_API_TOKEN`.
+
+### Optional env (names only)
+
+| Name | Purpose |
+| --- | --- |
+| `NOTION_API_TOKEN` | Fetch page properties for Integration events when not bound elsewhere |
+| `JOHN_NOTION_USER_IDS` | Comma-separated Notion user ids |
+| `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | Fleet bot echo skip on `comment.*` only |
+| `SUBMITTED_PROPERTY_IDS` | Comma-separated opaque property ids |
+| `WAKE_GATE_KV_RING` | Set to `1` for optional KV ring buffer of truncated decisions (default off) |
+
+KV: dedupe keys `wake_gate:dedupe:{pageId}` (try/caught). Optional ring `wake_gate:ring`.
+
+### Day Log serializer
+
+No Day Log writer lives in this repository. See `docs/day-log-serializer.md` for the reusable `runSerializedByKey` helper (KV + in-isolate coalescing) intended for the writer that creates Day Log pages.
+
+### Tests
+
+```bash
+cd packages/cf-workers/notion-comments-relay
+bun install
+bun run check
+bun test
+```

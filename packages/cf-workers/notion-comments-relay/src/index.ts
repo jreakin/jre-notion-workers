@@ -5,13 +5,10 @@
  * - Cron safety flush (~1m) calls flushCoalesce when waitUntil may have been dropped.
  */
 
-export interface Env {
-  RELAY_KV: KVNamespace;
-  COS_WEBHOOK_URL: string;
-  COS_WEBHOOK_AUTHORIZATION: string;
-  SETUP_SECRET: string;
-  NOTION_VERIFICATION_TOKEN?: string;
-}
+import type { Env } from "./env.js";
+import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
+
+export type { Env } from "./env.js";
 
 const TOKEN_KEY = "notion_verification_token";
 const LAST_POST_KEY = "last_notion_post";
@@ -604,6 +601,8 @@ export default {
         console.log(JSON.stringify(fail));
         return new Response("ok", { status: 200 });
       }
+
+      ctx.waitUntil(runShadowWakeGates(env, parsed, notionType));
 
       await enqueueAndSchedule(env, ctx, {
         at: new Date().toISOString(),
