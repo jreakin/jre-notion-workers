@@ -13,3 +13,7 @@ head_sampling_rate = 1
 
 [triggers]
 crons = ["*/1 * * * *"]
+
+# Optional shadow wake gate (names only — set via wrangler secret):
+# NOTION_API_TOKEN, JOHN_NOTION_USER_IDS, FLEET_COMMENTS_BOT_NOTION_USER_IDS,
+# SUBMITTED_PROPERTY_IDS, WAKE_GATE_KV_RING

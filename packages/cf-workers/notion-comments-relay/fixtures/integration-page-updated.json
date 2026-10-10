@@ -1,0 +1,9 @@
+{
+  "type": "page.properties_updated",
+  "entity": { "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": "page" },
+  "authors": [{ "id": "bot-user-1", "type": "user" }],
+  "data": {
+    "parent": { "type": "data_source_id", "data_source_id": "2e97d7f5-6298-804c-b8a5-000b18b72684" },
+    "updated_properties": ["prop-unknown-1"]
+  }
+}

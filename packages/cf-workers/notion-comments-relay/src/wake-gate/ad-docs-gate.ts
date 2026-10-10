@@ -1,0 +1,108 @@
+import type { GatePageInputs, ShadowGateResult, WakeDecision, WakeRelevantSnapshot } from "./wake-gate-types.js";
+import { evaluateSafety } from "./notion-safety.js";
+import type { SafetyEnv } from "./notion-safety.js";
+import { isTemplateLikeTitle } from "./title-match.js";
+
+const ADE_SOURCE_REPO = "jre-agent-dev-cli";
+const AGENT_DIGEST_DOC_TYPE = "Agent Digest";
+
+export function wakeRelevantSnapshot(inputs: GatePageInputs): WakeRelevantSnapshot {
+  return {
+    needsJohn: inputs.needsJohn === true,
+    sensitive: inputs.sensitive === true,
+    kind: inputs.kind,
+  };
+}
+
+export function snapshotsEqual(a: WakeRelevantSnapshot, b: WakeRelevantSnapshot): boolean {
+  return a.needsJohn === b.needsJohn && a.sensitive === b.sensitive && a.kind === b.kind;
+}
+
+function result(
+  decision: WakeDecision,
+  reason: string,
+  inputs: GatePageInputs,
+): ShadowGateResult {
+  return {
+    decision,
+    reason,
+    pageId: inputs.pageId,
+    dataSourceId: inputs.dataSourceId,
+    notionEventType: inputs.notionEventType,
+    inputs: {
+      title: inputs.title,
+      needsJohn: inputs.needsJohn,
+      sensitive: inputs.sensitive,
+      kind: inputs.kind,
+      sourceRepo: inputs.sourceRepo,
+      documentType: inputs.documentType,
+      inTrash: inputs.inTrash,
+      hasClientsRelation: inputs.hasClientsRelation,
+      hasProjectRelation: inputs.hasProjectRelation,
+      updatedPropertyIds: inputs.updatedPropertyIds,
+      authorUserIds: inputs.authorUserIds,
+    },
+  };
+}
+
+export function evaluateAdDocsGate(inputs: GatePageInputs, env: SafetyEnv): ShadowGateResult {
+  const safety = evaluateSafety(inputs, env);
+  if (safety.forceWake && safety.reason) {
+    return result("would_wake", safety.reason, inputs);
+  }
+
+  if (inputs.needsJohn === true) {
+    return result("would_wake", "needs_john", inputs);
+  }
+  if (inputs.sensitive === true) {
+    return result("would_wake", "sensitive", inputs);
+  }
+  if (inputs.kind === "Decision") {
+    return result("would_wake", "kind_decision", inputs);
+  }
+  if (inputs.kind === "Brief") {
+    return result("would_wake", "kind_brief", inputs);
+  }
+
+  if (inputs.sourceRepo === ADE_SOURCE_REPO) {
+    return result("would_skip", "ade_source_repo", inputs);
+  }
+  if (inputs.documentType === AGENT_DIGEST_DOC_TYPE) {
+    return result("would_wake", "agent_digest_needs_review", inputs);
+  }
+
+  const title = inputs.title ?? "";
+  if (inputs.inTrash) {
+    return result("would_skip", "in_trash", inputs);
+  }
+  if (isTemplateLikeTitle(title)) {
+    return result("would_skip", "template_or_test_title", inputs);
+  }
+  if (
+    isTemplateLikeTitle(title) &&
+    inputs.hasClientsRelation === false &&
+    inputs.hasProjectRelation === false
+  ) {
+    return result("would_skip", "orphan_template_no_client_project", inputs);
+  }
+
+  if (safety.fleetEchoSkip) {
+    return result("would_skip", "fleet_bot_echo", inputs);
+  }
+
+  return result("would_wake", "default_wake", inputs);
+}
+
+export function applyDuplicateSkip(
+  base: ShadowGateResult,
+  inputs: GatePageInputs,
+  isDuplicate: boolean,
+): ShadowGateResult {
+  if (!isDuplicate) {
+    return base;
+  }
+  if (base.decision === "would_wake" && base.reason === "default_wake") {
+    return result("would_skip", "duplicate_within_60s", inputs);
+  }
+  return base;
+}

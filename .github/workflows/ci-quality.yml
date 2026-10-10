@@ -18,3 +18,18 @@ jobs:
           bun-version: latest
       - run: bun install
       - run: bun run check
+
+  notion-comments-relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - working-directory: packages/cf-workers/notion-comments-relay
+        run: bun install
+      - working-directory: packages/cf-workers/notion-comments-relay
+        run: bun run check
+      - working-directory: packages/cf-workers/notion-comments-relay
+        run: bun test
