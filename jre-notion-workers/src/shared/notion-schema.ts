@@ -22,6 +22,8 @@ export const GITHUB_ITEMS_PROPS = {
   clients: "Clients",
   projects: "📊 Projects",
   tasks: "✅ Tasks",
+  githubUrl: "GitHub URL",
+  estHours: "Est. Hours",
 } as const;
 
 /** Legacy GitHub Items property names — read fallback only. */
@@ -54,6 +56,24 @@ export const TIME_LOG_PROPS = {
   client: "Client",
   project: "Project",
   task: "Task",
+  description: "Description",
+  hours: "Hours",
+  date: "Date",
+  source: "Source",
+  billingStatus: "Billing Status",
+  billable: "Billable",
+} as const;
+
+export const TIME_LOG_SOURCE = {
+  manual: "Manual",
+  prEstimate: "PR estimate",
+  auditorEstSuperseded: "Auditor EST (superseded)",
+} as const;
+
+export const TIME_LOG_BILLING = {
+  unbilled: "Unbilled",
+  invoiced: "Invoiced",
+  paid: "Paid",
 } as const;
 
 /** Read GitHub Item links from a Time Log page (live Sync property, then legacy). */
