@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file.
 Release Please maintains this file going forward from v1.0.0.
 
+## [1.4.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.3.1...jre-notion-workers-v1.4.0) (2026-10-11)
+
+
+### Features
+
+* **workers:** PR Estimate Writer — merged PR to Time Log (dry-run default) ([#27](https://github.com/jreakin/jre-notion-workers/issues/27)) ([faddc71](https://github.com/jreakin/jre-notion-workers/commit/faddc71f853d769fc0170636f964086332af8a01))
+
 ## [1.3.1](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.3.0...jre-notion-workers-v1.3.1) (2026-09-14)
 
 
