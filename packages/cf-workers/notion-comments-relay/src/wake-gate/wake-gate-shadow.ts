@@ -1,4 +1,5 @@
 import type { Env } from "../env.js";
+import { runHarnessRuleShadowGates } from "./gate-orchestration.js";
 import {
   AD_DOCS_DATA_SOURCE_ID,
   type GatePageInputs,
@@ -211,7 +212,7 @@ async function resolveCommentParentForAdDocs(
   };
 }
 
-export async function runShadowWakeGates(
+async function runAdDocsWakeGateShadow(
   env: Env,
   parsed: Record<string, unknown>,
   notionType: string | null,
@@ -369,4 +370,15 @@ export async function runShadowWakeGates(
   } catch (err) {
     logShadow(failOpen(errorReasonFromUnknown(err), parsed));
   }
+}
+
+export async function runShadowWakeGates(
+  env: Env,
+  parsed: Record<string, unknown>,
+  notionType: string | null,
+  rawBody = "",
+  parseOk = true,
+): Promise<void> {
+  await runAdDocsWakeGateShadow(env, parsed, notionType);
+  await runHarnessRuleShadowGates(env, parsed, notionType, rawBody, parseOk);
 }

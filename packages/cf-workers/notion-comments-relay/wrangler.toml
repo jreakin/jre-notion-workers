@@ -1,11 +1,27 @@
 name = "notion-comments-relay"
+account_id = "e83f342a6c0f6e20b80697363714bf7b"
 main = "src/index.ts"
 compatibility_date = "2026-09-11"
 workers_dev = true
 
+# DO NOT deploy with the placeholder KV id below — replace with the live namespace id
+# (see README) or coalesce_buffer / verification token writes will target the wrong namespace.
 [[kv_namespaces]]
 binding = "RELAY_KV"
 id = "REPLACE_WITH_RELAY_KV_NAMESPACE_ID"  # live: 108f8eb2447e4f41aa5ab76de3cfcad0
+
+
+[ai]
+binding = "AI"
+
+[vars]
+FLEET_LOCKS_DATA_SOURCE_ID = "6e0a45b3-eb3f-448f-b215-49e002bfeff3"
+AI_GATEWAY_ID = "clef-shadow-gate"
+GATE_LOG_DATA_SOURCE_IDS = "af0ab5b0-2d9d-42bb-9621-526198146e46,b25a26f0-5464-476b-afb3-da4257e2a53b"
+SUBMITTED_PROPERTY_IDS = ";Xo<"
+JOHN_NOTION_USER_IDS = "2e7d872b-594c-8161-92a2-00024b29e816"
+FLEET_COMMENTS_BOT_NOTION_USER_IDS = "3d87d7f5-6298-8165-8af9-0027a153ccbd"
+CLEF_DAILY_CALL_CAP = "2000"
 
 [observability]
 enabled = true

@@ -6,6 +6,11 @@
  */
 
 import type { Env } from "./env.js";
+import { buildGateContext } from "./wake-gate/gate-orchestration.js";
+import {
+  GATE_LOG_DROP_REASON,
+  gateLogBlocksForward,
+} from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 
 export type { Env } from "./env.js";
@@ -602,7 +607,57 @@ export default {
         return new Response("ok", { status: 200 });
       }
 
-      ctx.waitUntil(runShadowWakeGates(env, parsed, notionType));
+      if (parseOk) {
+        try {
+          const gateCtx = buildGateContext(parsed, notionType, rawBody, env);
+          if (gateLogBlocksForward(true, gateCtx, env)) {
+            const dropped = {
+              at: new Date().toISOString(),
+              event: "dropped_gate_log_event",
+              notion_type: notionType,
+              reason: GATE_LOG_DROP_REASON,
+              sigOk,
+            };
+            await recordForward(env, dropped);
+            console.log(JSON.stringify(dropped));
+            return new Response("ok", { status: 200 });
+          }
+        } catch (gateErr) {
+          const gateErrorName = gateErr instanceof Error ? gateErr.name : "Error";
+          console.log(
+            JSON.stringify({
+              event: "gate_forward_context_error",
+              error: gateErrorName,
+              notion_type: notionType,
+            }),
+          );
+        }
+        try {
+          ctx.waitUntil(runShadowWakeGates(env, parsed, notionType, rawBody, true));
+        } catch (shadowErr) {
+          const shadowErrorName = shadowErr instanceof Error ? shadowErr.name : "Error";
+          console.log(
+            JSON.stringify({
+              event: "shadow_wake_schedule_error",
+              error: shadowErrorName,
+              notion_type: notionType,
+            }),
+          );
+        }
+      } else {
+        try {
+          ctx.waitUntil(runShadowWakeGates(env, {}, notionType, rawBody, false));
+        } catch (shadowErr) {
+          const shadowErrorName = shadowErr instanceof Error ? shadowErr.name : "Error";
+          console.log(
+            JSON.stringify({
+              event: "shadow_wake_schedule_error",
+              error: shadowErrorName,
+              notion_type: notionType,
+            }),
+          );
+        }
+      }
 
       await enqueueAndSchedule(env, ctx, {
         at: new Date().toISOString(),
