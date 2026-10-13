@@ -77,11 +77,22 @@ describe("low-traffic flush", () => {
     expect(gateLogBufferSizeForTests()).toBeLessThanOrEqual(4);
   });
 
-  test("cron flushes rows held by this isolate regardless of age", async () => {
+  test("B1: young rows + cron tick → 0 writes (cron respects paced age)", async () => {
     const e = env();
     await enqueueGateLogRow(e, row);
     await worker.scheduled!({} as ScheduledController, e, { waitUntil() {} } as unknown as ExecutionContext);
+    expect(ringKeys()).toHaveLength(0);
+    expect(puts).toHaveLength(0);
+    expect(gateLogBufferSizeForTests()).toBe(1);
+  });
+
+  test("B1: stale rows + cron tick → flush", async () => {
+    const e = env();
+    await enqueueGateLogRow(e, row);
+    ageGateLogBufferForTests(24 * 3600_000); // older than any paced min age
+    await worker.scheduled!({} as ScheduledController, e, { waitUntil() {} } as unknown as ExecutionContext);
     expect(ringKeys()).toHaveLength(1);
+    expect(gateLogBufferSizeForTests()).toBe(0);
   });
 
   test("cron with empty ring + empty coalesce buffer still writes nothing", async () => {

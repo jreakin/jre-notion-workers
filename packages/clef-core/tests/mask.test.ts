@@ -36,4 +36,17 @@ describe("maskPii follow-ups", () => {
     const t = "Ship v1.2 e.g. tomorrow; ref 12345; task_done ok";
     expect(maskPii(t)).toBe(t);
   });
+  test("S2: lone filenames / name.tld are not masked", () => {
+    for (const t of ["run index.sh now", "edit setup.io first", "bought on Amazon.com"]) {
+      expect(maskPii(t)).toBe(t);
+    }
+    expect(maskPii("see setup.io/docs")).toContain("[url]");
+  });
+  test("S1: labels keep bare domains (bareDomains:false), still mask emails/secrets", async () => {
+    const { cleanMaskClip } = await import("../src/mask.js");
+    expect(cleanMaskClip("Amazon.com", 40, { bareDomains: false })).toBe("Amazon.com");
+    expect(cleanMaskClip("mail.amazon.com/orders", 40, { bareDomains: false })).toBe("mail.amazon.com/orders");
+    expect(cleanMaskClip("a@b.co sk_live_abcdefgh", 60, { bareDomains: false })).toBe("[email] [secret]");
+    expect(cleanMaskClip("mail.amazon.com/orders", 40)).toBe("[url]");
+  });
 });

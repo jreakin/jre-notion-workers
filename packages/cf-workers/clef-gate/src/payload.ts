@@ -85,7 +85,7 @@ function labels(v: unknown, max: number): string[] {
   return v
     .filter((x): x is string => typeof x === "string")
     .slice(0, max)
-    .map((x) => cleanMaskClip(x, LABEL_MAX_CHARS))
+    .map((x) => cleanMaskClip(x, LABEL_MAX_CHARS, { bareDomains: false })) // labels: keep Amazon.com etc.
     .filter((x) => x.length > 0);
 }
 

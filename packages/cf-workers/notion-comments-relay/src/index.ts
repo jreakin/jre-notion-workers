@@ -678,8 +678,8 @@ export default {
 
   async scheduled(_controller: ScheduledController, rawEnv: Env, _ctx: ExecutionContext): Promise<void> {
     const env = withMeteredKv(rawEnv);
-    // Cron: if this isolate holds gate_log rows, flush them now (capped; fail-open).
-    await flushGateLogRing(env, { force: true });
+    // Cron: if this isolate holds gate_log rows old enough (paced age check), flush them (capped; fail-open).
+    await flushGateLogRing(env);
     try {
       // KV budget: the 1/min cron used to PUT the flush lock every tick (~1,440 writes/day)
       // even with nothing buffered. Reads are cheap; only lock + flush when there is work.
