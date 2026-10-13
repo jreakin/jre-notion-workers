@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildClefRunArguments,
   clefDailyCapKey,
   clefErrorReason,
   parseDailyCap,
@@ -54,5 +55,12 @@ describe("clef-core", () => {
     let reason = "";
     try { await runClefModel(ai, "gw", "@cf/cloudflare/clef", "clef", "s", {}, 10); } catch (e) { reason = clefErrorReason(e); }
     expect(reason).toBe("clef_timeout");
+  });
+  test("gateway options are opt-in; plain id unchanged", () => {
+    expect(buildClefRunArguments("gw", "clef", "s", {}).runOptions).toEqual({ gateway: { id: "gw" } });
+    expect(buildClefRunArguments(undefined, "clef", "s", {}).runOptions).toEqual({});
+    expect(
+      buildClefRunArguments({ id: "gw", collectLog: false, skipCache: true }, "clef", "s", {}).runOptions,
+    ).toEqual({ gateway: { id: "gw", collectLog: false, skipCache: true } });
   });
 });

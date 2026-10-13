@@ -9,8 +9,15 @@ export type AiRunBinding = {
   ) => Promise<unknown>;
 };
 
+/**
+ * Gateway selection. A plain id (relay default) sends `{ id }` only. The object form opts in to
+ * extra AI Gateway options, e.g. `{ id, collectLog: false, skipCache: true }` for PII-bearing state.
+ */
+export type ClefGatewayOptions = { id: string | undefined; collectLog?: boolean; skipCache?: boolean };
+export type ClefGateway = string | undefined | ClefGatewayOptions;
+
 export function buildClefRunArguments(
-  gatewayIdRaw: string | undefined,
+  gateway: ClefGateway,
   modelName: string,
   state: string,
   questions: unknown,
@@ -18,9 +25,13 @@ export function buildClefRunArguments(
 ): { input: Record<string, unknown>; runOptions: Record<string, unknown> } {
   const input: Record<string, unknown> = { model: modelName, state, questions };
   const runOptions: Record<string, unknown> = {};
-  const gatewayId = gatewayIdRaw?.trim();
+  const opts: ClefGatewayOptions = typeof gateway === "object" ? gateway : { id: gateway };
+  const gatewayId = opts.id?.trim();
   if (gatewayId) {
-    runOptions.gateway = { id: gatewayId };
+    const gw: Record<string, unknown> = { id: gatewayId };
+    if (typeof opts.collectLog === "boolean") gw.collectLog = opts.collectLog;
+    if (typeof opts.skipCache === "boolean") gw.skipCache = opts.skipCache;
+    runOptions.gateway = gw;
   }
   if (signal) {
     runOptions.signal = signal;
@@ -127,7 +138,7 @@ export function readConfidence(
 /** AI.run with an abort + race timeout (rejects Error("clef_timeout")). */
 export async function runClefModel(
   ai: AiRunBinding,
-  gatewayId: string | undefined,
+  gateway: ClefGateway,
   slug: string,
   modelName: string,
   state: string,
@@ -146,7 +157,7 @@ export async function runClefModel(
 
   try {
     const { input, runOptions } = buildClefRunArguments(
-      gatewayId,
+      gateway,
       modelName,
       state,
       questions,
