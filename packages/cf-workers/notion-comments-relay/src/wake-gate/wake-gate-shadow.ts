@@ -24,6 +24,7 @@ import {
   getCachedCommentParentResolution,
   setCachedCommentParentResolution,
 } from "./page-fetch-cache.js";
+import { kvTtl } from "../kv-ttl.js";
 
 const DEDUPE_TTL_SEC = 60;
 const DEDUPE_KEY_PREFIX = "wake_gate:dedupe:";
@@ -90,7 +91,7 @@ async function writeDedupe(
     await env.RELAY_KV.put(
       `${DEDUPE_KEY_PREFIX}${pageId}`,
       JSON.stringify({ at: Date.now(), snap, reason }),
-      { expirationTtl: DEDUPE_TTL_SEC + 5 },
+      { expirationTtl: kvTtl(DEDUPE_TTL_SEC + 5) },
     );
   } catch {
     // fail open — optional KV write
@@ -105,7 +106,7 @@ async function appendRing(env: Env, line: string): Promise<void> {
     const entry = line.slice(0, RING_ENTRY_MAX);
     arr.unshift(entry);
     await env.RELAY_KV.put(RING_KEY, JSON.stringify(arr.slice(0, RING_MAX)), {
-      expirationTtl: RING_TTL_SEC,
+      expirationTtl: kvTtl(RING_TTL_SEC),
     });
   } catch {
     // optional ring — ignore

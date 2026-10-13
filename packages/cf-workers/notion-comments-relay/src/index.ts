@@ -12,6 +12,7 @@ import {
   gateLogBlocksForward,
 } from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
+import { kvTtl } from "./kv-ttl.js";
 
 export type { Env } from "./env.js";
 
@@ -209,7 +210,7 @@ async function clearCoalesceLock(env: Env): Promise<void> {
 
 async function tryAcquireFlushLock(env: Env): Promise<string | null> {
   const token = crypto.randomUUID();
-  await env.RELAY_KV.put(COALESCE_FLUSHING_KEY, token, { expirationTtl: 120 });
+  await env.RELAY_KV.put(COALESCE_FLUSHING_KEY, token, { expirationTtl: kvTtl(120) });
   const current = await env.RELAY_KV.get(COALESCE_FLUSHING_KEY);
   if (current !== token) {
     return null;
@@ -363,7 +364,7 @@ async function enqueueAndSchedule(
   }
 
   await env.RELAY_KV.put(COALESCE_LOCK_KEY, new Date().toISOString(), {
-    expirationTtl: 180,
+    expirationTtl: kvTtl(180),
   });
   console.log(
     JSON.stringify({
