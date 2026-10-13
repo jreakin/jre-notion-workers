@@ -84,13 +84,29 @@ function labels(v: unknown, max: number): string[] {
     .filter((x) => x.length > 0);
 }
 
-/** True when the item concerns the bot's own inbox — excluded entirely (John, 2026-10-13). */
+export const EXCLUDED_DOMAIN = "mail.grokbot.com";
+/** jre@, any +alias, any case; the domain may also be a subdomain of mail.grokbot.com. */
+const EXCLUDED_ADDRESS_RE = /jre(\+[^@\s"]*)?@(?:[a-z0-9-]+\.)*mail\.grokbot\.com/i;
+
+function isExcludedDomain(v: unknown): boolean {
+  if (typeof v !== "string") return false;
+  const d = v.trim().toLowerCase().replace(/\.$/, "");
+  return d === EXCLUDED_DOMAIN || d.endsWith(`.${EXCLUDED_DOMAIN}`);
+}
+
+/**
+ * True when the item concerns the bot's own inbox — excluded entirely (John, 2026-10-13).
+ * Payload v1 carries no to/cc/delivered-to addresses: for those, Inbox Triage MUST send
+ * override:"grokbot_inbox" (box-side contract). Here we also catch the address (any +alias/case)
+ * anywhere in the body and a mail.grokbot.com sender domain.
+ */
 export function isExcludedGrokbot(rawBody: string, body: Record<string, unknown>): boolean {
   if (body.override === "grokbot_inbox") return true;
   if (typeof body.mailbox === "string" && body.mailbox.toLowerCase().includes("grokbot")) return true;
-  if (rawBody.toLowerCase().includes(EXCLUDED_ADDRESS)) return true;
+  if (isExcludedDomain(body.from_domain)) return true;
+  if (EXCLUDED_ADDRESS_RE.test(rawBody)) return true;
   // Unicode-escaped JSON (e.g. \u0040) would dodge the raw check — check decoded strings too.
-  return JSON.stringify(body).toLowerCase().includes(EXCLUDED_ADDRESS);
+  return EXCLUDED_ADDRESS_RE.test(JSON.stringify(body));
 }
 
 export function parseEmailShadowBody(rawBody: string): ParseResult {
