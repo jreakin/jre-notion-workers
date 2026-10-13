@@ -20,7 +20,8 @@ import { peekSoftDailyCount, trySoftDailyConsume } from "./soft-daily-counter.js
 export const GATE_LOG_PREFIX = "gate_log:v1:";
 export const GATE_LOG_TTL_SECONDS = 60 * 60 * 24 * 7;
 export const GATE_LOG_FLUSH_ROWS = 25;
-export const GATE_LOG_FLUSH_MAX_AGE_MS = 15 * 60_000;
+/** A partial batch older than this is flushed at end of request / on cron (low-traffic path). */
+export const GATE_LOG_FLUSH_MAX_AGE_MS = 5 * 60_000;
 export const GATE_LOG_BUFFER_MAX = 200;
 export const GATE_LOG_DAILY_WRITE_CAP_DEFAULT = 60;
 export const GATE_LOG_COUNTER_NAME = "gate_log:writes";
@@ -85,21 +86,38 @@ export async function enqueueGateLogRow(env: Env, row: GateLogRow): Promise<void
   }
 }
 
-/** Flush when the batch is full or stale (or `force`). At most one KV write per call. */
+/**
+ * Pacing floor so a steady trickle can't burn the whole daily cap early: the minimum age before a
+ * partial batch flushes is max(5 min, time-left-in-UTC-day / flushes-left). Full batches (25 rows)
+ * ignore pacing but still consume the same capped budget.
+ */
+export function pacedMinAgeMs(used: number, cap: number, now: Date = new Date()): number {
+  const left = Math.max(1, cap - used);
+  const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  return Math.max(GATE_LOG_FLUSH_MAX_AGE_MS, Math.floor((end - now.getTime()) / left));
+}
+
+/**
+ * Flush when the batch is full, a partial batch is older than the paced min age, or `force`
+ * (cron: this isolate holds rows). At most one KV write per call; always capped by
+ * GATE_LOG_DAILY_WRITE_CAP.
+ */
 export async function flushGateLogRing(env: Env, opts: { force?: boolean } = {}): Promise<boolean> {
   try {
     if (buffer.length === 0) return false;
-    const due =
-      opts.force === true ||
-      buffer.length >= GATE_LOG_FLUSH_ROWS ||
-      Date.now() - oldestAt >= GATE_LOG_FLUSH_MAX_AGE_MS;
+    const cap = readGateLogDailyWriteCap(env);
+    let due = opts.force === true || buffer.length >= GATE_LOG_FLUSH_ROWS;
+    if (!due) {
+      const used = await peekSoftDailyCount(env.RELAY_KV, GATE_LOG_COUNTER_NAME);
+      due = Date.now() - oldestAt >= pacedMinAgeMs(used, cap);
+    }
     if (!due) return false;
     const rows = buffer;
     buffer = [];
     const budget = await trySoftDailyConsume(
       env.RELAY_KV,
       GATE_LOG_COUNTER_NAME,
-      readGateLogDailyWriteCap(env),
+      cap,
       GATE_LOG_COUNTER_PERSIST_EVERY,
     );
     if (!budget.ok) return false; // drop; console already has the rows
@@ -114,6 +132,11 @@ export async function flushGateLogRing(env: Env, opts: { force?: boolean } = {})
   } catch {
     return false;
   }
+}
+
+/** Test hook: pretend the oldest buffered row is `ms` old. */
+export function ageGateLogBufferForTests(ms: number): void {
+  oldestAt = Date.now() - ms;
 }
 
 export function gateLogBufferSizeForTests(): number {

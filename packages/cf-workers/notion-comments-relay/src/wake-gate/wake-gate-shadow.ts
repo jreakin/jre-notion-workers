@@ -25,7 +25,7 @@ import {
   setCachedCommentParentResolution,
 } from "./page-fetch-cache.js";
 import { kvTtl } from "../kv-ttl.js";
-import { enqueueGateLogRow } from "../gate-log-ring.js";
+import { enqueueGateLogRow, flushGateLogRing } from "../gate-log-ring.js";
 
 const DEDUPE_TTL_SEC = 60;
 const DEDUPE_KEY_PREFIX = "wake_gate:dedupe:";
@@ -374,4 +374,6 @@ export async function runShadowWakeGates(
 ): Promise<void> {
   await runAdDocsWakeGateShadow(env, parsed, notionType);
   await runHarnessRuleShadowGates(env, parsed, notionType, rawBody, parseOk);
+  // End of request: flush a partial gate_log batch if it is old enough (low-traffic path).
+  await flushGateLogRing(env);
 }

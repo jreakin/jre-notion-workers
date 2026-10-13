@@ -63,6 +63,25 @@ export function ruleSkipExcludedGrokbot(parsed: Record<string, unknown>): boolea
   return structuredMentionsExcludedAddress(parsed, NOTION_FREE_TEXT_KEYS);
 }
 
+/** Max excluded_grokbot rows logged per isolate per UTC day (the rest are counted, not logged). */
+export const EXCLUDED_LOG_CAP_PER_DAY = 20;
+let excludedLog = { day: "", logged: 0, suppressed: 0 };
+
+export function resetExcludedLogCapForTests(): void {
+  excludedLog = { day: "", logged: 0, suppressed: 0 };
+}
+
+function takeExcludedLogSlot(): { log: boolean; suppressed: number } {
+  const day = new Date().toISOString().slice(0, 10);
+  if (excludedLog.day !== day) excludedLog = { day, logged: 0, suppressed: 0 };
+  if (excludedLog.logged < EXCLUDED_LOG_CAP_PER_DAY) {
+    excludedLog.logged += 1;
+    return { log: true, suppressed: excludedLog.suppressed };
+  }
+  excludedLog.suppressed += 1;
+  return { log: false, suppressed: excludedLog.suppressed };
+}
+
 export type RuleSkipShadowDeps = {
   log: (entry: ClefShadowLogEntry) => Promise<void>;
   pageEventsLast60s: number;
@@ -95,7 +114,10 @@ export async function runRuleSkipClefShadow(
       return; // mode off: no extra row, no call (base row already logged)
     }
     if (ruleSkipExcludedGrokbot(parsed)) {
-      await deps.log({ ...row, reason: "rule_skip:excluded_grokbot" });
+      const slot = takeExcludedLogSlot();
+      if (slot.log) {
+        await deps.log({ ...row, reason: "rule_skip:excluded_grokbot" });
+      }
       return; // bot's own inbox: never sent to Clef
     }
     if (!ruleSkipSampled(itemId, readRuleSkipSamplePercent(env))) {

@@ -14,6 +14,7 @@ import {
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 import { kvTtl } from "./kv-ttl.js";
 import { flushGateLogRing } from "./gate-log-ring.js";
+import { withMeteredKv } from "./kv-write-meter.js";
 
 export type { Env } from "./env.js";
 
@@ -393,7 +394,8 @@ async function enqueueAndSchedule(
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, rawEnv: Env, ctx: ExecutionContext): Promise<Response> {
+    const env = withMeteredKv(rawEnv);
     try {
       const url = new URL(request.url);
 
@@ -674,8 +676,10 @@ export default {
     }
   },
 
-  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    await flushGateLogRing(env); // stale batch only; fail-open
+  async scheduled(_controller: ScheduledController, rawEnv: Env, _ctx: ExecutionContext): Promise<void> {
+    const env = withMeteredKv(rawEnv);
+    // Cron: if this isolate holds gate_log rows old enough (paced age check), flush them (capped; fail-open).
+    await flushGateLogRing(env);
     try {
       // KV budget: the 1/min cron used to PUT the flush lock every tick (~1,440 writes/day)
       // even with nothing buffered. Reads are cheap; only lock + flush when there is work.

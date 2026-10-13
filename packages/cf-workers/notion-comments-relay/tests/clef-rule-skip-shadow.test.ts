@@ -6,6 +6,7 @@ import {
   ruleSkipSampled,
 } from "../src/wake-gate/clef-rule-skip-shadow.js";
 import { resetSoftDailyCountersForTests, softCounterKey } from "../src/soft-daily-counter.js";
+import { resetExcludedLogCapForTests } from "../src/wake-gate/clef-rule-skip-shadow.js";
 import type { Env } from "../src/env.js";
 import type { GateEventContext, WakeGateDecision } from "../src/wake-gate/gate-event-types.js";
 
@@ -63,6 +64,7 @@ describe("rule-skip Clef shadow", () => {
     }) as typeof console.log;
     resetClefPageEventCountsForTests();
     resetSoftDailyCountersForTests();
+    resetExcludedLogCapForTests();
   });
   afterEach(() => {
     console.log = origLog;

@@ -261,7 +261,7 @@ KV: `wake_gate_adopted_at:<pageId>` (**90-day** TTL) for adopted-change dedupe a
 | List | `list({ prefix: "gate_log:v1:<YYYY-MM-DD>:" })` per day, or `…:<HH>:` per hour |
 | Value | `{"v":1,"flushed_at":"<ISO>","rows":[GateLogRow, …]}` (≤ 25 rows typical, ≤ 200 max) |
 | TTL | 7 days |
-| Flush | at 25 rows, or when the oldest row is ≥ 15 min old (checked on the next event or cron tick in that isolate) |
+| Flush | at 25 rows; at **end of every request** when the oldest buffered row is older than the paced min age = max(5 min, time left in UTC day ÷ flushes left); and on **every cron tick** that lands on an isolate holding rows |
 | Budget | `GATE_LOG_DAILY_WRITE_CAP` flush writes/UTC day (default 60) + soft counter `gate_log:writes:<YYYY-MM-DD>` (persisted every 8 flushes, TTL 48h) |
 | Near cap | at ≥ 80% of the cap, only high-signal rows are kept, plus 1 in 4 of the rest (marked `sampled_near_cap: true`). At the cap, rows go to console only |
 
@@ -274,4 +274,21 @@ Every row has `stream`:
 
 **Counter overshoot (bounded, accepted):** daily counters persist every N increments (Clef main N=25, rule-skip N=10, gate log N=8). An isolate evicted before persisting loses at most N−1 counted increments, so actual calls/flushes can exceed a cap by ≤ (N−1) × (isolates evicted that day). Overshoot never adds KV writes beyond the cap's own flushes; it only affects Workers AI call counts slightly.
 
+**KV write alert:** RELAY_KV puts/deletes are metered (`kv:writes:<YYYY-MM-DD>`, persisted every 25 ops). Past `KV_WRITE_ALERT_THRESHOLD` (default 800) the Worker logs one `{"level":"alert","event":"kv_write_budget_alert"}` line per isolate per UTC day.
+
+> **The KV write meter is not billing truth.** It is a soft, per-isolate counter merged into KV every 25 ops: it can undercount (isolate eviction before persist, concurrent persists racing — KV has no CAS), it does not count its own persist writes or writes from other Workers/`wrangler` on the account, and its day is UTC. Use the Cloudflare dashboard (KV → Metrics) / billing for actual usage; treat the alert as an early warning only.
+
 The ring is best effort: rows still in an isolate's buffer when it is evicted are lost from KV. Workers Logs (console) keeps the complete stream.
+
+
+## Troubleshooting
+
+### `notion_fetch_failed` on `page.created` (Fleet Locks / AD Docs shadow gates)
+
+**Symptom:** `wake_gate_shadow` rows with `gate_name: "fleet_locks_adopted_change"` and `reason: "notion_fetch_failed"`, and the matching `clef_wake_shadow` row with `reason: "notion_fetch_failed"`. Forwarding is still `200`.
+
+**Usual cause: integration access, not code.** The page is a **private, top-level page** (empty ancestor path, e.g. a fresh "New page" in John's private section) that the relay's Notion integration is not shared on. `GET /v1/pages/:id` returns 404/403, and `fetchNotionPageOutcome` maps that to `notion_fetch_failed`. Pages in shared databases resolve normally (`not_fleet_locks`, etc.).
+
+**Check:** open the page in Notion → `•••` → *Connections*. If the relay integration isn't listed, this is expected. To confirm, `notion_fetch_timeout` means slowness instead, and `notion_token_missing` means the `NOTION_API_TOKEN` secret is unset (`wrangler secret list`).
+
+**Fix:** nothing is required (shadow-only). If those pages should be gated, share the parent page or teamspace with the integration. Don't widen the token.
