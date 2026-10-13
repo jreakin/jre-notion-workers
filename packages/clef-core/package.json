@@ -1,0 +1,11 @@
+{
+  "name": "@jre/clef-core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "check": "tsc --noEmit -p .",
+    "test": "bun test tests/"
+  }
+}

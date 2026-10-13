@@ -1,12 +1,24 @@
 import { type ClefOutcome, decideClefOutcome } from "./clef-decision-logic.js";
 import {
-  CLEF_CALL_TIMEOUT_MS,
   CLEF_FLASH_MODEL,
   CLEF_FLASH_MODEL_NAME,
   CLEF_FULL_MODEL,
   CLEF_FULL_MODEL_NAME,
 } from "./clef-thresholds.js";
 import type { Env } from "../env.js";
+import {
+  type AiRunBinding,
+  buildClefRunArguments,
+  clefAnswers,
+  clefErrorReason,
+  clefInputKeys,
+  readChoice,
+  readConfidence,
+  readNoul,
+  runClefModel,
+} from "../../../../clef-core/src/index.js";
+
+const WHEN_CHOICES = ["now", "batch", "ignore"] as const;
 
 export const CLEF_QUESTIONS = {
   q_action: {
@@ -44,100 +56,19 @@ export function buildClefAiRunArguments(
   state: string,
   signal?: AbortSignal,
 ): { input: Record<string, unknown>; runOptions: Record<string, unknown> } {
-  const input: Record<string, unknown> = {
-    model: modelName,
-    state,
-    questions: CLEF_QUESTIONS,
-  };
-  const runOptions: Record<string, unknown> = {};
-  const gatewayId = env.AI_GATEWAY_ID?.trim();
-  if (gatewayId) {
-    runOptions.gateway = { id: gatewayId };
-  }
-  if (signal) {
-    runOptions.signal = signal;
-  }
-  return { input, runOptions };
+  return buildClefRunArguments(env.AI_GATEWAY_ID, modelName, state, CLEF_QUESTIONS, signal);
 }
 
-export function clefInputKeys(input: Record<string, unknown>): string[] {
-  return Object.keys(input).sort();
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
-
-function unwrapAiResult(raw: unknown): Record<string, unknown> | null {
-  const top = asRecord(raw);
-  if (!top) {
-    return null;
-  }
-  const nested = asRecord(top.result);
-  return nested ?? top;
-}
-
-function validProbability(value: number | null): boolean {
-  return value !== null && value >= 0 && value <= 1;
-}
-
-function readNoul(answers: Record<string, unknown>, key: string): number | null {
-  const entry = asRecord(answers[key]);
-  if (!entry || entry.type !== "noul") {
-    return null;
-  }
-  const noul = entry.noul;
-  if (typeof noul !== "number" || !Number.isFinite(noul)) {
-    return null;
-  }
-  return validProbability(noul) ? noul : null;
-}
-
-function readChoice(
-  answers: Record<string, unknown>,
-  key: string,
-): "now" | "batch" | "ignore" | null {
-  const entry = asRecord(answers[key]);
-  if (!entry || entry.type !== "choice") {
-    return null;
-  }
-  const choice = entry.choice;
-  if (choice === "now" || choice === "batch" || choice === "ignore") {
-    return choice;
-  }
-  return null;
-}
-
-function readConfidence(answers: Record<string, unknown>, key: string): number | null | "bad" {
-  const entry = asRecord(answers[key]);
-  if (!entry) {
-    return null;
-  }
-  if (!("confidence" in entry)) {
-    return null;
-  }
-  const confidence = entry.confidence;
-  if (typeof confidence !== "number" || !Number.isFinite(confidence)) {
-    return "bad";
-  }
-  if (confidence < 0 || confidence > 1) {
-    return "bad";
-  }
-  return confidence;
-}
+export { clefInputKeys };
 
 export function parseClefAiResponse(raw: unknown, modelLabel: string): ParsedClefRun | null {
-  const body = unwrapAiResult(raw);
-  if (!body) {
-    return null;
-  }
-  const answers = asRecord(body.answers);
+  const answers = clefAnswers(raw);
   if (!answers) {
     return null;
   }
   const pAction = readNoul(answers, "q_action");
   const pDup = readNoul(answers, "q_dup");
-  const qWhen = readChoice(answers, "q_when");
+  const qWhen = readChoice(answers, "q_when", WHEN_CHOICES);
   const confidence = readConfidence(answers, "q_when");
   if (pAction === null || pDup === null || qWhen === null || confidence === "bad") {
     return null;
@@ -153,50 +84,8 @@ export function parseClefAiResponse(raw: unknown, modelLabel: string): ParsedCle
   };
 }
 
-type AiRunBinding = {
-  run: (
-    model: string,
-    input: Record<string, unknown>,
-    runOptions?: Record<string, unknown>,
-  ) => Promise<unknown>;
-};
-
-async function runClefModel(
-  ai: AiRunBinding,
-  env: Env,
-  slug: string,
-  modelName: string,
-  state: string,
-): Promise<unknown> {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new Error("clef_timeout"));
-    }, CLEF_CALL_TIMEOUT_MS);
-  });
-  timeoutPromise.catch(() => {});
-
-  try {
-    const { input, runOptions } = buildClefAiRunArguments(env, modelName, state, controller.signal);
-    const aiPromise = Promise.resolve().then(() => ai.run(slug, input, runOptions));
-    return await Promise.race([aiPromise, timeoutPromise]);
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  }
-}
-
-function clefErrorReason(err: unknown): string {
-  if (err instanceof Error) {
-    if (err.message === "clef_timeout") {
-      return "clef_timeout";
-    }
-    return `clef_error:${err.name}`;
-  }
-  return "clef_error:Error";
+function runRelayClefModel(env: Env, ai: AiRunBinding, slug: string, modelName: string, state: string) {
+  return runClefModel(ai, env.AI_GATEWAY_ID, slug, modelName, state, CLEF_QUESTIONS);
 }
 
 export async function invokeClefFlash(
@@ -208,7 +97,7 @@ export async function invokeClefFlash(
   }
   const started = Date.now();
   try {
-    const raw = await runClefModel(env.AI, env, CLEF_FLASH_MODEL, CLEF_FLASH_MODEL_NAME, state);
+    const raw = await runRelayClefModel(env, env.AI, CLEF_FLASH_MODEL, CLEF_FLASH_MODEL_NAME, state);
     const parsed = parseClefAiResponse(raw, CLEF_FLASH_MODEL_NAME);
     if (!parsed) {
       return { ok: false, reason: "clef_bad_output" };
@@ -229,7 +118,7 @@ export async function invokeClefFull(
   }
   const started = Date.now();
   try {
-    const raw = await runClefModel(env.AI, env, CLEF_FULL_MODEL, CLEF_FULL_MODEL_NAME, state);
+    const raw = await runRelayClefModel(env, env.AI, CLEF_FULL_MODEL, CLEF_FULL_MODEL_NAME, state);
     const parsed = parseClefAiResponse(raw, CLEF_FULL_MODEL_NAME);
     if (!parsed) {
       return { ok: false, reason: "clef_bad_output" };
