@@ -30,7 +30,8 @@ function parseCount(raw: string | null): number {
 
 export type SoftConsumeResult =
   | { ok: true; count: number }
-  | { ok: false; reason: "daily_cap"; count: number };
+  | { ok: false; reason: "daily_cap"; count: number }
+  | { ok: false; reason: "invalid"; count: number };
 
 export interface SoftKv {
   get(key: string): Promise<string | null>;
@@ -66,7 +67,18 @@ export async function trySoftDailyConsume(
   cap: number,
   persistEvery: number,
   now: Date = new Date(),
+  opts: { rejectInvalid?: boolean } = {},
 ): Promise<SoftConsumeResult> {
+  if (opts.rejectInvalid) {
+    try {
+      const raw = await kv.get(softCounterKey(name, now));
+      if (raw !== null && raw.trim() !== "" && !/^\d+$/.test(raw.trim())) {
+        return { ok: false, reason: "invalid", count: 0 };
+      }
+    } catch {
+      // fail open
+    }
+  }
   const current = await peekSoftDailyCount(kv, name, now);
   if (current >= cap) {
     return { ok: false, reason: "daily_cap", count: current };

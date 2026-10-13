@@ -113,3 +113,28 @@ describe("gate_log ring", () => {
     expect(ringKeys()).toHaveLength(1);
   });
 });
+
+describe("main Clef counter batching (#39 B1)", () => {
+  beforeEach(() => {
+    store = new Map();
+    ttls = [];
+    resetSoftDailyCountersForTests();
+  });
+
+  test("CLEF_DAILY_CALL_CAP=2000 worst case → ≤ 80 counter writes/day, cap still enforced", async () => {
+    const { tryConsumeClefCall, clefDailyCapKey } = await import("../src/wake-gate/clef-daily-cap.js");
+    let puts = 0;
+    const e = env({ CLEF_DAILY_CALL_CAP: "2000" });
+    const kv = e.RELAY_KV as unknown as { put: (...a: unknown[]) => Promise<void> };
+    const orig = kv.put;
+    kv.put = async (...a: unknown[]) => {
+      puts += 1;
+      await orig(...(a as [string, string]));
+    };
+    let ok = 0;
+    for (let i = 0; i < 2500; i += 1) if ((await tryConsumeClefCall(e)).ok) ok += 1;
+    expect(ok).toBe(2000);
+    expect(puts).toBeLessThanOrEqual(80);
+    expect(store.get(clefDailyCapKey())).toBe("2000");
+  });
+});

@@ -270,4 +270,8 @@ Every row has `stream`:
 - `wake_gate_shadow`: the sanitized harness rule decision `gate_name, decision, reason, inputs, ts, mode`.
 - `ad_docs_wake_gate_shadow`: `ts, decision, reason, notion_type`.
 
+**UTC rollover:** day buckets, `<HH>`, and every daily cap/counter (`gate_log:writes:`, `clef:calls:`, `clef:rule_skip_calls:`) roll over at **00:00 UTC = 7 PM CDT (summer) / 6 PM CST (winter)** Central. A Steward run "for today" in the evening Central time must also read the next UTC day's prefix.
+
+**Counter overshoot (bounded, accepted):** daily counters persist every N increments (Clef main N=25, rule-skip N=10, gate log N=8). An isolate evicted before persisting loses at most N−1 counted increments, so actual calls/flushes can exceed a cap by ≤ (N−1) × (isolates evicted that day). Overshoot never adds KV writes beyond the cap's own flushes; it only affects Workers AI call counts slightly.
+
 The ring is best effort: rows still in an isolate's buffer when it is evicted are lost from KV. Workers Logs (console) keeps the complete stream.
