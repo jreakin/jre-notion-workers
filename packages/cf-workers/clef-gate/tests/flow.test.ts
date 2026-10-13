@@ -82,6 +82,23 @@ describe("flow", () => {
       expect(e?.mode).toBe("off");
     }
   });
+  test("unknown mailbox (e.g. grokbot) is rejected by validation, never sent to Clef", async () => {
+    cap = captureLogs();
+    const { env, calls } = makeEnv();
+    const e = await processEmailShadow(env, JSON.stringify(payload({ mailbox: "grokbot" })));
+    expect(e?.event).toBe("rejected");
+    expect(e?.error_reason).toBe("invalid_mailbox");
+    expect(calls.length).toBe(0);
+  });
+  test("gateway id unset → no model call, clef_gateway_unset", async () => {
+    cap = captureLogs();
+    const { env, calls } = makeEnv(answers());
+    env.AI_GATEWAY_ID = " ";
+    const e = await processEmailShadow(env, JSON.stringify(payload()));
+    expect(calls.length).toBe(0);
+    expect(e?.error_reason).toBe("clef_gateway_unset");
+    expect(e?.shadow_label).toBe("escalate");
+  });
   test("AI error / bad output → escalate with reason", async () => {
     cap = captureLogs();
     const { env } = makeEnv({ answers: {} });
@@ -91,7 +108,7 @@ describe("flow", () => {
   });
   test("jre@mail.grokbot.com excluded entirely: no AI, no log row, counter only", async () => {
     cap = captureLogs();
-    for (const p of [payload({ override: "grokbot_inbox" }), payload({ mailbox: "grokbot" }), payload({ existing_labels: ["jre@mail.grokbot.com"] })]) {
+    for (const p of [payload({ override: "grokbot_inbox" }), payload({ existing_labels: ["jre@mail.grokbot.com"] })]) {
       const { env, calls, kv } = makeEnv();
       const e = await processEmailShadow(env, JSON.stringify(p));
       expect(e).toBeNull();
@@ -111,6 +128,20 @@ describe("flow", () => {
       const { env, calls } = makeEnv();
       expect(await processEmailShadow(env, JSON.stringify(p))).toBeNull();
       expect(calls.length).toBe(0);
+    }
+    for (const p of [
+      payload({ existing_labels: ["jre@mail.grokbot.com.attacker"] }),
+      payload({ existing_labels: ["jre@mail.grokbot.community"] }),
+      payload({ existing_labels: ["notjre@mail.grokbot.com"] }),
+      payload({ existing_labels: ["jre@notmail.grokbot.com"] }),
+      payload({ existing_labels: ["jre@evilmail.grokbot.com.attacker"] }),
+      payload({ from_domain: "notmail.grokbot.com" }),
+      payload({ from_domain: "evilmail.grokbot.com.attacker" }),
+      payload({ subject: "fwd to jre@mail.grokbot.com", snippet: "cc JRE+x@mail.grokbot.com" }),
+    ]) {
+      const { env, calls } = makeEnv(answers());
+      expect(await processEmailShadow(env, JSON.stringify(p))).not.toBeNull();
+      expect(calls.length).toBe(1);
     }
     const notExcluded = makeEnv();
     expect(await processEmailShadow(notExcluded.env, JSON.stringify(payload({ from_domain: "grokbot.com.evil.io" })))).not.toBeNull();
@@ -167,6 +198,18 @@ describe("http", () => {
     expect(r.status).toBe(202);
     expect(k.p.length).toBe(0);
     expect(calls.length).toBe(0);
+  });
+  test("small chunked body with no content-length is read and processed", async () => {
+    cap = captureLogs();
+    const { env, calls } = makeEnv();
+    const bytes = new TextEncoder().encode(JSON.stringify(payload()));
+    const stream = new ReadableStream({ start(c) { c.enqueue(bytes.slice(0, 50)); c.enqueue(bytes.slice(50)); c.close(); } });
+    const r0 = new Request("https://w.example/clef/email-shadow", { method: "POST", headers: { authorization: "Bearer tok-123" }, body: stream, duplex: "half" } as RequestInit);
+    expect(r0.headers.get("content-length")).toBeNull();
+    const k = ctx();
+    expect((await worker.fetch(r0, env, k.c)).status).toBe(202);
+    await Promise.all(k.p);
+    expect(calls.length).toBe(1);
   });
   test("authorized → 202 {logged:true}, even for garbage; other paths 404/405", async () => {
     cap = captureLogs();

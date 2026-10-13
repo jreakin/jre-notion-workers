@@ -139,9 +139,11 @@ export async function invokeEmailClef(
   const name = variant === "full" ? CLEF_FULL_MODEL_NAME : CLEF_FLASH_MODEL_NAME;
   const started = Date.now();
   if (!ai) return { ok: false, reason: "clef_ai_unbound", latency_ms: 0, model: name };
+  // Fail closed: without the gateway there is no rate limit and no gateway no-log guarantee.
+  if (!gatewayId?.trim()) return { ok: false, reason: "clef_gateway_unset", latency_ms: 0, model: name };
   try {
     // Email state carries masked subject/snippet: never let AI Gateway log or cache it.
-    const gateway = { id: gatewayId, collectLog: false, skipCache: true };
+    const gateway = { id: gatewayId.trim(), collectLog: false, skipCache: true };
     const raw = await runClefModel(ai, gateway, slug, name, state, EMAIL_QUESTIONS);
     const parsed = parseEmailClefResponse(raw);
     const latency_ms = Date.now() - started;
