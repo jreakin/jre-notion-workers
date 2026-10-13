@@ -87,14 +87,17 @@ export async function trySoftDailyConsume(
   s.count += 1;
   s.unpersisted += 1;
   if (s.unpersisted >= Math.max(1, persistEvery) || s.count >= cap) {
+    const delta = s.unpersisted;
     s.unpersisted = 0;
     try {
+      // Additive merge: other isolates' increments since our last read are kept (max-merge
+      // would undercount by up to (isolates-1)×). Still soft: concurrent persists can race.
       const key = softCounterKey(name, now);
       const stored = parseCount(await kv.get(key));
-      s.count = Math.max(s.count, stored);
+      s.count = stored + delta;
       await kv.put(key, String(s.count), { expirationTtl: kvTtl(SOFT_COUNTER_TTL_SECONDS) });
     } catch {
-      // fail open
+      // fail open (local count stays as-is)
     }
   }
   return { ok: true, count: s.count };
