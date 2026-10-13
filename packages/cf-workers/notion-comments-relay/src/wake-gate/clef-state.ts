@@ -101,7 +101,10 @@ function triStateFlag(
   return value === true ? "true" : "false";
 }
 
-function readSnippetFromPayload(parsed: Record<string, unknown>): string {
+function readSnippetFromPayload(
+  parsed: Record<string, unknown>,
+  mask?: (raw: string) => string,
+): string {
   const data = parsed.data;
   if (!data || typeof data !== "object") {
     return "";
@@ -109,7 +112,7 @@ function readSnippetFromPayload(parsed: Record<string, unknown>): string {
   const rec = data as Record<string, unknown>;
   const text = rec.text;
   if (typeof text === "string") {
-    return truncateCodePoints(text, CLEF_SNIPPET_MAX_CHARS);
+    return truncateCodePoints(mask ? mask(text) : text, CLEF_SNIPPET_MAX_CHARS);
   }
   const rich = rec.rich_text ?? rec.content;
   if (Array.isArray(rich)) {
@@ -122,7 +125,7 @@ function readSnippetFromPayload(parsed: Record<string, unknown>): string {
         }
       }
     }
-    return truncateCodePoints(out, CLEF_SNIPPET_MAX_CHARS);
+    return truncateCodePoints(mask ? mask(out) : out, CLEF_SNIPPET_MAX_CHARS);
   }
   return "";
 }
@@ -133,8 +136,11 @@ export function buildClefStateString(
   parsed: Record<string, unknown>,
   pageEventsLast60s: number,
   isBotEcho: boolean,
+  opts: { maskText?: (raw: string) => string } = {},
 ): string {
   const props = ctx.properties ?? {};
+  // Mask BEFORE truncation so clipping can never split (and leak half of) an email/phone.
+  const mask = opts.maskText ?? ((t: string) => t);
   const parentDb = truncateCodePoints(
     ctx.parentDatabaseTitle ?? "unknown",
     CLEF_FIELD_SHORT_MAX_CHARS,
@@ -160,8 +166,8 @@ export function buildClefStateString(
     `target_lane=${targetLane}`,
     `page_events_60s=${pageEventsLast60s}`,
     `bot_echo=${isBotEcho}`,
-    `title=${encodeStateTextField(props.title ?? "", CLEF_TITLE_MAX_CHARS)}`,
-    `snippet=${encodeStateTextField(readSnippetFromPayload(parsed), CLEF_SNIPPET_MAX_CHARS)}`,
+    `title=${encodeStateTextField(mask(props.title ?? ""), CLEF_TITLE_MAX_CHARS)}`,
+    `snippet=${encodeStateTextField(mask(readSnippetFromPayload(parsed, opts.maskText)), CLEF_SNIPPET_MAX_CHARS)}`,
   ];
   return truncateStateSafe(lines.join("\n"));
 }

@@ -173,4 +173,59 @@ describe("rule-skip Clef shadow", () => {
     expect(hits).toBeGreaterThan(350);
     expect(hits).toBeLessThan(650);
   });
+
+  test("B1: snippet/title sent to Clef are PII-masked (email, phone, url, long numbers)", async () => {
+    let state = "";
+    const e = env({
+      AI: {
+        run: async (_m: string, args: unknown) => {
+          state = JSON.stringify(args);
+          return {};
+        },
+      } as unknown as Ai,
+    });
+    const c = { ...ctx(), properties: { ...ctx().properties, title: "Call bob@example.com re 555-123-4567" } };
+    await runClefShadowWakeGate(
+      e,
+      c,
+      "comment.created",
+      { data: { rich_text: [{ plain_text: "mail alice.smith+x@corp.co or +1 (312) 555-0199, acct 123456789, see https://evil.example/x" }] } },
+      true,
+      skip,
+    );
+    expect(state.length).toBeGreaterThan(0);
+    for (const leak of ["bob@example.com", "555-123-4567", "alice.smith", "312", "123456789", "evil.example"]) {
+      expect(state).not.toContain(leak);
+    }
+    expect(state).toContain("[email]");
+    expect(state).toContain("[phone]");
+  });
+
+  test("B2: anchored jre@mail.grokbot.com in structured fields → excluded, no Clef call", async () => {
+    let calls = 0;
+    const e = env({ AI: { run: async () => { calls += 1; return {}; } } as unknown as Ai });
+    for (const addr of ["jre@mail.grokbot.com", "JRE+triage@Mail.GrokBot.com", "jre%40mail.grokbot.com"]) {
+      logs = [];
+      await runClefShadowWakeGate(e, ctx(), "comment.created", { authors: [{ person: { email: addr } }] }, true, skip);
+      expect(ruleSkipRows()[0]!.reason).toBe("rule_skip:excluded_grokbot");
+    }
+    expect(calls).toBe(0);
+  });
+
+  test("B2: free text / lookalikes do not trigger exclusion", async () => {
+    let calls = 0;
+    const e = env({ AI: { run: async () => { calls += 1; return {}; } } as unknown as Ai });
+    const payloads = [
+      { data: { rich_text: [{ plain_text: "ping jre@mail.grokbot.com" }] } },
+      { authors: [{ person: { email: "notjre@mail.grokbot.com" } }] },
+      { authors: [{ person: { email: "jre@mail.grokbot.community" } }] },
+      { authors: [{ person: { email: "jre@mail.grokbot.com.attacker.io" } }] },
+    ];
+    for (const p of payloads) {
+      logs = [];
+      await runClefShadowWakeGate(e, ctx(), "comment.created", p, true, skip);
+      expect(String(ruleSkipRows()[0]?.reason)).not.toBe("rule_skip:excluded_grokbot");
+    }
+    expect(calls).toBe(payloads.length);
+  });
 });
