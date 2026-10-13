@@ -27,6 +27,7 @@ import type {
   NotionPageProperties,
   WakeGateDecision,
 } from "./gate-event-types.js";
+import { kvTtl } from "../kv-ttl.js";
 
 const SHADOW_LOG_KEY = "wake_gate_shadow_log";
 const SHADOW_LOG_MAX = 50;
@@ -261,7 +262,7 @@ async function storeAdoptedAtDedupe(
   }
   try {
     await env.RELAY_KV.put(`${ADOPTED_AT_KEY_PREFIX}${ctx.pageId}`, adoptedAt, {
-      expirationTtl: ADOPTED_AT_DEDUPE_TTL_SECONDS,
+      expirationTtl: kvTtl(ADOPTED_AT_DEDUPE_TTL_SECONDS),
     });
   } catch {
     // ignore
@@ -384,7 +385,7 @@ async function markDuplicateIfNeeded(env: Env, ctx: GateEventContext): Promise<v
         // ignore corrupt KV
       }
     }
-    await env.RELAY_KV.put(key, JSON.stringify({ ts: now, hash }), { expirationTtl: 120 });
+    await env.RELAY_KV.put(key, JSON.stringify({ ts: now, hash }), { expirationTtl: kvTtl(120) });
   } catch {
     // KV failure must not block shadow decisions
   }

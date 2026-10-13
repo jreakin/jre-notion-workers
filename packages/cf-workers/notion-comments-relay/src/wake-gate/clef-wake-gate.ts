@@ -13,6 +13,7 @@ import type {
   WakeDecisionOutcome,
   WakeGateDecision,
 } from "./gate-event-types.js";
+import { kvTtl } from "../kv-ttl.js";
 
 const CLEF_SHADOW_LOG_KEY = "clef_shadow_log";
 const CLEF_SHADOW_LOG_MAX = 50;
@@ -119,7 +120,7 @@ export async function appendClefShadowLog(env: Env, entry: ClefShadowLogEntry): 
       CLEF_SHADOW_LOG_KEY,
       JSON.stringify(hist.slice(0, CLEF_SHADOW_LOG_MAX)),
       {
-        expirationTtl: 60 * 60 * 24 * 30,
+        expirationTtl: kvTtl(60 * 60 * 24 * 30),
       },
     );
   } catch {
