@@ -84,13 +84,38 @@ function labels(v: unknown, max: number): string[] {
     .filter((x) => x.length > 0);
 }
 
-/** True when the item concerns the bot's own inbox — excluded entirely (John, 2026-10-13). */
-export function isExcludedGrokbot(rawBody: string, body: Record<string, unknown>): boolean {
+export const EXCLUDED_DOMAIN = "mail.grokbot.com";
+/**
+ * jre@ with any +alias, any case, URL-encoded `@`/`+` (%40/%2B), optional subdomain of mail.grokbot.com.
+ * Bounded on both sides so notjre@…, …grokbot.community and …grokbot.com.attacker do not match.
+ */
+export const EXCLUDED_ADDRESS_RE =
+  /(?<![a-z0-9._%+-])jre(?:(?:\+|%2b)[^@\s"%]*)?(?:@|%40)(?:[a-z0-9-]+\.)*mail\.grokbot\.com(?![a-z0-9-]|\.[a-z0-9])/i;
+
+/** Free-text fields a sender controls; never used for exclusion (a sender could hide mail from shadow data). */
+const FREE_TEXT_FIELDS = new Set(["subject", "snippet"]);
+
+function isExcludedDomain(v: unknown): boolean {
+  if (typeof v !== "string") return false;
+  const d = v.trim().toLowerCase().replace(/\.$/, "");
+  return d === EXCLUDED_DOMAIN || d.endsWith(`.${EXCLUDED_DOMAIN}`);
+}
+
+/**
+ * True when the item concerns the bot's own inbox — excluded entirely (John, 2026-10-13).
+ * Payload v1 carries no to/cc/delivered-to addresses: for those, Inbox Triage MUST send
+ * override:"grokbot_inbox" (box-side contract). Here we also catch the address (any +alias/case)
+ * in structured fields (not subject/snippet) and a mail.grokbot.com sender domain.
+ */
+export function isExcludedGrokbot(_rawBody: string, body: Record<string, unknown>): boolean {
   if (body.override === "grokbot_inbox") return true;
-  if (typeof body.mailbox === "string" && body.mailbox.toLowerCase().includes("grokbot")) return true;
-  if (rawBody.toLowerCase().includes(EXCLUDED_ADDRESS)) return true;
-  // Unicode-escaped JSON (e.g. \u0040) would dodge the raw check — check decoded strings too.
-  return JSON.stringify(body).toLowerCase().includes(EXCLUDED_ADDRESS);
+  if (isExcludedDomain(body.from_domain)) return true;
+  // Scan only structured fields (decoded, so \u0040 escapes are covered); never subject/snippet.
+  const structured: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (!FREE_TEXT_FIELDS.has(k)) structured[k] = v;
+  }
+  return EXCLUDED_ADDRESS_RE.test(JSON.stringify(structured));
 }
 
 export function parseEmailShadowBody(rawBody: string): ParseResult {
