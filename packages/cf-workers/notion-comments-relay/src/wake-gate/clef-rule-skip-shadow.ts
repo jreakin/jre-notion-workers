@@ -6,6 +6,7 @@
  * `ctx.waitUntil(runShadowWakeGates(...))` after forwarding is scheduled, and every error is swallowed.
  * Volume is bounded by sampling + a soft daily cap (CLEF_RULE_SKIP_DAILY_CAP, default 200).
  */
+import { maskPii, structuredMentionsExcludedAddress } from "../../../../clef-core/src/index.js";
 import type { Env } from "../env.js";
 import { trySoftDailyConsume } from "../soft-daily-counter.js";
 import { invokeClefFlash } from "./clef-ai.js";
@@ -45,6 +46,23 @@ export function ruleSkipSampled(itemId: string, percent: number, now: Date = new
   return hash % 100 < percent;
 }
 
+/** Notion free-text keys (author-controlled): masked for Clef, never used for exclusion. */
+export const NOTION_FREE_TEXT_KEYS: ReadonlySet<string> = new Set([
+  "text",
+  "plain_text",
+  "content",
+  "rich_text",
+  "title",
+  "snippet",
+  "subject",
+  "href",
+]);
+
+/** Same anchored jre@mail.grokbot.com rule as clef-gate (#36), on structured fields only. */
+export function ruleSkipExcludedGrokbot(parsed: Record<string, unknown>): boolean {
+  return structuredMentionsExcludedAddress(parsed, NOTION_FREE_TEXT_KEYS);
+}
+
 export type RuleSkipShadowDeps = {
   log: (entry: ClefShadowLogEntry) => Promise<void>;
   pageEventsLast60s: number;
@@ -76,6 +94,10 @@ export async function runRuleSkipClefShadow(
     if (!modeRes.allowClefCall) {
       return; // mode off: no extra row, no call (base row already logged)
     }
+    if (ruleSkipExcludedGrokbot(parsed)) {
+      await deps.log({ ...row, reason: "rule_skip:excluded_grokbot" });
+      return; // bot's own inbox: never sent to Clef
+    }
     if (!ruleSkipSampled(itemId, readRuleSkipSamplePercent(env))) {
       return; // unsampled: no extra row keeps log + KV volume flat
     }
@@ -93,7 +115,9 @@ export async function runRuleSkipClefShadow(
     const isEcho = Boolean(
       ctx.isCommentEvent && ctx.authorId && idInNotionIdSet(ctx.authorId, ctx.fleetCommentsBotIds),
     );
-    const state = buildClefStateString(ctx, notionType, parsed, deps.pageEventsLast60s, isEcho);
+    const state = buildClefStateString(ctx, notionType, parsed, deps.pageEventsLast60s, isEcho, {
+      maskText: maskPii,
+    });
     const flash = await invokeClefFlash(env, state);
     if (!flash.ok) {
       await deps.log({ ...row, reason: `rule_skip:${flash.reason}` });
