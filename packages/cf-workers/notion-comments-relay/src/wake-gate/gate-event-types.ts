@@ -48,6 +48,10 @@ export type ClefShadowLogEntry = {
   mode: string;
   actually_ran: string;
   reason: string;
+  /** Set only on rule-skip shadow rows (rule said skip; Clef scored it shadow-only). */
+  decision?: "rule_skip";
+  /** True when rules skipped but Clef said would_wake (false-skip candidate). */
+  candidate_false_skip?: boolean;
 };
 
 export type FleetLocksFieldSnapshot = {

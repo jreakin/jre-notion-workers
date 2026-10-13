@@ -61,7 +61,12 @@ const DOMAIN_RE = /^(?=.{1,253}$)[a-z0-9-]+(?:\.[a-z0-9-]+)+$/;
 const RUN_ID_RE = /^[A-Za-z0-9_.:-]{1,80}$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T[0-9:.+\-Z]{1,30}$/;
 
-export const EXCLUDED_ADDRESS = "jre@mail.grokbot.com";
+export {
+  EXCLUDED_ADDRESS,
+  EXCLUDED_ADDRESS_RE,
+  EXCLUDED_DOMAIN,
+} from "../../../clef-core/src/exclusion.js";
+import { EXCLUDED_ADDRESS_RE, EXCLUDED_DOMAIN } from "../../../clef-core/src/exclusion.js";
 
 function rec(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -83,14 +88,6 @@ function labels(v: unknown, max: number): string[] {
     .map((x) => cleanMaskClip(x, LABEL_MAX_CHARS))
     .filter((x) => x.length > 0);
 }
-
-export const EXCLUDED_DOMAIN = "mail.grokbot.com";
-/**
- * jre@ with any +alias, any case, URL-encoded `@`/`+` (%40/%2B), optional subdomain of mail.grokbot.com.
- * Bounded on both sides so notjre@…, …grokbot.community and …grokbot.com.attacker do not match.
- */
-export const EXCLUDED_ADDRESS_RE =
-  /(?<![a-z0-9._%+-])jre(?:(?:\+|%2b)[^@\s"%]*)?(?:@|%40)(?:[a-z0-9-]+\.)*mail\.grokbot\.com(?![a-z0-9-]|\.[a-z0-9])/i;
 
 /** Free-text fields a sender controls; never used for exclusion (a sender could hide mail from shadow data). */
 const FREE_TEXT_FIELDS = new Set(["subject", "snippet"]);

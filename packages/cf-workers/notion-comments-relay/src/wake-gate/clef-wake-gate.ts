@@ -14,6 +14,7 @@ import type {
   WakeGateDecision,
 } from "./gate-event-types.js";
 import { kvTtl } from "../kv-ttl.js";
+import { runRuleSkipClefShadow } from "./clef-rule-skip-shadow.js";
 
 const CLEF_SHADOW_LOG_KEY = "clef_shadow_log";
 const CLEF_SHADOW_LOG_MAX = 50;
@@ -76,6 +77,12 @@ function bumpPageEventCount(_env: Env, pageId: string): number {
   }
   pageEventCounts.set(pageId, { ts: now, count });
   return count;
+}
+
+/** Read-only view (rule-skip shadow must not perturb the wake path's duplicate counter). */
+function peekPageEventCount(pageId: string): number {
+  const prev = pageEventCounts.get(pageId);
+  return prev && Date.now() - prev.ts < DUPLICATE_WINDOW_MS ? prev.count : 0;
 }
 
 export function resetClefPageEventCountsForTests(): void {
@@ -195,6 +202,12 @@ export async function runClefShadowWakeGate(
       "clef_skipped_rule_not_wake",
     );
     await appendClefShadowLog(env, entry);
+    if (ruleDecision === "would_skip") {
+      await runRuleSkipClefShadow(env, ctx, notionType, parsed, itemId, entry, {
+        log: (row) => appendClefShadowLog(env, row),
+        pageEventsLast60s: ctx.pageId ? peekPageEventCount(ctx.pageId) : 0,
+      });
+    }
     return;
   }
 

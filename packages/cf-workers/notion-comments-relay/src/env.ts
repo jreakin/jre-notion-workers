@@ -13,6 +13,10 @@ export interface Env {
   AI_GATEWAY_ID?: string;
   /** Max Clef Workers AI calls per UTC day (default 2000). */
   CLEF_DAILY_CALL_CAP?: string;
+  /** Max shadow-only Clef calls/day for rule-skipped events (default 200; 0 disables). */
+  CLEF_RULE_SKIP_DAILY_CAP?: string;
+  /** Percent of rule-skipped events sampled into Clef shadow scoring (default 50). */
+  CLEF_RULE_SKIP_SAMPLE_PERCENT?: string;
   /** Fallback Clef mode when KV unset: off | shadow only. */
   CLEF_DEFAULT_MODE?: string;
   /** Comma-separated Gate Log data source / database ids — drop before rule gates. */
