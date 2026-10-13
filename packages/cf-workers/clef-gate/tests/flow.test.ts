@@ -24,7 +24,9 @@ describe("flow", () => {
     expect(calls[0].slug).toBe("@cf/cloudflare/clef");
     expect(Object.keys(calls[0].input).sort()).toEqual(["model", "questions", "state"]);
     expect(Object.keys(calls[0].input.questions as object).length).toBe(6);
-    expect((calls[0].opts.gateway as { id: string }).id).toBe("clef-shadow-gate");
+    expect(calls[0].opts.gateway).toEqual({ id: "clef-shadow-gate", collectLog: false, skipCache: true });
+    expect((calls[0].opts.gateway as Record<string, unknown>).collectLog).toBe(false);
+    expect("metadata" in (calls[0].opts.gateway as object)).toBe(false);
     expect(String(calls[0].input.state)).not.toContain("jane.doe");
     expect(e?.shadow_label).toBe("would_skip");
     expect(e?.false_skip).toBe(true);
@@ -97,6 +99,22 @@ describe("flow", () => {
       expect([...kv.data.keys()].some((k) => k.startsWith("clef_email:excluded:"))).toBe(true);
       expect([...kv.data.keys()].some((k) => k.startsWith(RING_PREFIX))).toBe(false);
     }
+    for (const p of [
+      payload({ existing_labels: ["JRE+foo@Mail.GrokBot.com"] }),
+      payload({ existing_labels: ["jre+x.y@mail.grokbot.com"] }),
+      payload({ from_domain: "mail.grokbot.com" }),
+      payload({ existing_labels: ["jre%40mail.grokbot.com"] }),
+      payload({ existing_labels: ["jre%2Bx%40mail.grokbot.com"] }),
+      payload({ from_domain: "MAIL.GROKBOT.COM" }),
+      payload({ from_domain: "eu.mail.grokbot.com" }),
+    ]) {
+      const { env, calls } = makeEnv();
+      expect(await processEmailShadow(env, JSON.stringify(p))).toBeNull();
+      expect(calls.length).toBe(0);
+    }
+    const notExcluded = makeEnv();
+    expect(await processEmailShadow(notExcluded.env, JSON.stringify(payload({ from_domain: "grokbot.com.evil.io" })))).not.toBeNull();
+    cap.lines.length = 0;
     const escaped = JSON.stringify(payload()).replace('"run-1"', '"jre\\u0040mail.grokbot.com"');
     const { env, calls } = makeEnv();
     expect(await processEmailShadow(env, escaped)).toBeNull();
@@ -113,6 +131,7 @@ describe("flow", () => {
     expect(o?.shadow_label).toBe("would_skip");
     const o2 = await processOutcome(env, JSON.stringify({ msg_id_hash: "d".repeat(64), disposition: "escalate_john", subject: "leak me" }));
     expect(o2?.error_reason).toBe("outcome_without_decision");
+    expect(o2?.mode).toBe("n/a");
     expect(cap.lines.join("\n")).not.toContain("leak me");
     noSecretsIn(cap.lines);
   });
@@ -136,6 +155,17 @@ describe("http", () => {
     const unset = makeEnv();
     unset.env.CLEF_EMAIL_SHADOW_TOKEN = "" as string;
     expect((await worker.fetch(req("/clef/email-shadow", "Bearer "), unset.env, ctx().c)).status).toBe(401);
+    expect(calls.length).toBe(0);
+  });
+  test("chunked body over the read cap is dropped without processing", async () => {
+    cap = captureLogs();
+    const { env, calls } = makeEnv();
+    const big = new TextEncoder().encode("x".repeat(20_000));
+    const stream = new ReadableStream({ start(c) { c.enqueue(big); c.close(); } });
+    const k = ctx();
+    const r = await worker.fetch(new Request("https://w.example/clef/email-shadow", { method: "POST", headers: { authorization: "Bearer tok-123" }, body: stream, duplex: "half" } as RequestInit), env, k.c);
+    expect(r.status).toBe(202);
+    expect(k.p.length).toBe(0);
     expect(calls.length).toBe(0);
   });
   test("authorized → 202 {logged:true}, even for garbage; other paths 404/405", async () => {

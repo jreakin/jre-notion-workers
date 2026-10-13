@@ -126,7 +126,7 @@ export async function processEmailShadow(env: Env, rawBody: string): Promise<Ema
       await bumpExcludedCounter(env);
       return null;
     }
-    const e = blankEntry("rejected", "shadow");
+    const e = blankEntry("rejected", "n/a");
     e.msg_id_hash = parsed.msg_id_hash ?? null;
     e.error_reason = parsed.reason;
     emitLog(e);
@@ -205,7 +205,7 @@ export async function processOutcome(env: Env, rawBody: string): Promise<EmailSh
   const hash = typeof b.msg_id_hash === "string" && HASH_RE.test(b.msg_id_hash) ? b.msg_id_hash : null;
   const disposition = (DISPOSITIONS as readonly unknown[]).includes(b.disposition) ? (b.disposition as Disposition) : null;
   if (!hash || !disposition) {
-    const e = blankEntry("rejected", "shadow");
+    const e = blankEntry("rejected", "n/a");
     e.msg_id_hash = hash;
     e.error_reason = "invalid_outcome";
     emitLog(e);
@@ -218,7 +218,7 @@ export async function processOutcome(env: Env, rawBody: string): Promise<EmailSh
   } catch {
     prior = null;
   }
-  const entry: EmailShadowLogEntry = prior ? { ...blankEntry("outcome", prior.mode), ...pickLogFields(prior) } : blankEntry("outcome", "shadow");
+  const entry: EmailShadowLogEntry = prior ? { ...blankEntry("outcome", prior.mode), ...pickLogFields(prior) } : blankEntry("outcome", "n/a");
   entry.event = "outcome";
   entry.ts = new Date().toISOString();
   entry.msg_id_hash = hash;
