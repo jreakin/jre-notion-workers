@@ -25,13 +25,10 @@ import {
   setCachedCommentParentResolution,
 } from "./page-fetch-cache.js";
 import { kvTtl } from "../kv-ttl.js";
+import { enqueueGateLogRow } from "../gate-log-ring.js";
 
 const DEDUPE_TTL_SEC = 60;
 const DEDUPE_KEY_PREFIX = "wake_gate:dedupe:";
-const RING_KEY = "wake_gate:ring";
-const RING_MAX = 50;
-const RING_ENTRY_MAX = 200;
-const RING_TTL_SEC = 86_400;
 const NOT_AD_DOCS_SAMPLE = 64;
 
 export const SHADOW_LOG_EVENT = "ad_docs_wake_gate_shadow";
@@ -98,19 +95,9 @@ async function writeDedupe(
   }
 }
 
-async function appendRing(env: Env, line: string): Promise<void> {
-  if (env.WAKE_GATE_KV_RING !== "1") return;
-  try {
-    const raw = await env.RELAY_KV.get(RING_KEY);
-    const arr: string[] = raw ? (JSON.parse(raw) as string[]) : [];
-    const entry = line.slice(0, RING_ENTRY_MAX);
-    arr.unshift(entry);
-    await env.RELAY_KV.put(RING_KEY, JSON.stringify(arr.slice(0, RING_MAX)), {
-      expirationTtl: kvTtl(RING_TTL_SEC),
-    });
-  } catch {
-    // optional ring — ignore
-  }
+async function appendRing(env: Env, row: Record<string, unknown>): Promise<void> {
+  // WAKE_GATE_KV_RING=1 → batched gate_log ring (no per-event KV write); fail-open inside.
+  await enqueueGateLogRow(env, { stream: "ad_docs_wake_gate_shadow", ...row });
 }
 
 function logShadow(result: ShadowGateResult, logIds?: { database_id?: string }): void {
@@ -367,7 +354,12 @@ async function runAdDocsWakeGateShadow(
       logged,
       parentDatabaseIdForLog ? { database_id: parentDatabaseIdForLog } : undefined,
     );
-    await appendRing(env, JSON.stringify({ decision: result.decision, reason: result.reason }));
+    await appendRing(env, {
+      ts: new Date().toISOString(),
+      decision: result.decision,
+      reason: result.reason,
+      notion_type: result.notionEventType,
+    });
   } catch (err) {
     logShadow(failOpen(errorReasonFromUnknown(err), parsed));
   }

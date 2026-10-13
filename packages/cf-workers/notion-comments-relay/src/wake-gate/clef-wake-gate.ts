@@ -13,11 +13,9 @@ import type {
   WakeDecisionOutcome,
   WakeGateDecision,
 } from "./gate-event-types.js";
-import { kvTtl } from "../kv-ttl.js";
+import { enqueueGateLogRow } from "../gate-log-ring.js";
 import { runRuleSkipClefShadow } from "./clef-rule-skip-shadow.js";
 
-const CLEF_SHADOW_LOG_KEY = "clef_shadow_log";
-const CLEF_SHADOW_LOG_MAX = 50;
 const DUPLICATE_WINDOW_MS = 60_000;
 
 const pageEventCounts = new Map<string, { ts: number; count: number }>();
@@ -109,30 +107,11 @@ export function opaqueLogItemId(itemId: string): string {
   return `opaque:${hash.toString(16)}`;
 }
 
-function clefRingEnabled(env: Env): boolean {
-  return env.CLEF_RING === "1";
-}
-
 export async function appendClefShadowLog(env: Env, entry: ClefShadowLogEntry): Promise<void> {
   const logged = { ...entry, item_id: opaqueLogItemId(entry.item_id) };
   console.log(JSON.stringify({ stream: "clef_wake_shadow", ...logged }));
-  if (!clefRingEnabled(env)) {
-    return;
-  }
-  try {
-    const raw = await env.RELAY_KV.get(CLEF_SHADOW_LOG_KEY);
-    const hist: ClefShadowLogEntry[] = raw ? (JSON.parse(raw) as ClefShadowLogEntry[]) : [];
-    hist.unshift(logged);
-    await env.RELAY_KV.put(
-      CLEF_SHADOW_LOG_KEY,
-      JSON.stringify(hist.slice(0, CLEF_SHADOW_LOG_MAX)),
-      {
-        expirationTtl: kvTtl(60 * 60 * 24 * 30),
-      },
-    );
-  } catch {
-    // shadow logging must not affect forwarding
-  }
+  // CLEF_RING=1 → batched gate_log ring (no per-event KV write); fail-open inside.
+  await enqueueGateLogRow(env, { stream: "clef_wake_shadow", ...logged });
 }
 
 function baseLogEntry(

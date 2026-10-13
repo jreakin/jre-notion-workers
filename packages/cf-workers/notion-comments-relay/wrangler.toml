@@ -22,6 +22,10 @@ SUBMITTED_PROPERTY_IDS = ";Xo<"
 JOHN_NOTION_USER_IDS = "2e7d872b-594c-8161-92a2-00024b29e816"
 FLEET_COMMENTS_BOT_NOTION_USER_IDS = "3d87d7f5-6298-8165-8af9-0027a153ccbd"
 CLEF_DAILY_CALL_CAP = "2000"
+# Durable gate log: batched KV ring gate_log:v1:* (see README "Gate log KV ring"). <1k KV writes/day budget.
+WAKE_GATE_KV_RING = "1"
+CLEF_RING = "1"
+GATE_LOG_DAILY_WRITE_CAP = "60"
 
 [observability]
 enabled = true

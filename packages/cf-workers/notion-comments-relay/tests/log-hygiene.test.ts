@@ -117,9 +117,8 @@ describe("shadow log hygiene", () => {
       "page.properties_updated",
     );
 
-    const ringRaw = store.get("clef_shadow_log");
-    if (ringRaw) {
-      expect(ringRaw).not.toContain(pageId);
+    for (const [k, v] of store) {
+      if (k.startsWith("gate_log:v1:")) expect(v).not.toContain(pageId);
     }
   });
 });
