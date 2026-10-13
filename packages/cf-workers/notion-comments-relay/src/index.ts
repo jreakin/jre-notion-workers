@@ -13,6 +13,7 @@ import {
 } from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 import { kvTtl } from "./kv-ttl.js";
+import { flushGateLogRing } from "./gate-log-ring.js";
 
 export type { Env } from "./env.js";
 
@@ -674,7 +675,13 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    await flushGateLogRing(env); // stale batch only; fail-open
     try {
+      // KV budget: the 1/min cron used to PUT the flush lock every tick (~1,440 writes/day)
+      // even with nothing buffered. Reads are cheap; only lock + flush when there is work.
+      if ((await readBuffer(env)).length === 0) {
+        return;
+      }
       const flushed = await flushCoalesce(env);
       if (!flushed) {
         await clearCoalesceLock(env);

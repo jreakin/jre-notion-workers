@@ -28,9 +28,8 @@ import type {
   WakeGateDecision,
 } from "./gate-event-types.js";
 import { kvTtl } from "../kv-ttl.js";
+import { enqueueGateLogRow } from "../gate-log-ring.js";
 
-const SHADOW_LOG_KEY = "wake_gate_shadow_log";
-const SHADOW_LOG_MAX = 50;
 const RECENT_PAGE_KEY_PREFIX = "wake_gate_recent_page:";
 const ADOPTED_AT_KEY_PREFIX = "wake_gate_adopted_at:";
 const ADOPTED_AT_DEDUPE_TTL_SECONDS = 60 * 60 * 24 * 90;
@@ -394,17 +393,7 @@ async function markDuplicateIfNeeded(env: Env, ctx: GateEventContext): Promise<v
 export async function appendShadowLog(env: Env, decision: WakeGateDecision): Promise<void> {
   const sanitized = sanitizeDecision(decision);
   console.log(JSON.stringify({ event: "wake_gate_shadow", ...sanitized }));
-  if (env.WAKE_GATE_KV_RING !== "1") {
-    return;
-  }
-  try {
-    const raw = await env.RELAY_KV.get(SHADOW_LOG_KEY);
-    const hist: WakeGateDecision[] = raw ? (JSON.parse(raw) as WakeGateDecision[]) : [];
-    hist.unshift(sanitized);
-    await env.RELAY_KV.put(SHADOW_LOG_KEY, JSON.stringify(hist.slice(0, SHADOW_LOG_MAX)));
-  } catch {
-    // shadow logging must not affect forwarding
-  }
+  await enqueueGateLogRow(env, { stream: "wake_gate_shadow", ...sanitized });
 }
 
 function shadowRunnerErrorDecision(err: unknown): WakeGateDecision {

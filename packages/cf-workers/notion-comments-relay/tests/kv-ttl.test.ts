@@ -55,11 +55,13 @@ describe("kvTtl", () => {
     const origLog = console.log;
     console.log = () => {};
     try {
+      const { flushGateLogRing } = await import("../src/gate-log-ring.js");
       await appendClefShadowLog(env, { item_id: "unknown" } as never);
+      await flushGateLogRing(env, { force: true });
     } finally {
       console.log = origLog;
     }
-    expect(ttls.length).toBe(1);
-    expect(ttls[0]!).toBeGreaterThanOrEqual(KV_MIN_TTL_SECONDS);
+    expect(ttls.length).toBeGreaterThanOrEqual(1);
+    for (const t of ttls) expect(t).toBeGreaterThanOrEqual(KV_MIN_TTL_SECONDS);
   });
 });

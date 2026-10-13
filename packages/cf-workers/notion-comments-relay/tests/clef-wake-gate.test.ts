@@ -1,3 +1,5 @@
+import { flushGateLogRing, resetGateLogRingForTests } from "../src/gate-log-ring.js";
+import { resetSoftDailyCountersForTests } from "../src/soft-daily-counter.js";
 import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
 import {
   aggregateRuleDecision,
@@ -85,12 +87,17 @@ describe("clef KV ring hygiene", () => {
       actually_ran: "coalesce_enqueued",
       reason: "test",
     };
-    await appendClefShadowLog({ ...env(), CLEF_RING: "1" }, entry);
-    const raw = store.get("clef_shadow_log");
+    resetGateLogRingForTests();
+    resetSoftDailyCountersForTests();
+    const e = { ...env(), CLEF_RING: "1" };
+    await appendClefShadowLog(e, entry);
+    await flushGateLogRing(e, { force: true });
+    const key = [...store.keys()].find((k) => k.startsWith("gate_log:v1:"));
+    const raw = key ? store.get(key) : undefined;
     expect(raw).toBeTruthy();
     expect(raw).not.toContain(rawPageId);
-    const parsed = JSON.parse(raw ?? "[]") as ClefShadowLogEntry[];
-    expect(parsed[0]?.item_id).toBe(opaqueLogItemId(rawPageId));
+    const parsed = JSON.parse(raw ?? "{}") as { rows: ClefShadowLogEntry[] };
+    expect(parsed.rows[0]?.item_id).toBe(opaqueLogItemId(rawPageId));
   });
 
   test("CLEF_RING=0 skips KV put", async () => {
@@ -114,6 +121,7 @@ describe("clef KV ring hygiene", () => {
       actually_ran: "coalesce_enqueued",
       reason: "x",
     });
-    expect(store.has("clef_shadow_log")).toBe(false);
+    await flushGateLogRing(e, { force: true });
+    expect([...store.keys()].some((k) => k.startsWith("gate_log:v1:"))).toBe(false);
   });
 });

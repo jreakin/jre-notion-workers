@@ -249,3 +249,29 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `CLEF_RING` | optional | Default off; `1` enables `clef_shadow_log` KV ring |
 
 KV: `wake_gate_adopted_at:<pageId>` (**90-day** TTL) for adopted-change dedupe after a shadow `adopted_change` wake.
+
+
+## Gate log KV ring (durable gate log, v1)
+
+`WAKE_GATE_KV_RING=1` / `CLEF_RING=1` buffer shadow rows in isolate memory and write **one KV value per batch**. This replaces the old per-event read-modify-write keys `wake_gate:ring`, `wake_gate_shadow_log`, and `clef_shadow_log`, which are no longer written. Notion Steward's Gate Log writer reads these keys.
+
+| Item | Value |
+|---|---|
+| Key | `gate_log:v1:<YYYY-MM-DD>:<HH>:<flushId>` (UTC day + UTC hour of the flush; `flushId` = `<isolateId>-<seq>`, unique, never overwritten) |
+| List | `list({ prefix: "gate_log:v1:<YYYY-MM-DD>:" })` per day, or `…:<HH>:` per hour |
+| Value | `{"v":1,"flushed_at":"<ISO>","rows":[GateLogRow, …]}` (≤ 25 rows typical, ≤ 200 max) |
+| TTL | 7 days |
+| Flush | at 25 rows, or when the oldest row is ≥ 15 min old (checked on the next event or cron tick in that isolate) |
+| Budget | `GATE_LOG_DAILY_WRITE_CAP` flush writes/UTC day (default 60) + soft counter `gate_log:writes:<YYYY-MM-DD>` (persisted every 8 flushes, TTL 48h) |
+| Near cap | at ≥ 80% of the cap, only high-signal rows are kept, plus 1 in 4 of the rest (marked `sampled_near_cap: true`). At the cap, rows go to console only |
+
+Every row has `stream`:
+- `clef_wake_shadow`: `ts, gate:"clef_wake", item_id (opaque:<hash>), source, event, rule_decision, clef_decision, p_action, p_dup, q_when, confidence, model, latency_ms, sampled_full, mode, actually_ran, reason`, plus optional `decision:"rule_skip"` and `candidate_false_skip`.
+- `wake_gate_shadow`: the sanitized harness rule decision `gate_name, decision, reason, inputs, ts, mode`.
+- `ad_docs_wake_gate_shadow`: `ts, decision, reason, notion_type`.
+
+**UTC rollover:** day buckets, `<HH>`, and every daily cap/counter (`gate_log:writes:`, `clef:calls:`, `clef:rule_skip_calls:`) roll over at **00:00 UTC = 7 PM CDT (summer) / 6 PM CST (winter)** Central. A Steward run "for today" in the evening Central time must also read the next UTC day's prefix.
+
+**Counter overshoot (bounded, accepted):** daily counters persist every N increments (Clef main N=25, rule-skip N=10, gate log N=8). An isolate evicted before persisting loses at most N−1 counted increments, so actual calls/flushes can exceed a cap by ≤ (N−1) × (isolates evicted that day). Overshoot never adds KV writes beyond the cap's own flushes; it only affects Workers AI call counts slightly.
+
+The ring is best effort: rows still in an isolate's buffer when it is evicted are lost from KV. Workers Logs (console) keeps the complete stream.
