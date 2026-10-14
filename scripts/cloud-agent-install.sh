@@ -6,6 +6,8 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=scripts/gitnexus-env.sh
 . scripts/gitnexus-env.sh
+# shellcheck source=scripts/ensure-node.sh
+. scripts/ensure-node.sh
 
 bun_install() {  # $1 = dir; frozen when a bun.lock exists, plain as fallback
   local d="$1"
@@ -30,7 +32,10 @@ bun_install packages/cf-workers/clef-gate
 #    packages/clef-core has no dependencies; packages/workers is the legacy
 #    mirror with no lockfile (not installed, as before).
 
-# 2. GitNexus (optional). Never fails the Build.
+# 2. Node ^22.18.0 || >=24.11.0 (GitNexus engines). Non-fatal under set -e.
+ensure_node22 || true
+
+# 3. GitNexus (optional). Never fails the Build.
 if ! gitnexus_node_ok; then
   gitnexus_unknown "node $(node --version 2>/dev/null || echo none) does not satisfy ^22.18.0 || >=24.11.0"
   exit 0
