@@ -20,6 +20,13 @@ export const RULE_SKIP_SAMPLE_PERCENT_DEFAULT = 50;
 /** Persist the soft counter every N calls (≈ cap/N KV writes/day). */
 export const RULE_SKIP_COUNTER_PERSIST_EVERY = 10;
 export const RULE_SKIP_COUNTER_NAME = "clef:rule_skip_calls";
+/** Dedupe repeats have their own cap so sampled rule-skip checks can never starve them. */
+export const DEDUPE_REPEAT_DAILY_CAP_DEFAULT = 100;
+export const DEDUPE_REPEAT_COUNTER_NAME = "clef:dedupe_repeat_calls";
+
+export function readDedupeRepeatDailyCap(env: Env): number {
+  return parsePositiveInt(env.CLEF_DEDUPE_REPEAT_DAILY_CAP, DEDUPE_REPEAT_DAILY_CAP_DEFAULT);
+}
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number.parseInt(raw?.trim() ?? "", 10);
@@ -132,12 +139,16 @@ export async function runRuleSkipClefShadow(
     }
     const cap = await trySoftDailyConsume(
       env.RELAY_KV,
-      RULE_SKIP_COUNTER_NAME,
-      readRuleSkipDailyCap(env),
+      deps.scoreAll ? DEDUPE_REPEAT_COUNTER_NAME : RULE_SKIP_COUNTER_NAME,
+      deps.scoreAll ? readDedupeRepeatDailyCap(env) : readRuleSkipDailyCap(env),
       RULE_SKIP_COUNTER_PERSIST_EVERY,
     );
     if (!cap.ok) {
-      await deps.log({ ...row, scored: false, reason: "rule_skip_daily_cap" });
+      await deps.log(
+        deps.scoreAll
+          ? { ...row, scored: false, cap_exhausted: true, reason: "dedupe_repeat_daily_cap" }
+          : { ...row, scored: false, reason: "rule_skip_daily_cap" },
+      );
       return;
     }
 

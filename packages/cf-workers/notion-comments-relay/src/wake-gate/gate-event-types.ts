@@ -62,6 +62,8 @@ export type ClefShadowLogEntry = {
   scored?: boolean;
   /** rule_skip rows: excluded by policy (jre@mail.grokbot.com); never scored, never counted as unscored. */
   excluded?: boolean;
+  /** rule_skip rows for dedupe repeats: unscored because the dedupe-repeat daily cap was exhausted. */
+  cap_exhausted?: boolean;
 };
 
 export type FleetLocksFieldSnapshot = {

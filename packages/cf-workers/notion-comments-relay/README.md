@@ -288,7 +288,10 @@ mentions…) and before mode/cap/Clef. An event is a repeat when its dedupe key 
   both set**. Until then, page events are never deduped.
 - A repeat logs `clef_decision:"would_skip"`, `reason:"dedupe_repeat_item"`, `dedupe_repeat:true`,
   `item_event_count`, and `saved_wake:true`. It makes no wake-path Clef call. **Every** repeat (100%, bypassing the
-  rule-skip sampler, still capped) then goes through the false-skip check. That adds a `decision:"rule_skip"` row with
+  rule-skip sampler) then goes through the false-skip check. Repeats have their **own** daily cap,
+`CLEF_DEDUPE_REPEAT_DAILY_CAP` (default 100, counter `clef:dedupe_repeat_calls`), so sampled rule-skip checks
+can't starve them. When that cap is exhausted, the check row logs `reason:"dedupe_repeat_daily_cap"`,
+`cap_exhausted:true` and `scored:false`. That adds a `decision:"rule_skip"` row with
   `dedupe_repeat:true`, `scored:true|false` and `candidate_false_skip`. A cap hit, Clef error or mode-off logs
   `scored:false`; excluded mail logs `excluded:true`.
 - Grading: report `saved_wake` rows separately from rule skips. Group them by `item_id` to count saved wakes per item.
@@ -299,7 +302,14 @@ mentions…) and before mode/cap/Clef. An event is a repeat when its dedupe key 
 rows. It reports per-UTC-day wake-path Clef calls, errors and error rate, plus rule skips and dedupe repeats, each
 split into scored and unscored, plus false skips and saved wakes per `item_id`. The window **fails** on any scored
 false skip (`candidate_false_skip`), on **any unscored dedupe repeat**, on any day with Clef error rate
-> `RELAY_ERROR_RATE_MAX` = 2%, or on any `clef_ai_unbound`. Rule skips are sampled, so unscored rule skips are
+> `RELAY_ERROR_RATE_MAX` = 2%, or on any `clef_ai_unbound` / `clef_gateway_unset` row, whether on the wake path
+or a check row (`config_error`). Unscored repeats fail with `unscored_dedupe_repeat_cap` when the repeat cap ran out
+(a capacity problem: raise the cap). Otherwise they fail with `unscored_dedupe_repeat` (Clef error, mode off,
+missing row).
+
+**Runbook: mode-off days fail the window.** With `clef:mode:*` = `off`, no Clef calls are made. Every dedupe
+repeat logs `rule_skip:mode_off` / `scored:false`, so the window fails `unscored_dedupe_repeat`. An off day is
+unmeasured: after mode returns to shadow, restart the 14-day window rather than skipping the off day. Rule skips are sampled, so unscored rule skips are
 reported but don't fail the window. "Zero false skips" for rule skips therefore means zero among the scored ones;
 always quote `rule_skips_scored`/`rule_skips` with a pass.
 
@@ -322,6 +332,7 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `SUBMITTED_PROPERTY_IDS` | optional | Submitted-property safety uses env/secret only when set (e.g. `;Xo<` in committed vars) |
 | `NON_SUBMITTED_PROPERTY_IDS` | optional | Falls back to built-in Fleet Locks non-Submitted property id list |
 | `NEEDS_JOHN_PROPERTY_IDS` | optional | Needs John property ids. With `SUBMITTED_PROPERTY_IDS` also set, enables the properties_updated change rule below; unset ⇒ inert |
+| `CLEF_DEDUPE_REPEAT_DAILY_CAP` | optional | Daily cap for false-skip checks of dedupe repeats (default `100`), separate from `CLEF_RULE_SKIP_DAILY_CAP` |
 | `CLEF_ITEM_DEDUPE_WINDOW_S` | optional | Pre-Clef dedupe window in seconds (default `600`; `0` disables). Comments key on comment id; page events dedupe only once both id sets are set |
 | `JOHN_NOTION_USER_IDS`, `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | recommended | Clef shadow overrides `john_ids_unset` / `bot_ids_unset` (wake, no model) |
 | `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP` | Clef shadow | Clef mode/cap from defaults |

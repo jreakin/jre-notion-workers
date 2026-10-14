@@ -72,15 +72,40 @@ describe("dedupe repeats are scored 100%", () => {
     expect([g.dedupe_repeats, g.dedupe_repeats_scored, g.dedupe_repeats_unscored]).toEqual([2, 2, 0]);
     expect(g.pass).toBe(true);
   });
-  test("cap reached → repeat logged scored:false and the window fails unscored_dedupe_repeat", async () => {
-    const e = env({ CLEF_RULE_SKIP_DAILY_CAP: "0" }, "skip");
+  test("dedupe-repeat cap exhausted → scored:false, cap_exhausted, distinct fail reason", async () => {
+    const e = env({ CLEF_DEDUPE_REPEAT_DAILY_CAP: "0" }, "skip");
     await runClefShadowWakeGate(e, ctx(), "comment.created", body, true, wake);
     await runClefShadowWakeGate(e, ctx(), "comment.created", body, true, wake);
     const check = rows().find((r) => r.decision === "rule_skip");
-    expect(check?.scored).toBe(false);
+    expect([check?.scored, check?.cap_exhausted, check?.reason]).toEqual([false, true, "dedupe_repeat_daily_cap"]);
     const g = gradeRelayWindow(rows());
-    expect(g.dedupe_repeats_unscored).toBe(1);
-    expect(g.fail_reasons).toContain("unscored_dedupe_repeat");
+    expect([g.dedupe_repeats_unscored, g.dedupe_repeats_unscored_cap]).toEqual([1, 1]);
+    expect(g.fail_reasons).toEqual(["unscored_dedupe_repeat_cap"]);
+  });
+  test("rule skips exhaust THEIR cap first; a later repeat is still scored (own cap)", async () => {
+    const e = env({ CLEF_RULE_SKIP_DAILY_CAP: "2", CLEF_RULE_SKIP_SAMPLE_PERCENT: "100" }, "skip");
+    const botEcho = (i: number) =>
+      ctx("comment.created", { authorId: BOT, webhookAuthorIds: [BOT], commentId: `dddddddddddddddddddddddddddddd0${i}` });
+    const skipDecision: WakeGateDecision[] = [
+      { gate_name: "notion_comments_echo_drop", decision: "would_skip", reason: "fleet_comments_bot_echo", inputs: {}, ts: "", mode: "shadow" },
+    ];
+    for (let i = 0; i < 4; i++) await runClefShadowWakeGate(e, botEcho(i), "comment.created", body, true, skipDecision);
+    expect(rows().filter((r) => r.reason === "rule_skip_daily_cap").length).toBe(2);
+    await runClefShadowWakeGate(e, ctx(), "comment.created", body, true, wake);
+    await runClefShadowWakeGate(e, ctx(), "comment.created", body, true, wake);
+    const repeatCheck = rows().find((r) => r.decision === "rule_skip" && r.dedupe_repeat === true);
+    expect(repeatCheck?.scored).toBe(true);
+    const g = gradeRelayWindow(rows());
+    expect(g.dedupe_repeats_unscored).toBe(0);
+    expect(g.rule_skips_unscored).toBe(2);
+    expect(g.pass).toBe(true);
+  });
+  test("mode-off day: repeat logged rule_skip:mode_off scored:false → window fails (unmeasured)", async () => {
+    const e = env({ CLEF_DEFAULT_MODE: "off" }, "skip");
+    await runClefShadowWakeGate(e, ctx(), "comment.created", body, true, wake);
+    await runClefShadowWakeGate(e, ctx(), "comment.created", body, true, wake);
+    expect(rows().find((r) => r.decision === "rule_skip")?.reason).toBe("rule_skip:mode_off");
+    expect(gradeRelayWindow(rows()).fail_reasons).toEqual(["unscored_dedupe_repeat"]);
   });
   test("scored repeat where Clef says wake → false skip fails the window", async () => {
     const e = env({}, "wake");
@@ -114,6 +139,15 @@ describe("gradeRelayWindow", () => {
     expect(g1.pass).toBe(true);
     const g2 = gradeRelayWindow([...Array.from({ length: 30 }, () => ({ ...ok(), reason: "clef_ok;clef_mode_x" })), err("clef_timeout")]);
     expect(g2.fail_reasons).toEqual(["error_rate_over_threshold"]);
+  });
+  test("gateway-unset fails as config_error on the wake path and on check rows", () => {
+    const g = gradeRelayWindow([...Array.from({ length: 500 }, () => ok()), err("clef_gateway_unset")]);
+    expect(g.fail_reasons).toContain("config_error");
+    expect(g.days[0]?.clef_errors).toBe(1);
+    const chk = { stream: "clef_wake_shadow", decision: "rule_skip", reason: "rule_skip:clef_gateway_unset", scored: false };
+    expect(gradeRelayWindow([chk]).fail_reasons).toEqual(["config_error"]);
+    const chk2 = { ...chk, reason: "rule_skip:clef_ai_unbound" };
+    expect(gradeRelayWindow([chk2]).ai_unbound).toBe(1);
   });
   test("any clef_ai_unbound fails", () => {
     expect(gradeRelayWindow([...Array.from({ length: 500 }, () => ok()), err("clef_ai_unbound")]).fail_reasons).toContain("config_error");

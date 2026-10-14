@@ -14,13 +14,19 @@
  * - any scored skip (rule skip or dedupe repeat) has `candidate_false_skip:true`;
  * - any dedupe repeat is unscored (repeats are scored 100%; cap/error/mode-off leaves them unscored);
  * - any day's wake-path Clef error rate is above ERROR_RATE_MAX (2%);
- * - any `clef_ai_unbound` row (Clef was never reachable).
+ * - any `clef_ai_unbound` / `clef_gateway_unset` row, wake path or false-skip check (Clef unreachable)
+ *   → `config_error`;
+ * - unscored repeats → `unscored_dedupe_repeat_cap` when the dedupe-repeat cap ran out (capacity), else
+ *   `unscored_dedupe_repeat` (error / mode off / missing row).
+ * Mode-off days fail too (repeats log `rule_skip:mode_off`, scored:false): an off day is unmeasured.
  * Rule skips are SAMPLED (CLEF_RULE_SKIP_SAMPLE_PERCENT, daily cap): unsampled rule skips are reported
  * as `rule_skips_unscored` but do not fail the window, so "zero false skips" for rule skips means
  * zero among the scored ones. State that coverage alongside any pass.
  */
 export const RELAY_ERROR_RATE_MAX = 0.02;
-const ERROR_RE = /^(clef_error:|clef_timeout$|clef_bad_output$|clef_ai_unbound$)/;
+const ERROR_RE = /^(clef_error:|clef_timeout$|clef_bad_output$|clef_ai_unbound$|clef_gateway_unset$)/;
+/** Clef never reachable: any such row (wake path or false-skip check) fails the window. */
+export const RELAY_CONFIG_ERRORS: ReadonlySet<string> = new Set(["clef_ai_unbound", "clef_gateway_unset"]);
 
 type Row = Record<string, unknown>;
 
@@ -42,10 +48,13 @@ export type RelayGrade = {
   dedupe_repeats: number;
   dedupe_repeats_scored: number;
   dedupe_repeats_unscored: number;
+  /** Of the unscored repeats, how many were due to the dedupe-repeat daily cap. */
+  dedupe_repeats_unscored_cap: number;
   /** Scored skips (rule or dedupe) where Clef said would_wake. */
   false_skips: number;
   /** saved_wake rows grouped by opaque item_id. */
   saved_wakes_by_item: Record<string, number>;
+  /** Config-error rows (clef_ai_unbound / clef_gateway_unset), wake path or false-skip check. */
   ai_unbound: number;
 };
 
@@ -58,6 +67,7 @@ export function gradeRelayWindow(rows: Row[], errorRateMax = RELAY_ERROR_RATE_MA
   let dedupe = 0;
   let dedupeScored = 0;
   let dedupeExcluded = 0;
+  let dedupeCapUnscored = 0;
   let falseSkips = 0;
   let aiUnbound = 0;
   const saved: Record<string, number> = {};
@@ -65,10 +75,12 @@ export function gradeRelayWindow(rows: Row[], errorRateMax = RELAY_ERROR_RATE_MA
     if (r.stream !== undefined && r.stream !== "clef_wake_shadow") continue;
     const reason = str(r.reason);
     if (r.decision === "rule_skip") {
+      if (RELAY_CONFIG_ERRORS.has(reason.replace(/^rule_skip:/, ""))) aiUnbound += 1;
       const scored = r.scored === true || reason === "rule_skip:clef_ok";
       if (r.dedupe_repeat === true) {
         if (r.excluded === true) dedupeExcluded += 1;
         else if (scored) dedupeScored += 1;
+        else if (r.cap_exhausted === true || reason === "dedupe_repeat_daily_cap") dedupeCapUnscored += 1;
       } else if (scored) {
         ruleScored += 1;
       }
@@ -85,7 +97,7 @@ export function gradeRelayWindow(rows: Row[], errorRateMax = RELAY_ERROR_RATE_MA
       ruleSkips += 1;
       continue;
     }
-    if (reason === "clef_ai_unbound") aiUnbound += 1;
+    if (RELAY_CONFIG_ERRORS.has(reason.split(";")[0] ?? "")) aiUnbound += 1;
     // Wake-path Clef attempts: clef_ok (possibly with ";mode" suffix) or a Clef failure reason.
     const base = reason.split(";")[0] ?? "";
     if (base === "clef_ok" || ERROR_RE.test(base)) {
@@ -103,9 +115,12 @@ export function gradeRelayWindow(rows: Row[], errorRateMax = RELAY_ERROR_RATE_MA
       return { day, clef_calls: v.calls, clef_errors: v.errors, error_rate: rate, over_threshold: rate > errorRateMax };
     });
   const dedupeUnscored = Math.max(0, dedupe - dedupeScored - dedupeExcluded);
+  const capUnscored = Math.min(dedupeCapUnscored, dedupeUnscored);
   const fail: string[] = [];
   if (falseSkips > 0) fail.push("false_skip");
-  if (dedupeUnscored > 0) fail.push("unscored_dedupe_repeat");
+  // Cap exhaustion is a capacity problem, not a gate-quality one: its own reason.
+  if (capUnscored > 0) fail.push("unscored_dedupe_repeat_cap");
+  if (dedupeUnscored - capUnscored > 0) fail.push("unscored_dedupe_repeat");
   if (dayList.some((d) => d.over_threshold)) fail.push("error_rate_over_threshold");
   if (aiUnbound > 0) fail.push("config_error");
   return {
@@ -118,6 +133,7 @@ export function gradeRelayWindow(rows: Row[], errorRateMax = RELAY_ERROR_RATE_MA
     dedupe_repeats: dedupe,
     dedupe_repeats_scored: dedupeScored,
     dedupe_repeats_unscored: dedupeUnscored,
+    dedupe_repeats_unscored_cap: capUnscored,
     false_skips: falseSkips,
     saved_wakes_by_item: saved,
     ai_unbound: aiUnbound,
