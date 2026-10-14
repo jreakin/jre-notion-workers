@@ -11,6 +11,7 @@ import {
   readNoul,
   readScore,
   runClefModel,
+  CLEF_CALL_TIMEOUT_MS,
   type AiRunBinding,
 } from "../../../clef-core/src/index.js";
 import { LANES, type EmailShadowItem, type Lane } from "./payload.js";
@@ -53,7 +54,12 @@ export const EMAIL_THRESHOLDS = {
 
 export const FLASH_SAMPLE_MOD = 10;
 
-export type ShadowLabel = "escalate" | "fyi" | "would_skip";
+/**
+ * `error`: Clef could not produce a verdict (gateway/AI error, timeout, bad output, unbound, cap store
+ * unavailable) after retries + fallback. It is its own category: never graded as a wake or a skip.
+ * (If a live mode is ever added, `error` must fail open to escalate.)
+ */
+export type ShadowLabel = "escalate" | "fyi" | "would_skip" | "error";
 
 export type ParsedEmailRun = {
   p_person: number;
@@ -125,31 +131,154 @@ export function buildEmailState(item: EmailShadowItem): string {
   return (head + item.snippet.slice(0, room)).slice(0, CLEF_STATE_MAX_CHARS);
 }
 
-export type EmailClefCall =
-  | { ok: true; parsed: ParsedEmailRun; latency_ms: number; model: string }
-  | { ok: false; reason: string; latency_ms: number; model: string };
+type CallMeta = {
+  latency_ms: number;
+  model: string;
+  attempts: number;
+  fallback: boolean;
+  /** Why retries/fallback stopped early (clef_budget_exhausted, clef_daily_cap, …); null otherwise. */
+  stopped?: string | null;
+};
+export type EmailClefCall = ({ ok: true; parsed: ParsedEmailRun } | { ok: false; reason: string }) & CallMeta;
 
+/** Transient failures worth a retry: AI Gateway / Workers AI errors and timeouts (not config or bad output). */
+export function isTransientClefReason(reason: string): boolean {
+  return reason === "clef_timeout" || reason.startsWith("clef_error:");
+}
+
+/** Backoff before retry n (1-based) of the same model. Small: this runs in waitUntil after the 202. */
+export const CLEF_RETRY_BACKOFF_MS = [250, 750] as const;
+/**
+ * Total wall-clock budget for ALL Clef work of one email (retries, fallback, flash side-by-side),
+ * well under the 30 s waitUntil limit. Each call's timeout is clipped to what is left.
+ */
+export const CLEF_COMPLETION_BUDGET_MS = 15_000;
+/** Don't start a call with less than this left (it would just time out). */
+export const CLEF_MIN_CALL_MS = 500;
+
+export type Sleep = (ms: number) => Promise<void>;
+const realSleep: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export type InvokeOpts = {
+  /** Try clef-flash once when the full model still fails transiently. */
+  fallbackToFlash?: boolean;
+  sleep?: Sleep;
+  backoffMs?: readonly number[];
+  /** Clock (ms) for the budget; default Date.now. */
+  now?: () => number;
+  /** Absolute deadline (same clock as `now`); default now + CLEF_COMPLETION_BUDGET_MS. */
+  deadline?: number;
+  /**
+   * Called before every call AFTER the first (retries + fallback) to take one more daily-cap unit,
+   * so the cap counts real model calls. Returns a reason to stop (e.g. "clef_daily_cap") or null.
+   */
+  consumeExtra?: () => Promise<string | null>;
+};
+
+async function invokeOnce(
+  ai: AiRunBinding,
+  gatewayId: string,
+  variant: "full" | "flash",
+  state: string,
+  timeoutMs: number,
+): Promise<{ ok: true; parsed: ParsedEmailRun } | { ok: false; reason: string }> {
+  const slug = variant === "full" ? CLEF_FULL_MODEL : CLEF_FLASH_MODEL;
+  const name = variant === "full" ? CLEF_FULL_MODEL_NAME : CLEF_FLASH_MODEL_NAME;
+  try {
+    // Email state carries masked subject/snippet: never let AI Gateway log or cache it.
+    const gateway = { id: gatewayId, collectLog: false, skipCache: true };
+    const raw = await runClefModel(ai, gateway, slug, name, state, EMAIL_QUESTIONS, timeoutMs);
+    const parsed = parseEmailClefResponse(raw);
+    return parsed ? { ok: true, parsed } : { ok: false, reason: "clef_bad_output" };
+  } catch (err) {
+    return { ok: false, reason: clefErrorReason(err) };
+  }
+}
+
+/**
+ * Call Clef `variant`. On a transient failure retry the same model with backoff; when `fallbackToFlash`
+ * and the full model still fails transiently, try clef-flash once. Everything stays inside `deadline`
+ * (per-call timeout clipped to the time left; no call starts with < CLEF_MIN_CALL_MS left →
+ * `clef_budget_exhausted`). Every extra call takes a cap unit via `consumeExtra`.
+ * `reason` on failure is the LAST stop reason; `attempts` counts every model call made.
+ */
 export async function invokeEmailClef(
   ai: AiRunBinding | undefined,
   gatewayId: string | undefined,
   variant: "full" | "flash",
   state: string,
+  opts: InvokeOpts = {},
 ): Promise<EmailClefCall> {
-  const slug = variant === "full" ? CLEF_FULL_MODEL : CLEF_FLASH_MODEL;
   const name = variant === "full" ? CLEF_FULL_MODEL_NAME : CLEF_FLASH_MODEL_NAME;
-  const started = Date.now();
-  if (!ai) return { ok: false, reason: "clef_ai_unbound", latency_ms: 0, model: name };
+  const now = opts.now ?? Date.now;
+  const started = now();
+  const deadline = opts.deadline ?? started + CLEF_COMPLETION_BUDGET_MS;
+  if (!ai) return { ok: false, reason: "clef_ai_unbound", latency_ms: 0, model: name, attempts: 0, fallback: false };
   // Fail closed: without the gateway there is no rate limit and no gateway no-log guarantee.
-  if (!gatewayId?.trim()) return { ok: false, reason: "clef_gateway_unset", latency_ms: 0, model: name };
-  try {
-    // Email state carries masked subject/snippet: never let AI Gateway log or cache it.
-    const gateway = { id: gatewayId.trim(), collectLog: false, skipCache: true };
-    const raw = await runClefModel(ai, gateway, slug, name, state, EMAIL_QUESTIONS);
-    const parsed = parseEmailClefResponse(raw);
-    const latency_ms = Date.now() - started;
-    if (!parsed) return { ok: false, reason: "clef_bad_output", latency_ms, model: name };
-    return { ok: true, parsed, latency_ms, model: name };
-  } catch (err) {
-    return { ok: false, reason: clefErrorReason(err), latency_ms: Date.now() - started, model: name };
+  if (!gatewayId?.trim()) {
+    return { ok: false, reason: "clef_gateway_unset", latency_ms: 0, model: name, attempts: 0, fallback: false };
   }
+  const gw = gatewayId.trim();
+  const sleep = opts.sleep ?? realSleep;
+  const backoff = opts.backoffMs ?? CLEF_RETRY_BACKOFF_MS;
+  let attempts = 0;
+  let model = name;
+  let fallback = false;
+  let stopped: string | null = null;
+  let last: { ok: true; parsed: ParsedEmailRun } | { ok: false; reason: string } = {
+    ok: false,
+    reason: "clef_budget_exhausted",
+  };
+
+  /** One call if budget (and, for extra calls, cap) allows; false = stop. */
+  const tryCall = async (v: "full" | "flash", waitMs: number): Promise<boolean> => {
+    if (attempts > 0) {
+      // Stopping early keeps the last real failure reason (e.g. clef_error:AiGatewayError) on the row.
+      if (deadline - now() - waitMs < CLEF_MIN_CALL_MS) {
+        stopped = "clef_budget_exhausted";
+        return false;
+      }
+      const stop = opts.consumeExtra ? await opts.consumeExtra() : null;
+      if (stop) {
+        stopped = stop;
+        return false;
+      }
+      if (waitMs > 0) await sleep(waitMs);
+    }
+    const left = deadline - now();
+    if (left < CLEF_MIN_CALL_MS) {
+      if (attempts === 0) last = { ok: false, reason: "clef_budget_exhausted" };
+      stopped = "clef_budget_exhausted";
+      return false;
+    }
+    attempts++;
+    model = v === "full" ? CLEF_FULL_MODEL_NAME : CLEF_FLASH_MODEL_NAME;
+    last = await invokeOnce(ai, gw, v, state, Math.min(CLEF_CALL_TIMEOUT_MS, left));
+    return true;
+  };
+
+  const failedTransient = () => {
+    const r = last as { ok: boolean; reason?: string };
+    return !r.ok && isTransientClefReason(r.reason ?? "");
+  };
+  for (let i = 0; i <= backoff.length; i++) {
+    if (!(await tryCall(variant, i > 0 ? (backoff[i - 1] ?? 0) : 0))) break;
+    if (!failedTransient()) break;
+  }
+  if (failedTransient() && variant === "full" && opts.fallbackToFlash && isTransientClefReason(last.reason)) {
+    fallback = await tryCall("flash", 0);
+  }
+  const latency_ms = now() - started;
+  // `last` is reassigned inside tryCall; re-widen it (TS narrows the closure-mutated let to its initializer).
+  const res = last as { ok: true; parsed: ParsedEmailRun } | { ok: false; reason: string };
+  if (res.ok) return { ok: true, parsed: res.parsed, latency_ms, model, attempts, fallback, stopped };
+  return { ok: false, reason: res.reason, latency_ms, model, attempts, fallback, stopped };
+}
+
+/**
+ * Guard for any future live mode: a label that would act on mail. `error` (no verdict) fails open to
+ * `escalate`; nothing else changes. Shadow grading keeps `error` as its own category.
+ */
+export function liveActionLabel(label: ShadowLabel): Exclude<ShadowLabel, "error"> {
+  return label === "error" ? "escalate" : label;
 }

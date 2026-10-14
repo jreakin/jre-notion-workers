@@ -48,6 +48,14 @@ export interface Env {
   FLEET_COMMENTS_BOT_NOTION_USER_IDS?: string;
   /** Comma-separated opaque property ids for Submitted — never would_skip updates touching these. */
   SUBMITTED_PROPERTY_IDS?: string;
+  /**
+   * Comma-separated property ids for "Needs John". Shadow rule: when this AND SUBMITTED_PROPERTY_IDS are
+   * set, a page.properties_updated whose updated ids touch neither set is would_skip
+   * (`no_submitted_or_needs_john_change`). Unset ⇒ rule inert (old behavior).
+   */
+  NEEDS_JOHN_PROPERTY_IDS?: string;
+  /** Seconds a repeat event for the same item+event type is deduped before Clef (default 600; 0 = off). */
+  CLEF_ITEM_DEDUPE_WINDOW_S?: string;
   /** Set to `1` to append truncated decisions to KV ring buffer (default off). */
   WAKE_GATE_KV_RING?: string;
   /** Set to `1` to persist page dedupe keys in KV (default off; each put counts toward RELAY_KV quota). */

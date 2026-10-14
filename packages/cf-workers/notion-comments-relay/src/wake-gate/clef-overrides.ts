@@ -1,7 +1,7 @@
 import { adoptedChangeGateName } from "./adopted-change-gate.js";
 import { idInNotionIdSet } from "./notion-ids.js";
 import { FLEET_LOCKS_STATUS_ADOPTED } from "./fleet-locks-properties.js";
-import { isJohn, isTruthyFlag, submittedPropertyChanged } from "./gate-context-safety.js";
+import { isJohn, isTruthyFlag, needsJohnPropertyChanged, submittedPropertyChanged } from "./gate-context-safety.js";
 import type { GateEventContext, WakeGateDecision } from "./gate-event-types.js";
 
 const IRREVERSIBLE_KEYWORD = /\b(send|pay|delete|publish|merge)\b/i;
@@ -192,6 +192,9 @@ export function clefHardOverrideReason(
   }
   if (submittedPropertyChanged(ctx)) {
     return "submitted_changed";
+  }
+  if (needsJohnPropertyChanged(ctx)) {
+    return "needs_john_changed";
   }
   const adopted = ruleDecisions.find((d) => d.gate_name === adoptedChangeGateName);
   if (adopted?.decision === "would_wake" && adopted.reason === "adopted_change") {

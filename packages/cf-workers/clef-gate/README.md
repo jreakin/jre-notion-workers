@@ -11,6 +11,23 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   - `200 {"logged":false,"reason":"excluded"}` — grokbot exclusion: counter bump + masked `event:"excluded"` log, no row.
   - `400` invalid payload / JSON / unreadable body · `413` body over the read cap (logged `event:"rejected"`, `payload_too_large`) · `500` KV write failed (masked `event:"store_failed"`, `kv_put_failed`; background crash logs `clef_completion_failed`). Retries are idempotent (row keyed by `msg_id_hash`).
 - `POST /clef/email-shadow/outcome` — `{msg_id_hash, disposition, escalated?, source?: "trainspam_rescue"}`. Last write wins.
+  `202 {"logged":true,"matched":true|false}`; `matched:false` means no decision row exists for that hash (wrong
+  message id / salt, or the decision post never landed): the outcome is stored but cannot be graded until one does.
+  Day-1 data: 454 decisions vs 7 outcome posts, 0 rejected. The Worker accepted every outcome it got; Inbox Triage
+  simply was not posting one per email. Contract: see "Outcome posting contract" below.
+
+### Outcome posting contract (Inbox Triage)
+1. For **every** email it posted a decision for, Inbox Triage posts exactly one outcome **at the end of the same
+   run, after the disposition is applied** (labels set / archived / spam / handed off / escalated):
+   `clef-email-shadow outcome --message-id <same Gmail message id used for post> --disposition <final>
+   [--escalated true|false]`. Same message id + same salt ⇒ same `msg_id_hash`.
+2. `disposition` is the **final applied** action, one of `spam | archive_fyi | escalate_john | handoff_lane | leave`
+   (not the planned one). `--escalated true` whenever John was told about it (chat/brief), even if archived.
+3. Later corrections post again (last write wins): John rescues from TrainSpam / spam ⇒
+   `--disposition escalate_john --source trainspam_rescue`; John archives something escalated ⇒ `archive_fyi`.
+4. Never post for mail that was not posted as a decision, nor for `jre@mail.grokbot.com` (excluded).
+5. On `matched:false`, re-check the message id (not thread id) and that the decision post returned 202. On 5xx the
+   helper retries once; never block triage on it. No subject/sender/content in the outcome, ever.
 
 ## Behavior
 - Defensive re-mask of subject (140) / snippet (400): emails, URLs, phones, digit runs ≥ 6. Body > 8 KB dropped.
@@ -28,6 +45,25 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   called (`error_reason:"clef_gateway_unset"`), so the gateway rate limit and no-log layer can't be bypassed.
 - One Clef call (`@cf/cloudflare/clef`) with six questions; deterministic 10% `@cf/cloudflare/clef-flash` side-by-side
   (last 8 hex of msg_id_hash mod 10 = 0). Gateway `clef-shadow-gate`.
+- **Retry + fallback, inside one total budget:** a transient Clef failure (`clef_error:*` such as `AiGatewayError`/`AiError`,
+  or `clef_timeout`) is retried on the same model after 250 ms and 750 ms (3 calls), then `@cf/cloudflare/clef-flash` is
+  tried once. All Clef work for one email (retries, fallback, and the 10% flash side-by-side) shares a
+  **`CLEF_COMPLETION_BUDGET_MS` = 15 s** budget, well under the 30 s `waitUntil` limit. Each call's timeout is clipped to
+  the time left, and no call starts with < 500 ms left. When the budget or the cap stops a retry early, the row keeps the
+  last real failure in `error_reason` and logs `clef_stopped` (`clef_budget_exhausted` / `clef_daily_cap`).
+  The side-by-side flash is **one call, never retried**, and runs only if a full call's time (3 s) is left. It is
+  skipped when the verdict already came from the flash fallback.
+  **Cap:** every real model call (first try, each retry, the fallback, and the side-by-side) takes one unit of
+  `CLEF_EMAIL_DAILY_CALL_CAP`, so the cap counts real calls. Rows log `clef_attempts` and `clef_fallback`.
+  Bad output and config errors (`clef_gateway_unset`, `clef_ai_unbound`) are not retried.
+- **`shadow_label:"error"`:** no verdict (retries/fallback exhausted, bad output, gateway unset, AI unbound, cap store
+  unreadable/invalid). It is its own category: `agree`/`false_skip`/`false_wake` stay `null`. A reached daily cap stays
+  `escalate` (policy). Live guard in code: `liveActionLabel("error") === "escalate"`.
+- **Grading (`src/grade.ts` `gradeWindow(joinedRows)`)** is the 14-day window grader. It uses rows from `gradeFromKv` only.
+  It reports per-day `decided`/`errors`/`error_rate`. The window **fails** on any `false_skip`, on any day with error
+  rate > **`ERROR_RATE_MAX` = 2%**, or on **any** `clef_gateway_unset` / `clef_ai_unbound` row. Error rows whose
+  triage acted (`escalate_john`, `handoff_lane`, escalated, TrainSpam rescue) are listed in `unmeasured_wakes`
+  (msg_id_hash only): real wakes Clef never scored.
 - Derived `shadow_label`: escalate if p_person ≥ .5 / p_money_sec ≥ .3 / p_calendar ≥ .5 / lane ≠ none; would_skip if
   p_bulk ≥ .9 and p_person ≤ .05 and p_money_sec ≤ .05; else fyi. Error/timeout/bad output ⇒ escalate.
 - Join flags (computed by `gradeJoined`) vs Inbox Triage disposition: `agree`, `false_skip` (would_skip but escalated/handoff/TrainSpam rescue),

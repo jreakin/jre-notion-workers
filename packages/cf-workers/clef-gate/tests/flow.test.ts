@@ -6,6 +6,12 @@ import { parseEmailShadowBody } from "../src/payload.js";
 import { answers, captureLogs, HASH_FLASH, HASH_NOFLASH, makeEnv, payload, SECRET_SNIPPET, SECRET_SUBJECT } from "./helpers.js";
 
 let cap: ReturnType<typeof captureLogs> | null = null;
+const NO_WAIT = { sleep: async () => {} };
+function gwErr(): Error {
+  const e = new Error("gateway 502");
+  e.name = "AiGatewayError";
+  return e;
+}
 afterEach(() => { cap?.restore(); cap = null; });
 
 function noSecretsIn(lines: string[]) {
@@ -97,14 +103,70 @@ describe("flow", () => {
     const e = await processEmailShadow(env, JSON.stringify(payload()));
     expect(calls.length).toBe(0);
     expect(e?.error_reason).toBe("clef_gateway_unset");
-    expect(e?.shadow_label).toBe("escalate");
+    expect(e?.shadow_label).toBe("error");
   });
-  test("AI error / bad output → escalate with reason", async () => {
+  test("bad output → error label (not a wake), no retry, ungraded", async () => {
     cap = captureLogs();
-    const { env } = makeEnv({ answers: {} });
-    const e = await processEmailShadow(env, JSON.stringify(payload()));
+    const { env, calls } = makeEnv({ answers: {} });
+    const e = await processEmailShadow(env, JSON.stringify(payload()), NO_WAIT);
     expect(e?.error_reason).toBe("clef_bad_output");
-    expect(e?.shadow_label).toBe("escalate");
+    expect(e?.shadow_label).toBe("error");
+    expect(calls.length).toBe(1);
+    expect(e?.clef_attempts).toBe(1);
+    expect(e?.agree).toBeNull();
+    expect(e?.false_wake).toBeNull();
+    expect(e?.false_skip).toBeNull();
+  });
+  test("AiGatewayError is retried with backoff and recovers on the same model", async () => {
+    cap = captureLogs();
+    const { env, calls } = makeEnv();
+    const slept: number[] = [];
+    let n = 0;
+    const orig = env.AI.run;
+    (env.AI as { run: unknown }).run = async (...a: unknown[]) => {
+      if (n++ < 2) throw gwErr();
+      return (orig as (...x: unknown[]) => unknown)(...a);
+    };
+    const e = await processEmailShadow(env, JSON.stringify(payload()), { sleep: async (ms) => { slept.push(ms); } });
+    expect(slept).toEqual([250, 750]);
+    expect(e?.clef_attempts).toBe(3);
+    expect(e?.clef_fallback).toBe(false);
+    expect(e?.model).toBe("clef");
+    expect(e?.error_reason).toBeNull();
+    expect(e?.shadow_label).toBe("would_skip");
+    expect(calls.every((c) => c.slug === "@cf/cloudflare/clef")).toBe(true);
+  });
+  test("full model keeps failing → one clef-flash fallback supplies the verdict; no flash side-by-side", async () => {
+    cap = captureLogs();
+    const { env, calls } = makeEnv();
+    const orig = env.AI.run as (...x: unknown[]) => unknown;
+    (env.AI as { run: unknown }).run = async (slug: string, ...rest: unknown[]) => {
+      if (slug === "@cf/cloudflare/clef") throw gwErr();
+      return orig(slug, ...rest);
+    };
+    const e = await processEmailShadow(env, JSON.stringify(payload({ msg_id_hash: HASH_FLASH })), NO_WAIT);
+    expect(e?.clef_attempts).toBe(4);
+    expect(e?.clef_fallback).toBe(true);
+    expect(e?.model).toBe("clef-flash");
+    expect(e?.shadow_label).toBe("would_skip");
+    expect(e?.flash_shadow_label).toBeNull();
+    expect(calls.filter((c) => c.slug === "@cf/cloudflare/clef-flash").length).toBe(1);
+  });
+  test("everything fails → shadow_label error, last reason kept, not counted as wake", async () => {
+    cap = captureLogs();
+    const { env } = makeEnv();
+    (env.AI as { run: unknown }).run = async () => {
+      throw gwErr();
+    };
+    const e = await processEmailShadow(env, JSON.stringify(payload()), NO_WAIT);
+    expect(e?.error_reason).toBe("clef_error:AiGatewayError");
+    expect(e?.shadow_label).toBe("error");
+    expect(e?.clef_attempts).toBe(4);
+    expect(e?.agree).toBeNull();
+    const g = gradeJoined(e!, null);
+    expect(g?.shadow_label).toBe("error");
+    expect(g?.false_wake).toBeNull();
+    expect(g?.agree).toBeNull();
   });
   test("jre@mail.grokbot.com excluded entirely: no AI, no stored row, counter + masked drop log", async () => {
     cap = captureLogs();
@@ -296,10 +358,19 @@ describe("http", () => {
     const { env, kv } = makeEnv();
     const o = await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam" })), env, ctx().c);
     expect(o.status).toBe(202);
+    expect((await o.json()) as unknown).toEqual({ logged: true, matched: false });
     expect(JSON.parse(kv.data.get(`${OUTCOME_PREFIX}${HASH_NOFLASH}`) ?? "{}").event).toBe("outcome");
     expect(kv.data.has(`${RING_PREFIX}${HASH_NOFLASH}`)).toBe(false);
     const big = JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam", pad: "x".repeat(2000) });
     expect((await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", big), env, ctx().c)).status).toBe(413);
+  });
+  test("outcome after a stored decision → 202 matched:true", async () => {
+    cap = captureLogs();
+    const { env } = makeEnv();
+    await processEmailShadow(env, JSON.stringify(payload()), NO_WAIT);
+    const o = await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "archive_fyi" })), env, ctx().c);
+    expect(o.status).toBe(202);
+    expect((await o.json()) as unknown).toEqual({ logged: true, matched: true });
   });
   test("outcome landing inside the race window (between Clef start and verdict put) is never clobbered", async () => {
     cap = captureLogs();

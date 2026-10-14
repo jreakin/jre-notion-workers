@@ -30,9 +30,45 @@ function normalizedIdSet(ids: Set<string>): Set<string> {
   return out;
 }
 
+/**
+ * True when the explicit properties_updated change rule can decide: event is page.properties_updated,
+ * the webhook listed updated property ids, and BOTH SUBMITTED_PROPERTY_IDS and NEEDS_JOHN_PROPERTY_IDS
+ * are configured. Otherwise callers keep the old conservative behavior (opaque update ⇒ wake).
+ */
+export function explicitPropertyRuleActive(ctx: GateEventContext): boolean {
+  return (
+    (ctx.notionType || "") === "page.properties_updated" &&
+    ctx.updatedPropertyIds.length > 0 &&
+    ctx.submittedPropertyIds.size > 0 &&
+    (ctx.needsJohnPropertyIds?.size ?? 0) > 0
+  );
+}
+
+function updatedTouches(ctx: GateEventContext, ids: Set<string>): boolean {
+  const set = normalizedIdSet(ids);
+  return ctx.updatedPropertyIds.some((id) => set.has(normalizeUpdatedPropertyId(id)));
+}
+
+/**
+ * Needs John hard override for page.properties_updated, independent of the env id sets:
+ * the page's Needs John flag is set (enriched/fetched properties), OR NEEDS_JOHN_PROPERTY_IDS is set
+ * and a listed updated id is one of them. (An unreadable page is already the `properties_unavailable`
+ * override; page-event dedupe is off unless both id sets are configured.)
+ */
+export function needsJohnPropertyChanged(ctx: GateEventContext): boolean {
+  if ((ctx.notionType || "") !== "page.properties_updated") return false;
+  if (isTruthyFlag(ctx.properties?.needsJohn)) return true;
+  const njIds = ctx.needsJohnPropertyIds ?? new Set<string>();
+  return njIds.size > 0 && ctx.updatedPropertyIds.length > 0 && updatedTouches(ctx, njIds);
+}
+
 export function submittedPropertyChanged(ctx: GateEventContext): boolean {
   if (isTruthyFlag((ctx.properties as { submittedChanged?: unknown })?.submittedChanged)) {
     return true;
+  }
+  if (explicitPropertyRuleActive(ctx)) {
+    // Both id sets configured and ids listed: Submitted changed iff a listed id is a Submitted id.
+    return updatedTouches(ctx, ctx.submittedPropertyIds);
   }
   const ids = ctx.updatedPropertyIds;
   const notionType = ctx.notionType || "";
