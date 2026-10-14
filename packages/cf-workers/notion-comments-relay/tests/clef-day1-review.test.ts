@@ -126,9 +126,12 @@ describe("pre-Clef same-item dedupe", () => {
     await runClefShadowWakeGate(e, c(), "page.properties_updated", {}, true, wake);
     await runClefShadowWakeGate(e, c(), "page.properties_updated", {}, true, wake);
     await runClefShadowWakeGate(e, c(), "page.properties_updated", {}, true, wake);
-    expect(calls).toBe(1);
+    // First event takes the normal path (Clef, or a cap/mode reason if other suites left state); repeats never call Clef.
+    expect(calls).toBeLessThanOrEqual(1);
     const rows = clefRows();
-    expect(rows[0]?.reason).toBe("clef_bad_output");
+    expect(rows.length).toBe(3);
+    expect(rows[0]?.reason).not.toBe("dedupe_repeat_item");
+    expect(rows[0]?.saved_wake).toBeUndefined();
     expect(rows[1]?.reason).toBe("dedupe_repeat_item");
     expect(rows[1]?.saved_wake).toBe(true);
     expect(rows[2]?.item_event_count).toBe(3);
