@@ -55,6 +55,44 @@ Sibling to `packages/workers/` (recovered Notion Workers / Bun). This package us
 | `COS_WEBHOOK_AUTHORIZATION` | yes | `Authorization` header value for CoS |
 | `SETUP_SECRET` | yes | `X-Setup-Secret` header for `/setup/*` routes |
 | `NOTION_VERIFICATION_TOKEN` | optional | Fallback if token not yet stored in KV from Notion handshake |
+| `NOTION_AUTOMATION_SECRET` | for plan-approved route | Shared secret Notion automations send in `X-Relay-Automation-Secret` |
+| `AS_WEBHOOK_URL` | for plan-approved route | Abstract Secretary Grok Bot webhook ingress URL |
+| `AS_WEBHOOK_AUTHORIZATION` | for plan-approved route | `Authorization` header value for AS (`Bearer ` added if missing) |
+
+## Notion automation: plan approved → AS wake
+
+`POST /notion/automation/plan-approved` accepts Notion database-automation "Send webhook" posts
+(unsigned). Auth: header `X-Relay-Automation-Secret`, constant-time compared to
+`NOTION_AUTOMATION_SECRET`; missing/wrong → `401`. Properties read: `ID`, `Kind`, `Status`,
+`Project`, `Approved At`. Only `Kind=Plan`, `Status=Approved`, non-empty `Project` and non-empty
+`Approved At` wake AS; anything else → `200 {ignored:true, reason}`. Dedupe key
+`plan_approved:v1:<page id>:<Approved At>` (TTL 7d via `kvTtl()`); one KV read per valid request,
+one KV write only after a 2xx AS response. AS unset (or whitespace-only) → `503`; AS non-2xx,
+network error, or 10s timeout → `502` (not deduped). Bodies over 256 KiB → `413` (checked from
+`Content-Length` before reading, then again on the actual bytes). Whitespace-only secrets count as unset.
+An existing `Bearer` prefix in `*_WEBHOOK_AUTHORIZATION` is matched case-insensitively.
+
+**Property names are pinned.** Notion's *Send webhook* action only includes the properties you
+tick, so tick exactly these (case/space-insensitive match, but keep these names):
+`ID`, `Kind`, `Status`, `Project`, `Approved At`. Any missing one logs a
+`plan_approved_missing_properties` warning (names only) and the post is ignored if a required
+field ends up empty. The page id comes from the body's `data.id` (falls back to `ID`).
+
+**Double wake.** Dedupe is a non-atomic KV get→put written only after AS returns 2xx. Two identical
+posts arriving concurrently, or a re-fire while the first wake is still in flight (≤10s), can both
+wake AS. Notion fires once per trigger so this is rare; AS must treat the wake as idempotent on
+`page_id` + `approved_at`.
+
+Setup (generate without printing):
+
+```bash
+openssl rand -hex 32 | tr -d '\n' | wrangler secret put NOTION_AUTOMATION_SECRET
+wrangler secret put AS_WEBHOOK_URL
+wrangler secret put AS_WEBHOOK_AUTHORIZATION
+```
+
+Store the same secret value (e.g. generate into 1Password first and pipe from `op read`) in the
+Notion automation's webhook custom header `X-Relay-Automation-Secret`, and include the properties above.
 
 Set via Wrangler (see cutover). **Do not rotate** during repo migration — reuse existing live values.
 

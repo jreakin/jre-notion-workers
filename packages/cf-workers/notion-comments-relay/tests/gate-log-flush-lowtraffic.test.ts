@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import worker from "../src/index.js";
 import {
   GATE_LOG_FLUSH_MAX_AGE_MS,
@@ -7,6 +7,7 @@ import {
   flushGateLogRing,
   gateLogBufferSizeForTests,
   pacedMinAgeMs,
+  readGateLogDailyWriteCap,
   resetGateLogRingForTests,
 } from "../src/gate-log-ring.js";
 import { runShadowWakeGates } from "../src/wake-gate/wake-gate-shadow.js";
@@ -65,16 +66,25 @@ afterEach(() => {
 
 describe("low-traffic flush", () => {
   test("partial batch < 5 min is held; > 5 min flushes at end of request", async () => {
+    // Freeze the clock: the paced threshold depends on time left in the UTC day.
+    const frozen = new Date("2026-10-13T12:00:00.000Z");
+    setSystemTime(frozen);
+    try {
     const e = env({ CLEF_DEFAULT_MODE: "off" });
     await enqueueGateLogRow(e, row);
     await runShadowWakeGates(e, {}, "page.created", "{}", true);
     expect(ringKeys()).toHaveLength(0);
-    ageGateLogBufferForTests(GATE_LOG_FLUSH_MAX_AGE_MS + 1000);
+    const threshold = pacedMinAgeMs(0, readGateLogDailyWriteCap(e), frozen);
+    expect(threshold).toBeGreaterThanOrEqual(GATE_LOG_FLUSH_MAX_AGE_MS);
+    ageGateLogBufferForTests(threshold + 1000);
     await runShadowWakeGates(e, {}, "page.created", "{}", true);
     expect(ringKeys()).toHaveLength(1);
     // the aged batch went out; only this request's fresh rows remain buffered
     expect(JSON.parse(store.get(ringKeys()[0]!)!).rows[0].rule_decision).toBe("would_wake");
     expect(gateLogBufferSizeForTests()).toBeLessThanOrEqual(4);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("B1: young rows + cron tick → 0 writes (cron respects paced age)", async () => {
