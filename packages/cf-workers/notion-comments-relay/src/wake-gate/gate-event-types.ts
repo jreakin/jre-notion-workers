@@ -93,6 +93,8 @@ export type GateEventContext = {
   submittedPropertyIds: Set<string>;
   /** Optional (NEEDS_JOHN_PROPERTY_IDS). Empty ⇒ the properties_updated change rule is inert. */
   needsJohnPropertyIds?: Set<string>;
+  /** comment.* events: the comment's own id (entity.id); the pre-Clef dedupe key for comments. */
+  commentId?: string;
   nonSubmittedPropertyIds: Set<string>;
   updatedPropertyIds: string[];
   fleetLocksDataSourceId?: string;

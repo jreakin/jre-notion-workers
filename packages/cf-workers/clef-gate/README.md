@@ -45,15 +45,25 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   called (`error_reason:"clef_gateway_unset"`), so the gateway rate limit and no-log layer can't be bypassed.
 - One Clef call (`@cf/cloudflare/clef`) with six questions; deterministic 10% `@cf/cloudflare/clef-flash` side-by-side
   (last 8 hex of msg_id_hash mod 10 = 0). Gateway `clef-shadow-gate`.
-- **Retry + fallback:** a transient Clef failure (`clef_error:*` such as `AiGatewayError`/`AiError`, or `clef_timeout`)
-  is retried on the same model after 250 ms and 750 ms (3 calls), then `@cf/cloudflare/clef-flash` is tried once.
-  Rows log `clef_attempts` and `clef_fallback`; a fallback verdict sets `model:"clef-flash"` and skips the 10% flash
-  side-by-side. Bad output and config errors (`clef_gateway_unset`, `clef_ai_unbound`) are not retried. Worst case
-  ≈ 4 × 3 s + 1 s inside `waitUntil`, after the 202.
-- **`shadow_label:"error"`:** no verdict after retries/fallback (or bad output, gateway unset, AI unbound, cap store
-  unreadable/invalid). It is its own category: `agree`/`false_skip`/`false_wake` stay `null` and graders must count it
-  as neither a wake nor a skip (report it as an error rate). A reached daily cap stays `escalate` (policy). If a live
-  mode is ever added, `error` must fail open to escalate.
+- **Retry + fallback, inside one total budget:** a transient Clef failure (`clef_error:*` such as `AiGatewayError`/`AiError`,
+  or `clef_timeout`) is retried on the same model after 250 ms and 750 ms (3 calls), then `@cf/cloudflare/clef-flash` is
+  tried once. All Clef work for one email (retries, fallback, and the 10% flash side-by-side) shares a
+  **`CLEF_COMPLETION_BUDGET_MS` = 15 s** budget, well under the 30 s `waitUntil` limit. Each call's timeout is clipped to
+  the time left, and no call starts with < 500 ms left. When the budget or the cap stops a retry early, the row keeps the
+  last real failure in `error_reason` and logs `clef_stopped` (`clef_budget_exhausted` / `clef_daily_cap`).
+  The side-by-side flash is **one call, never retried**, and runs only if a full call's time (3 s) is left. It is
+  skipped when the verdict already came from the flash fallback.
+  **Cap:** every real model call (first try, each retry, the fallback, and the side-by-side) takes one unit of
+  `CLEF_EMAIL_DAILY_CALL_CAP`, so the cap counts real calls. Rows log `clef_attempts` and `clef_fallback`.
+  Bad output and config errors (`clef_gateway_unset`, `clef_ai_unbound`) are not retried.
+- **`shadow_label:"error"`:** no verdict (retries/fallback exhausted, bad output, gateway unset, AI unbound, cap store
+  unreadable/invalid). It is its own category: `agree`/`false_skip`/`false_wake` stay `null`. A reached daily cap stays
+  `escalate` (policy). Live guard in code: `liveActionLabel("error") === "escalate"`.
+- **Grading (`src/grade.ts` `gradeWindow(joinedRows)`)** is the 14-day window grader. It uses rows from `gradeFromKv` only.
+  It reports per-day `decided`/`errors`/`error_rate`. The window **fails** on any `false_skip`, on any day with error
+  rate > **`ERROR_RATE_MAX` = 2%**, or on **any** `clef_gateway_unset` / `clef_ai_unbound` row. Error rows whose
+  triage acted (`escalate_john`, `handoff_lane`, escalated, TrainSpam rescue) are listed in `unmeasured_wakes`
+  (msg_id_hash only): real wakes Clef never scored.
 - Derived `shadow_label`: escalate if p_person ≥ .5 / p_money_sec ≥ .3 / p_calendar ≥ .5 / lane ≠ none; would_skip if
   p_bulk ≥ .9 and p_person ≤ .05 and p_money_sec ≤ .05; else fyi. Error/timeout/bad output ⇒ escalate.
 - Join flags (computed by `gradeJoined`) vs Inbox Triage disposition: `agree`, `false_skip` (would_skip but escalated/handoff/TrainSpam rescue),

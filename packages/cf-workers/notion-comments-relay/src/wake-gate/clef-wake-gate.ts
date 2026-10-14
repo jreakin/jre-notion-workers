@@ -31,14 +31,28 @@ export function readItemDedupeWindowMs(env: Env): number {
 }
 
 /**
- * Same item + event type seen within the window (counted from the FIRST event, so a steady stream
+ * Dedupe key, or null (never dedupe):
+ * - comment.* → the comment's own id + event type (a different comment on the same page is never a repeat);
+ * - page events → page id + event type, ONLY when SUBMITTED_PROPERTY_IDS and NEEDS_JOHN_PROPERTY_IDS are
+ *   both configured (until then a Needs John flip could not be told apart, so page dedupe stays off).
+ */
+export function itemDedupeKey(ctx: GateEventContext, notionType: string | null): string | null {
+  if (ctx.isCommentEvent) {
+    return ctx.commentId ? `comment:${normalizeNotionUuid(ctx.commentId)}|${notionType ?? ""}` : null;
+  }
+  const idsConfigured = ctx.submittedPropertyIds.size > 0 && (ctx.needsJohnPropertyIds?.size ?? 0) > 0;
+  if (!idsConfigured || !ctx.pageId) return null;
+  return `page:${normalizeNotionUuid(ctx.pageId)}|${notionType ?? ""}`;
+}
+
+/**
+ * Same dedupe key seen within the window (counted from the FIRST event, so a steady stream
  * resurfaces once per window). Returns the 1-based count inside the window; 1 = first (not a repeat).
  * Unknown items are never deduped.
  */
-export function noteItemEvent(env: Env, itemId: string, notionType: string | null, now = Date.now()): number {
+export function noteItemEvent(env: Env, key: string | null, now = Date.now()): number {
   const windowMs = readItemDedupeWindowMs(env);
-  if (windowMs === 0 || itemId === "unknown" || !itemId.trim()) return 1;
-  const key = `${normalizeNotionUuid(itemId)}|${notionType ?? ""}`;
+  if (windowMs === 0 || !key) return 1;
   const prev = itemDedupe.get(key);
   if (prev && now - prev.firstTs >= 0 && now - prev.firstTs < windowMs) {
     prev.count += 1;
@@ -264,7 +278,7 @@ export async function runClefShadowWakeGate(
   }
 
   // Pre-Clef dedupe (after hard overrides, so John / Submitted / Needs John never dedupe).
-  const itemCount = noteItemEvent(env, itemId, notionType);
+  const itemCount = noteItemEvent(env, itemDedupeKey(ctx, notionType));
   if (itemCount > 1) {
     const entry = baseLogEntry(
       ctx,
@@ -280,6 +294,11 @@ export async function runClefShadowWakeGate(
     // Rule said wake; this repeat is the wake the dedupe saves (count per unique item_id).
     entry.saved_wake = true;
     await appendClefShadowLog(env, entry);
+    // A dedupe repeat is a skip: score it through the same sampled + capped false-skip check as rule skips.
+    await runRuleSkipClefShadow(env, ctx, notionType, parsed, itemId, entry, {
+      log: (row) => appendClefShadowLog(env, row),
+      pageEventsLast60s: ctx.pageId ? peekPageEventCount(ctx.pageId) : 0,
+    });
     return;
   }
 

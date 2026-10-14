@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   aggregateRuleDecision,
+  itemDedupeKey,
   noteItemEvent,
   resetClefPageEventCountsForTests,
   runClefShadowWakeGate,
 } from "../src/wake-gate/clef-wake-gate.js";
 import { decideCommentsEchoGate } from "../src/wake-gate/comments-echo-gate.js";
 import { clefHardOverrideReason } from "../src/wake-gate/clef-overrides.js";
-import { submittedPropertyChanged } from "../src/wake-gate/gate-context-safety.js";
+import { needsJohnPropertyChanged, submittedPropertyChanged } from "../src/wake-gate/gate-context-safety.js";
 import type { Env } from "../src/env.js";
 import type { GateEventContext, WakeGateDecision } from "../src/wake-gate/gate-event-types.js";
 
@@ -91,7 +92,7 @@ describe("properties_updated: skip when neither Submitted nor Needs John changed
   });
 });
 
-describe("pre-Clef same-item dedupe", () => {
+describe("pre-Clef dedupe (comment id / page when ids configured)", () => {
   let logs: string[] = [];
   let orig: typeof console.log;
   beforeEach(() => {
@@ -103,43 +104,105 @@ describe("pre-Clef same-item dedupe", () => {
   afterEach(() => {
     console.log = orig;
   });
-  const clefRows = () => logs.filter((l) => l.includes("clef_wake_shadow")).map((l) => JSON.parse(l) as Record<string, unknown>);
+  const clefRows = () =>
+    logs.filter((l) => l.includes("clef_wake_shadow")).map((l) => JSON.parse(l) as Record<string, unknown>);
   const wake = [d("fleet_locks_adopted_change", "would_wake", "not_page_event")];
-  const c = () => ctx({ submittedPropertyIds: new Set(), needsJohnPropertyIds: new Set(), nonSubmittedPropertyIds: new Set(["Stat"]) });
+  const COMMENT_A = "cccccccccccccccccccccccccccccc01";
+  const COMMENT_B = "cccccccccccccccccccccccccccccc02";
+  const OTHER = "4e7d872b-594c-8161-92a2-00024b29e816";
+  const comment = (commentId: string) =>
+    ctx({
+      notionType: "comment.created",
+      isCommentEvent: true,
+      authorId: OTHER,
+      webhookAuthorIds: [OTHER],
+      updatedPropertyIds: [],
+      commentId,
+    });
+  const commentBody = { data: { text: "hello there" } };
 
-  test("noteItemEvent counts within window from first event, resets after; unknown never deduped; 0 disables", () => {
+  test("keys: comment id; page only when both id sets configured; window counts from first; 0 disables", () => {
     const e = env();
-    expect(noteItemEvent(e, PAGE, "comment.created", 0)).toBe(1);
-    expect(noteItemEvent(e, PAGE, "comment.created", 1000)).toBe(2);
-    expect(noteItemEvent(e, PAGE, "page.properties_updated", 1000)).toBe(1);
-    expect(noteItemEvent(e, PAGE, "comment.created", 600_000)).toBe(1);
-    expect(noteItemEvent(e, "unknown", "comment.created", 0)).toBe(1);
-    expect(noteItemEvent(e, "unknown", "comment.created", 1)).toBe(1);
+    expect(itemDedupeKey(comment(COMMENT_A), "comment.created")).toContain("comment:");
+    expect(itemDedupeKey(comment(COMMENT_A), "comment.created")).not.toBe(
+      itemDedupeKey(comment(COMMENT_B), "comment.created"),
+    );
+    expect(itemDedupeKey(ctx({ notionType: "comment.created", isCommentEvent: true }), "comment.created")).toBeNull();
+    expect(itemDedupeKey(ctx(), "page.properties_updated")).toContain("page:");
+    expect(itemDedupeKey(ctx({ needsJohnPropertyIds: new Set() }), "page.properties_updated")).toBeNull();
+    expect(itemDedupeKey(ctx({ submittedPropertyIds: new Set() }), "page.properties_updated")).toBeNull();
+    expect(noteItemEvent(e, "k", 0)).toBe(1);
+    expect(noteItemEvent(e, "k", 1000)).toBe(2);
+    expect(noteItemEvent(e, "k", 600_000)).toBe(1);
+    expect(noteItemEvent(e, null, 0)).toBe(1);
     const off = env({ CLEF_ITEM_DEDUPE_WINDOW_S: "0" });
-    expect(noteItemEvent(off, PAGE, "x", 0)).toBe(1);
-    expect(noteItemEvent(off, PAGE, "x", 1)).toBe(1);
+    expect(noteItemEvent(off, "z", 0)).toBe(1);
+    expect(noteItemEvent(off, "z", 1)).toBe(1);
   });
 
-  test("second wake-path event for the same item: no Clef call, logged dedupe_repeat_item + saved_wake", async () => {
-    let calls = 0;
-    const e = env({ AI_GATEWAY_ID: "g", AI: { run: async () => { calls++; return { answers: {} }; } } as unknown as Ai });
-    await runClefShadowWakeGate(e, c(), "page.properties_updated", {}, true, wake);
-    await runClefShadowWakeGate(e, c(), "page.properties_updated", {}, true, wake);
-    await runClefShadowWakeGate(e, c(), "page.properties_updated", {}, true, wake);
-    // First event takes the normal path (Clef, or a cap/mode reason if other suites left state); repeats never call Clef.
-    expect(calls).toBeLessThanOrEqual(1);
+  test("a DIFFERENT comment on the same page inside the window is not deduped", async () => {
+    const e = env();
+    await runClefShadowWakeGate(e, comment(COMMENT_A), "comment.created", commentBody, true, wake);
+    await runClefShadowWakeGate(e, comment(COMMENT_B), "comment.created", commentBody, true, wake);
     const rows = clefRows();
-    expect(rows.length).toBe(3);
-    expect(rows[0]?.reason).not.toBe("dedupe_repeat_item");
-    expect(rows[0]?.saved_wake).toBeUndefined();
-    expect(rows[1]?.reason).toBe("dedupe_repeat_item");
-    expect(rows[1]?.saved_wake).toBe(true);
-    expect(rows[2]?.item_event_count).toBe(3);
-    expect(String(rows[1]?.item_id)).toMatch(/^opaque:/);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows.every((r) => !String(r.reason).startsWith("comment_content"))).toBe(true);
+    expect(rows.some((r) => r.reason === "dedupe_repeat_item")).toBe(false);
+  });
+
+  test("same comment delivered twice: repeat logged saved_wake and sent to the false-skip check", async () => {
+    let calls = 0;
+    const e = env({
+      AI_GATEWAY_ID: "g",
+      CLEF_RULE_SKIP_SAMPLE_PERCENT: "100",
+      AI: {
+        run: async () => {
+          calls++;
+          return {
+            answers: {
+              q_action: { type: "noul", noul: 0.9 },
+              q_dup: { type: "noul", noul: 0.1 },
+              q_when: { type: "choice", choice: "now" },
+            },
+          };
+        },
+      } as unknown as Ai,
+    });
+    await runClefShadowWakeGate(e, comment(COMMENT_A), "comment.created", commentBody, true, wake);
+    await runClefShadowWakeGate(e, comment(COMMENT_A), "comment.created", commentBody, true, wake);
+    const rows = clefRows();
+    const dedupe = rows.find((r) => r.reason === "dedupe_repeat_item");
+    expect(dedupe?.saved_wake).toBe(true);
+    expect(dedupe?.item_event_count).toBe(2);
+    const scored = rows.find((r) => r.decision === "rule_skip" && r.dedupe_repeat === true);
+    expect(scored).toBeDefined();
+    expect(String(scored?.reason)).toMatch(/^rule_skip:/);
+    expect(calls).toBeLessThanOrEqual(2);
+  });
+
+  test("Needs John with env ids UNSET: hard override, never deduped", async () => {
+    const nj = ctx({
+      submittedPropertyIds: new Set(),
+      needsJohnPropertyIds: new Set(),
+      nonSubmittedPropertyIds: new Set(["Stat"]),
+      updatedPropertyIds: ["Stat"],
+      properties: { needsJohn: true, sensitive: false },
+    });
+    expect(needsJohnPropertyChanged(nj)).toBe(true);
+    expect(clefHardOverrideReason(nj, {}, true, [])).toBe("needs_john_changed");
+    await runClefShadowWakeGate(env(), nj, "page.properties_updated", {}, true, wake);
+    await runClefShadowWakeGate(env(), nj, "page.properties_updated", {}, true, wake);
+    expect(clefRows().map((r) => r.reason)).toEqual(["needs_john_changed", "needs_john_changed"]);
   });
 
   test("hard overrides (John comment) are never deduped", async () => {
-    const john = ctx({ notionType: "comment.created", isCommentEvent: true, authorId: JOHN, webhookAuthorIds: [JOHN] });
+    const john = ctx({
+      notionType: "comment.created",
+      isCommentEvent: true,
+      authorId: JOHN,
+      webhookAuthorIds: [JOHN],
+      commentId: COMMENT_A,
+    });
     await runClefShadowWakeGate(env(), john, "comment.created", {}, true, wake);
     await runClefShadowWakeGate(env(), john, "comment.created", {}, true, wake);
     expect(clefRows().map((r) => r.reason)).toEqual(["john_authored", "john_authored"]);

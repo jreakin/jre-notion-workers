@@ -205,6 +205,7 @@ export function buildGateContext(
     fleetCommentsBotIds: parseIdSet(env.FLEET_COMMENTS_BOT_NOTION_USER_IDS),
     submittedPropertyIds: parseIdSet(env.SUBMITTED_PROPERTY_IDS),
     needsJohnPropertyIds: parseIdSet(env.NEEDS_JOHN_PROPERTY_IDS),
+    commentId: isCommentEvent && typeof entity?.id === "string" && entity.id ? entity.id : undefined,
     nonSubmittedPropertyIds: buildNonSubmittedPropertyIds(env),
     updatedPropertyIds,
     fleetLocksDataSourceId: trimOptionalEnvId(env.FLEET_LOCKS_DATA_SOURCE_ID),

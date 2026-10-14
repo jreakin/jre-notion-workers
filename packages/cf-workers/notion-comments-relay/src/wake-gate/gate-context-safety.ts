@@ -49,9 +49,17 @@ function updatedTouches(ctx: GateEventContext, ids: Set<string>): boolean {
   return ctx.updatedPropertyIds.some((id) => set.has(normalizeUpdatedPropertyId(id)));
 }
 
-/** A listed updated property id is a Needs John property (only meaningful when the rule is active). */
+/**
+ * Needs John hard override for page.properties_updated, independent of the env id sets:
+ * the page's Needs John flag is set (enriched/fetched properties), OR NEEDS_JOHN_PROPERTY_IDS is set
+ * and a listed updated id is one of them. (An unreadable page is already the `properties_unavailable`
+ * override; page-event dedupe is off unless both id sets are configured.)
+ */
 export function needsJohnPropertyChanged(ctx: GateEventContext): boolean {
-  return explicitPropertyRuleActive(ctx) && updatedTouches(ctx, ctx.needsJohnPropertyIds ?? new Set());
+  if ((ctx.notionType || "") !== "page.properties_updated") return false;
+  if (isTruthyFlag(ctx.properties?.needsJohn)) return true;
+  const njIds = ctx.needsJohnPropertyIds ?? new Set<string>();
+  return njIds.size > 0 && ctx.updatedPropertyIds.length > 0 && updatedTouches(ctx, njIds);
 }
 
 export function submittedPropertyChanged(ctx: GateEventContext): boolean {
