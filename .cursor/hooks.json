@@ -9,7 +9,7 @@
         "command": "./.cursor/hooks/surface-handoff.sh"
       },
       {
-        "command": "./.cursor/hooks/session-py-baseline.sh"
+        "command": "./.cursor/hooks/run-if-present.sh session-py-baseline.sh"
       }
     ],
     "preToolUse": [
@@ -26,7 +26,7 @@
         "matcher": "Shell"
       },
       {
-        "command": "./.cursor/hooks/terraform-guard.sh",
+        "command": "./.cursor/hooks/run-if-present.sh terraform-guard.sh",
         "matcher": "Shell"
       },
       {
@@ -72,7 +72,7 @@
         "matcher": "Write"
       },
       {
-        "command": "./.cursor/hooks/terraform-guard.sh",
+        "command": "./.cursor/hooks/run-if-present.sh terraform-guard.sh",
         "matcher": "Write"
       },
       {

@@ -1,0 +1,5 @@
+{
+  "name": "jre-notion-workers",
+  "install": "bash scripts/cloud-agent-install.sh",
+  "start": "bash scripts/gitnexus-refresh.sh"
+}

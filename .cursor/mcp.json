@@ -5,6 +5,15 @@
       "args": [
         "serve"
       ]
+    },
+    "gitnexus": {
+      "command": "gitnexus",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "GITNEXUS_NO_UPDATE_NOTIFIER": "1"
+      }
     }
   }
 }
