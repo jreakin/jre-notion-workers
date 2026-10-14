@@ -3,17 +3,21 @@ import { createHmac } from "node:crypto";
 import type { Env } from "../src/env.js";
 import {
   GROKBOT_FLEET_COMMENTS_BOT_ID,
+  cosPrefilterLive,
   decideCosPrefilter,
+  decideCosPrefilterAfterFetch,
   isAckOnly,
   lanePrefixRe,
 } from "../src/wake-gate/cos-prefilter.js";
 import type { GateEventContext } from "../src/wake-gate/gate-event-types.js";
 import { buildGateContext, opaqueEventKey } from "../src/wake-gate/gate-orchestration.js";
-import { gradeRelayWindow } from "../src/wake-gate/grade-relay.js";
+import { PREFILTER_MUST_WAKE, gradeRelayWindow } from "../src/wake-gate/grade-relay.js";
+import { MUST_WAKE_OVERRIDE_NAMES, clefHardOverrideReason } from "../src/wake-gate/clef-overrides.js";
 
 const JOHN = "2e7d872b-594c-8161-92a2-00024b29e816";
 const BOT = GROKBOT_FLEET_COMMENTS_BOT_ID;
 const OTHER = "4e7d872b-594c-8161-92a2-00024b29e816";
+const CFG_BOT = "5e7d872b-594c-8161-92a2-00024b29e816";
 const SUB = "subm";
 const NJ = "njid";
 
@@ -29,11 +33,11 @@ const txt = (t: string) => ({ data: { text: t } });
 const decide = (c: GateEventContext, p: Record<string, unknown>) => decideCosPrefilter(c, p, {});
 
 describe("ack-only", () => {
-  test.each(["thanks", "Thanks!", "thank you 🙏", "ok", "OK.", "okay thanks", "+1", "+ 1", "👍", "👍🏽🎉", "done", "Done ✅", "got it, thanks", "ok ok", "ty", "noted."])(
+  test.each(["thanks", "Thanks!", "thank you 🙏", "ok", "OK.", "okay thanks", "+1", "+ 1", "👍", "👍🏽🎉", "🙏", "✅", "❤️", "👌🙌", "got it, thanks", "ok 👍", "ok ok", "ty", "noted."])(
     "%p is an ack",
     (t) => expect(isAckOnly(t)).toBe(true),
   );
-  test.each(["", "   ", "ok?", "done?", "ok but change the title", "thanks — please also send the deck", "not done", "no", "stop", "ship it", "+2 on the second option", "x".repeat(70)])(
+  test.each(["", "   ", "ok?", "done?", "ok but change the title", "done", "Done ✅", "will do", "all done", "done thanks", "👎", "❌", "🛑", "⚠️", "❓", "ok 👎", "👍❌", "🤔", "thanks — please also send the deck", "not done", "no", "stop", "ship it", "+2 on the second option", "x".repeat(70)])(
     "%p is not an ack",
     (t) => expect(isAckOnly(t)).toBe(false),
   );
@@ -64,17 +68,31 @@ describe("self-echo", () => {
     const c = ctx("comment.created", { authorId: BOT, webhookAuthorIds: [BOT, OTHER] });
     expect(decide(c, txt("please review the attached")).decision).toBe("pass");
   });
-  test.each(["CoS: posted the summary", "cos — handled", "[BCH] PR opened", "**Chief of Staff:** done", "AS - reviewed", "dr eggbot: day-2 notes"])(
-    "lane prefix %p → self_echo_lane",
-    (t) => expect(decide(ctx(), txt(t))).toEqual({ decision: "would_drop", reason: "self_echo_lane" }),
+  const botCtx = (id = CFG_BOT) =>
+    ctx("comment.created", { authorId: id, webhookAuthorIds: [id], fleetCommentsBotIds: new Set([BOT, CFG_BOT]) });
+  test.each(["CoS: posted the summary", "cos — handled", "[CoS] PR opened", "**Chief of Staff:** synced", "[chief of staff] noted"])(
+    "configured-bot comment with CoS lane prefix %p → self_echo_lane",
+    (t) => expect(decide(botCtx(), txt(t))).toEqual({ decision: "would_drop", reason: "self_echo_lane" }),
   );
-  test.each(["Cosine similarity is off", "As discussed, please send it", "BCHX: unrelated", "Can CoS: look at this", "Clefs are hard"])(
-    "%p is not a lane prefix",
+  test.each(["CoS: can you look at the deck", "Chief of Staff — please send it", "[CoS] follow up?", "cos — handled"])(
+    "human comment %p with a lane prefix passes",
     (t) => expect(decide(ctx(), txt(t)).decision).toBe("pass"),
+  );
+  test.each(["[BCH] PR opened", "AS - reviewed", "dr eggbot: day-2 notes", "Clef: scored"])(
+    "other lanes' prefixes %p are not CoS self-echo, even from a bot",
+    (t) => expect(decide(botCtx(), txt(t)).decision).toBe("pass"),
+  );
+  test("configured (non-Fleet-Comments) bot without a lane prefix passes", () => {
+    expect(decide(botCtx(), txt("Please review the attached plan")).decision).toBe("pass");
+  });
+  test.each(["Cosine similarity is off", "As discussed, please send it", "Can CoS: look at this", "Clefs are hard"])(
+    "%p is not a lane prefix",
+    (t) => expect(decide(botCtx(), txt(t)).decision).toBe("pass"),
   );
   test("COS_PREFILTER_LANE_PREFIXES adds prefixes", () => {
     expect(lanePrefixRe({ COS_PREFILTER_LANE_PREFIXES: "Ops Bot" }).test("Ops Bot: synced")).toBe(true);
     expect(lanePrefixRe({}).test("Ops Bot: synced")).toBe(false);
+    expect(lanePrefixRe({}).test("BCH: synced")).toBe(false);
   });
 });
 
@@ -99,6 +117,29 @@ describe("non-actionable property edits (reuses the properties_updated rule)", (
 });
 
 describe("hard overrides always win", () => {
+  test("JOHN_NOTION_USER_IDS empty → fail open, nothing drops (matches Clef john_ids_unset)", () => {
+    const none = { johnUserIds: new Set<string>() };
+    expect(decide(ctx("comment.created", none), txt("thanks"))).toEqual({ decision: "pass", reason: "override:john_ids_unset" });
+    const botC = ctx("comment.created", { ...none, authorId: BOT, webhookAuthorIds: [BOT] });
+    expect(decide(botC, txt("CoS: done")).reason).toBe("override:john_ids_unset");
+    const e = { FLEET_COMMENTS_BOT_NOTION_USER_IDS: BOT } as Env;
+    expect(decide(buildGateContext(ackComment(), "comment.created", "{}", e), ackComment()).reason).toBe("override:john_ids_unset");
+  });
+  test.each([
+    ["needs_john_or_sensitive", { properties: { sensitive: true } }, {}],
+    ["notion_page_unreadable", { properties: { adDocsParseOk: false } }, {}],
+    ["irreversible_action_field", { properties: { kind: "Publish" } }, {}],
+    ["notion_fetch_failed", { notionFetchFailReason: "notion_fetch_failed" }, {}],
+    ["bot_mention", {}, { rich_text: [{ type: "mention", mention: { type: "user", user: { id: BOT, type: "bot" } } }] }],
+  ] as const)("shared must-wake override %p beats an ack", (name, over, extra) => {
+    const c = ctx("comment.created", over as Partial<GateEventContext>);
+    expect(decide(c, { data: { text: "thanks", ...extra } }).reason).toBe(`override:${name}`);
+  });
+  test("the Clef gate uses the same shared list", () => {
+    const c = ctx("comment.created", { properties: { kind: "Publish" } });
+    expect(clefHardOverrideReason(c, txt("thanks"), true, [])).toBe("irreversible_action_field");
+    for (const n of MUST_WAKE_OVERRIDE_NAMES) expect(PREFILTER_MUST_WAKE.has(n)).toBe(true);
+  });
   test("John-authored ack is never dropped", () => {
     const c = ctx("comment.created", { authorId: JOHN, webhookAuthorIds: [JOHN] });
     expect(decide(c, txt("ok"))).toEqual({ decision: "pass", reason: "override:john_authored" });
@@ -116,7 +157,7 @@ describe("hard overrides always win", () => {
       updatedPropertyIds: ["other"], properties: { needsJohn: true },
     });
     expect(decide(c, {}).decision).toBe("pass");
-    expect(decide(ctx("comment.created", { needsJohnNow: true }), txt("ok")).reason).toBe("override:needs_john");
+    expect(decide(ctx("comment.created", { needsJohnNow: true }), txt("ok")).reason).toBe("override:needs_john_or_sensitive");
   });
   test("Submitted changed (opaque update, no ids listed) passes", () => {
     const c = ctx("page.properties_updated", { isCommentEvent: false, updatedPropertyIds: [] });
@@ -181,7 +222,7 @@ function kvEnv(over: Partial<Env> = {}): { env: Env; store: Map<string, string> 
     env: {
       RELAY_KV: kv, COS_WEBHOOK_URL: "https://cos.example/webhook", COS_WEBHOOK_AUTHORIZATION: "Bearer cos",
       SETUP_SECRET: "setup", NOTION_VERIFICATION_TOKEN: SECRET, JOHN_NOTION_USER_IDS: JOHN,
-      FLEET_COMMENTS_BOT_NOTION_USER_IDS: BOT, ...over,
+      FLEET_COMMENTS_BOT_NOTION_USER_IDS: BOT, NOTION_API_TOKEN: "t", ...over,
     },
   };
 }
@@ -200,11 +241,26 @@ const ackComment = (authorId = OTHER) => ({
   entity: { id: "comment-1", type: "comment" }, data: { page_id: "page-1", text: "thanks!" },
 });
 
+const page = (needsJohn: boolean) => ({
+  object: "page", id: "page-1", parent: { type: "page_id", page_id: "x" },
+  properties: { "Needs John": { id: "nj", type: "checkbox", checkbox: needsJohn } },
+});
+let pageResponse: () => Response = () => Response.json(page(false));
+let notionFetches = 0;
+
 describe("worker: shadow vs live", () => {
   let logs: string[] = [];
   let orig: typeof console.log;
-  beforeEach(() => { logs = []; orig = console.log; console.log = ((l: unknown) => logs.push(String(l))) as typeof console.log; });
-  afterEach(() => { console.log = orig; });
+  let origFetch: typeof fetch;
+  beforeEach(() => {
+    logs = []; orig = console.log; console.log = ((l: unknown) => logs.push(String(l))) as typeof console.log;
+    origFetch = globalThis.fetch; notionFetches = 0; pageResponse = () => Response.json(page(false));
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      if (String(url instanceof Request ? url.url : url).startsWith("https://api.notion.com/")) { notionFetches += 1; return pageResponse(); }
+      return new Response("ok");
+    }) as typeof fetch;
+  });
+  afterEach(() => { console.log = orig; globalThis.fetch = origFetch; });
   const prefilterRows = () => logs.filter((l) => l.includes('"stream":"cos_prefilter"')).map((l) => JSON.parse(l));
 
   test("SHADOW (default): logs would_drop, still buffers the forward", async () => {
@@ -226,5 +282,90 @@ describe("worker: shadow vs live", () => {
     await post(env, ackComment(JOHN));
     expect(prefilterRows()).toMatchObject([{ decision: "pass", reason: "override:john_authored" }]);
     expect(store.get("coalesce_buffer")).toContain("comment.created");
+  });
+});
+
+describe("worker: decision after the page fetch", () => {
+  let logs: string[] = [];
+  let orig: typeof console.log;
+  let origFetch: typeof fetch;
+  beforeEach(() => {
+    logs = []; orig = console.log; console.log = ((l: unknown) => logs.push(String(l))) as typeof console.log;
+    origFetch = globalThis.fetch; notionFetches = 0;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      if (String(url instanceof Request ? url.url : url).startsWith("https://api.notion.com/")) { notionFetches += 1; return pageResponse(); }
+      return new Response("ok");
+    }) as typeof fetch;
+  });
+  afterEach(() => { console.log = orig; globalThis.fetch = origFetch; });
+  const rows = (stream: string) => logs.filter((l) => l.includes(`"stream":"${stream}"`)).map((l) => JSON.parse(l));
+
+  test("ack on a page with Needs John checked passes (real property from the fetch)", async () => {
+    pageResponse = () => Response.json(page(true));
+    const { env, store } = kvEnv({ COS_PREFILTER_LIVE: "1" });
+    await post(env, ackComment());
+    expect(notionFetches).toBe(1);
+    expect(rows("cos_prefilter")).toMatchObject([{ decision: "pass", reason: "override:needs_john_or_sensitive" }]);
+    expect(store.get("coalesce_buffer")).toContain("comment.created");
+  });
+  test("page fetch fails → pass (fail open)", async () => {
+    pageResponse = () => new Response("nope", { status: 500 });
+    const { env, store } = kvEnv({ COS_PREFILTER_LIVE: "1" });
+    await post(env, ackComment());
+    expect(rows("cos_prefilter")).toMatchObject([{ decision: "pass", reason: "override:notion_fetch_failed" }]);
+    expect(store.get("coalesce_buffer")).toContain("comment.created");
+  });
+  test("no NOTION_API_TOKEN → pass (fail open)", async () => {
+    const { env } = kvEnv({ COS_PREFILTER_LIVE: "1", NOTION_API_TOKEN: undefined });
+    await post(env, ackComment());
+    expect(rows("cos_prefilter")).toMatchObject([{ decision: "pass", reason: "override:notion_token_missing" }]);
+  });
+  test("non-candidate events skip the extra fetch", async () => {
+    const { env } = kvEnv();
+    await post(env, { ...ackComment(), data: { page_id: "page-1", text: "please send the deck" } });
+    expect(notionFetches).toBe(0);
+    expect(rows("cos_prefilter")).toMatchObject([{ decision: "pass", reason: "actionable_comment" }]);
+  });
+  test("gate_log events: dropped first, no prefilter row (counts not inflated)", async () => {
+    const GL = "6e7d872b-594c-8161-92a2-00024b29e816";
+    const { env } = kvEnv({ GATE_LOG_DATA_SOURCE_IDS: GL });
+    await post(env, { ...ackComment(), data: { page_id: "page-1", text: "thanks", parent: { data_source_id: GL } } });
+    expect(logs.some((l) => l.includes("dropped_gate_log_event"))).toBe(true);
+    expect(rows("cos_prefilter")).toEqual([]);
+  });
+  test("the Clef row and the prefilter row share an event_key", async () => {
+    const { env } = kvEnv();
+    const body = JSON.stringify(ackComment());
+    const sig = `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
+    const { default: worker } = await import("../src/index.js");
+    const pending: Promise<unknown>[] = [];
+    await worker.fetch(
+      new Request("https://relay/", { method: "POST", headers: { "X-Notion-Signature": sig, "content-type": "application/json" }, body }),
+      env,
+      { waitUntil(p: Promise<unknown>) { pending.push(p); } } as unknown as ExecutionContext,
+    );
+    // Shadow gates run in waitUntil; the Clef row is logged early (later steps may wait on AI / flush).
+    await Promise.race([Promise.allSettled(pending), new Promise((r) => setTimeout(r, 300))]);
+    const pre = rows("cos_prefilter");
+    const clef = rows("clef_wake_shadow");
+    expect(pre).toHaveLength(1);
+    expect(clef.length).toBeGreaterThan(0);
+    expect(pre[0].event_key).toMatch(/^ev:/);
+    for (const r of clef) expect(r.event_key).toBe(pre[0].event_key);
+    expect(pre[0].event_key).toBe(opaqueEventKey(ackComment(), body));
+  });
+});
+
+describe("COS_PREFILTER_LIVE flag", () => {
+  test.each(["1", "true", "TRUE", " true "])("%p → LIVE", (v) => expect(cosPrefilterLive({ COS_PREFILTER_LIVE: v })).toBe(true));
+  test.each([undefined, "", "0", "false", "yes", "on", "2"])("%p → SHADOW", (v) =>
+    expect(cosPrefilterLive({ COS_PREFILTER_LIVE: v })).toBe(false));
+});
+
+describe("decideCosPrefilterAfterFetch (unit)", () => {
+  test("pass verdicts return without fetching", async () => {
+    const c = ctx();
+    expect(await decideCosPrefilterAfterFetch({} as Env, c, txt("please send"))).toMatchObject({ decision: "pass" });
+    expect(c.notionFetchFailReason).toBeUndefined();
   });
 });

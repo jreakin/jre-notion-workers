@@ -30,6 +30,8 @@
  *   check with `candidate_false_skip`) → `prefilter_false_drop`;
  * - drops with no Clef verdict are reported per reason (`prefilter.unscored_by_reason`), not failed.
  */
+import { MUST_WAKE_OVERRIDE_NAMES } from "./clef-overrides.js";
+
 export const RELAY_ERROR_RATE_MAX = 0.02;
 const ERROR_RE = /^(clef_error:|clef_timeout$|clef_bad_output$|clef_ai_unbound$|clef_gateway_unset$)/;
 /** Clef never reachable: any such row (wake path or false-skip check) fails the window. */
@@ -38,12 +40,13 @@ export const RELAY_CONFIG_ERRORS: ReadonlySet<string> = new Set(["clef_ai_unboun
 type Row = Record<string, unknown>;
 
 /** Clef override reasons that mean "must wake CoS"; a would_drop on such an event is a breach. */
-export const PREFILTER_MUST_WAKE: ReadonlySet<string> = new Set([
+export const PREFILTER_MUST_WAKE: ReadonlySet<string> = new Set<string>([
+  ...MUST_WAKE_OVERRIDE_NAMES,
   "john_authored",
-  "john_mention",
-  "submitted_changed",
-  "needs_john_changed",
-  "needs_john_or_sensitive",
+  // Page fetch failed / unreadable: fail open, a drop is a breach.
+  "notion_fetch_failed",
+  "notion_fetch_timeout",
+  "notion_token_missing",
 ]);
 
 export type PrefilterGrade = {

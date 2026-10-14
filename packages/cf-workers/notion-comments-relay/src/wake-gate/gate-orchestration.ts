@@ -284,7 +284,7 @@ async function storeAdoptedAtDedupe(
   }
 }
 
-async function fetchNotionPageOutcome(
+export async function fetchNotionPageOutcome(
   pageId: string,
   env: Env,
 ): Promise<{ ok: true; page: Record<string, unknown> } | { ok: false; reason: string }> {

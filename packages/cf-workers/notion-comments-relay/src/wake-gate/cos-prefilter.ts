@@ -1,30 +1,31 @@
 /**
  * Chief of Staff pre-filter (LOCK-61): events that should never wake CoS.
  *
- *  1. ack_only            comment whose whole text is an acknowledgement ("thanks", "ok", "+1", "done",
- *                          emoji-only, ...);
- *  2. self_echo_bot       comment posted by the GrokBot Fleet Comments integration bot (CoS's own reply);
- *     self_echo_lane      comment that starts with a lane prefix ("CoS:", "[BCH]", "Chief of Staff —", ...);
+ *  1. ack_only            comment whose whole text is an acknowledgement ("thanks", "ok", "+1", or only
+ *                          POSITIVE emoji from an allowlist). "done" / "will do" are NOT acks (a teammate
+ *                          reporting completion still wakes CoS). 👎 ❌ 🛑 ⚠️ ❓ and any other emoji pass;
+ *  2. self_echo_bot       comment posted only by the GrokBot Fleet Comments integration bot (CoS's own reply);
+ *     self_echo_lane      comment by a bot author (Fleet Comments bot or FLEET_COMMENTS_BOT_NOTION_USER_IDS)
+ *                          that starts with a CoS lane prefix ("CoS:", "[Chief of Staff]", ...). Humans
+ *                          writing "CoS: can you…" always pass;
  *  3. non_actionable_property  page.properties_updated touching neither Submitted nor Needs John (the
  *                          existing properties_updated rule; inert until SUBMITTED_PROPERTY_IDS and
  *                          NEEDS_JOHN_PROPERTY_IDS are both set).
  *
- * Hard overrides always win (never dropped): John authored, any John @mention, Needs John (set or
- * changed), Submitted changed. Unknown / missing text never counts as an ack.
+ * Fail open: JOHN_NOTION_USER_IDS unset → never drop (john_ids_unset, as Clef). The decision is made
+ * AFTER the page fetch (decideCosPrefilterAfterFetch), so Needs John / Sensitive / Kind are real; a
+ * failed fetch passes. Overrides: John authored, plus the shared MUST_WAKE_OVERRIDE_NAMES list
+ * (clef-overrides.ts) also used by the Clef gate and gradeRelayWindow. Unknown text is never an ack.
  *
- * Mode: COS_PREFILTER_LIVE=1 drops the forward; otherwise SHADOW — log `would_drop` and forward anyway.
+ * Mode: COS_PREFILTER_LIVE=1|true drops the forward; otherwise SHADOW — log `would_drop`, forward anyway.
  * Rows go to stream `cos_prefilter` with an opaque `event_key` shared with the Clef rows for the same
  * event, so gradeRelayWindow can check every would_drop against Clef's verdict.
  */
 import type { Env } from "../env.js";
-import { payloadHasJohnMention } from "./clef-overrides.js";
-import {
-  explicitPropertyRuleActive,
-  isJohn,
-  isTruthyFlag,
-  needsJohnPropertyChanged,
-  submittedPropertyChanged,
-} from "./gate-context-safety.js";
+import { mustWakeOverrideReason } from "./clef-overrides.js";
+import { enrichContextFromNotionPage, fetchNotionPageOutcome } from "./gate-orchestration.js";
+import { parseAdDocsPropertiesFromNotionPage } from "./fleet-locks-properties.js";
+import { explicitPropertyRuleActive, isJohn } from "./gate-context-safety.js";
 import type { GateEventContext } from "./gate-event-types.js";
 import { idInNotionIdSet } from "./notion-ids.js";
 import { enqueueGateLogRow } from "../gate-log-ring.js";
@@ -48,15 +49,18 @@ const ACK_PHRASES = new Set([
   "thanks", "thank you", "thank you so much", "thanks so much", "thanks a lot", "thx", "ty", "tysm", "tks",
   "ok", "okay", "k", "kk", "okey", "ok thanks", "ok thank you", "okay thanks", "ok thx", "ok ty",
   "+1", "plus one", "ack", "acked", "noted", "got it", "gotcha", "roger", "cool", "nice", "great",
-  "awesome", "perfect", "sounds good", "will do", "done", "all done", "done thanks", "yep", "yup",
+  "awesome", "perfect", "sounds good", "yep", "yup",
   "great thanks", "perfect thanks", "cool thanks", "nice thanks", "got it thanks", "noted thanks",
 ]);
 
-/** Lane prefixes used by fleet agents when they sign a comment. Case-insensitive. */
-const DEFAULT_LANE_PREFIXES = [
-  "CoS", "Chief of Staff", "BCH", "Bot Computer Harness", "AS", "Abstract Secretary", "dr eggbot", "Clef",
-  "Grok Bot", "GrokBot",
-];
+/** CoS's own lane prefixes (only checked on bot-authored comments). Case-insensitive. */
+const DEFAULT_LANE_PREFIXES = ["CoS", "Chief of Staff"];
+
+/** Positive / acknowledging emoji. Emoji-only comments drop only when every emoji is in this set. */
+const ACK_EMOJI = new Set([
+  "👍", "🙏", "✅", "✔", "☑", "🎉", "🥳", "❤", "🧡", "💛", "💚", "💙", "💜", "🤍", "🖤", "💯", "👌", "🙌", "👏",
+  "😊", "🙂", "😀", "😃", "😄", "😁", "🤝", "✨", "🚀", "🔥", "💪", "⭐", "🌟", "😍", "🥰", "🫡", "🆗", "👋",
+]);
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -93,8 +97,15 @@ export function commentText(parsed: Record<string, unknown>): string | null {
   return out;
 }
 
-const EMOJI_RE = /\p{Extended_Pictographic}/u;
+const EMOJI_RE = /\p{Extended_Pictographic}/gu;
 const EMOJI_STRIP_RE = /[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f\u20e3]/gu;
+const SKIN_TONE_RE = /[\p{Emoji_Modifier}\u200d\ufe0f\u20e3]/gu;
+
+/** Every pictographic emoji in the text is on the positive allowlist (and there is at least one). */
+function emojisAllPositive(text: string): boolean {
+  const found = text.replace(SKIN_TONE_RE, "").match(EMOJI_RE) ?? [];
+  return found.every((e) => ACK_EMOJI.has(e));
+}
 
 /** True when the whole comment is an acknowledgement. Empty / unknown text is NOT an ack. */
 export function isAckOnly(text: string | null): boolean {
@@ -103,8 +114,10 @@ export function isAckOnly(text: string | null): boolean {
   if (!trimmed || trimmed.length > 60 || trimmed.includes("\u0000")) return false;
   // Questions are never acks ("ok?", "done?").
   if (trimmed.includes("?")) return false;
+  // Any non-allowlisted emoji (👎 ❌ 🛑 ⚠️ ❓ …) means "not an ack", alone or next to "ok".
+  if (!emojisAllPositive(trimmed)) return false;
   const noEmoji = trimmed.replace(EMOJI_STRIP_RE, "");
-  if (EMOJI_RE.test(trimmed) && !/[\p{L}\p{N}]/u.test(noEmoji)) return true; // emoji-only
+  if (/\p{Extended_Pictographic}/u.test(trimmed) && !/[\p{L}\p{N}]/u.test(noEmoji)) return true; // emoji-only
   const norm = noEmoji
     .toLowerCase()
     .replace(/[’']/g, "")
@@ -114,7 +127,7 @@ export function isAckOnly(text: string | null): boolean {
   if (!norm) return false;
   if (/^\+\s?1+$/.test(norm)) return true;
   if (ACK_PHRASES.has(norm)) return true;
-  // "ok ok", "thanks thanks", "done 👍" (emoji already stripped)
+  // "ok ok", "thanks thanks", "ok 👍" (emoji already stripped)
   const words = norm.split(" ");
   if (words.length <= 4) {
     let i = 0;
@@ -129,24 +142,34 @@ export function isAckOnly(text: string | null): boolean {
   return false;
 }
 
-function isSelfBot(ctx: GateEventContext): boolean {
-  const ids = ctx.webhookAuthorIds?.length ? ctx.webhookAuthorIds : ctx.authorId ? [ctx.authorId] : [];
-  if (!ids.length) return false;
+function authorIds(ctx: GateEventContext): string[] {
+  return ctx.webhookAuthorIds?.length ? ctx.webhookAuthorIds : ctx.authorId ? [ctx.authorId] : [];
+}
+
+/** Every author is the GrokBot Fleet Comments bot (CoS's own reply). Mixed authors are not self-echo. */
+function isFleetCommentsBot(ctx: GateEventContext): boolean {
+  const ids = authorIds(ctx);
+  return ids.length > 0 && ids.every((id) => idInNotionIdSet(id, new Set([GROKBOT_FLEET_COMMENTS_BOT_ID])));
+}
+
+/** Every author is a bot: the Fleet Comments bot or a configured FLEET_COMMENTS_BOT_NOTION_USER_IDS id. */
+function isBotAuthor(ctx: GateEventContext): boolean {
+  const ids = authorIds(ctx);
   const bots = new Set([...ctx.fleetCommentsBotIds, GROKBOT_FLEET_COMMENTS_BOT_ID]);
-  // Every author must be the bot (a mixed-author event is not a pure self-echo).
-  return ids.every((id) => idInNotionIdSet(id, bots));
+  return ids.length > 0 && ids.every((id) => idInNotionIdSet(id, bots));
 }
 
 /** Hard overrides: never dropped. Returns the override name or null. */
 export function cosPrefilterOverride(ctx: GateEventContext, parsed: Record<string, unknown>): string | null {
+  // Fail open, matching Clef: without John's ids we cannot tell John's comments apart.
+  if (ctx.johnUserIds.size === 0) return "john_ids_unset";
   if (isJohn(ctx)) return "john_authored";
-  if (payloadHasJohnMention(parsed, ctx)) return "john_mention";
+  if (ctx.notionFetchFailReason) return ctx.notionFetchFailReason;
+  const shared = mustWakeOverrideReason(ctx, parsed);
+  if (shared) return shared;
   // Plain-text "@John" (no mention node) still counts.
   const text = commentText(parsed);
   if (text && /@john\b/i.test(text)) return "john_mention";
-  if (submittedPropertyChanged(ctx)) return "submitted_changed";
-  if (needsJohnPropertyChanged(ctx)) return "needs_john_changed";
-  if (isTruthyFlag(ctx.needsJohnNow) || isTruthyFlag(ctx.properties?.needsJohn)) return "needs_john";
   return null;
 }
 
@@ -160,9 +183,11 @@ export function decideCosPrefilter(
     if (override) return { decision: "pass", reason: `override:${override}` };
     const type = ctx.notionType ?? "";
     if (type === "comment.created" || type === "comment.updated") {
-      if (isSelfBot(ctx)) return { decision: "would_drop", reason: "self_echo_bot" };
+      if (isFleetCommentsBot(ctx)) return { decision: "would_drop", reason: "self_echo_bot" };
       const text = commentText(parsed);
-      if (text !== null && lanePrefixRe(env).test(text)) return { decision: "would_drop", reason: "self_echo_lane" };
+      if (text !== null && isBotAuthor(ctx) && lanePrefixRe(env).test(text)) {
+        return { decision: "would_drop", reason: "self_echo_lane" };
+      }
       if (isAckOnly(text)) return { decision: "would_drop", reason: "ack_only" };
       return { decision: "pass", reason: text === null ? "comment_text_unavailable" : "actionable_comment" };
     }
@@ -177,8 +202,49 @@ export function decideCosPrefilter(
   }
 }
 
+/**
+ * Decide after the page fetch. A cheap pre-check skips the fetch when nothing would drop anyway; for a
+ * candidate drop the page is fetched (gate enrichment, plus Needs John / Sensitive / Kind for comment
+ * pages) and the decision re-made with real properties. Any fetch failure → pass (fail open).
+ */
+export async function decideCosPrefilterAfterFetch(
+  env: Env,
+  ctx: GateEventContext,
+  parsed: Record<string, unknown>,
+): Promise<CosPrefilterVerdict> {
+  const pre = decideCosPrefilter(ctx, parsed, env);
+  if (pre.decision !== "would_drop") return pre;
+  try {
+    await enrichContextFromNotionPage(env, ctx, ctx.notionType);
+    if (ctx.isCommentEvent && !ctx.propertiesAvailable && !ctx.notionFetchFailReason) {
+      if (!ctx.pageId) {
+        ctx.notionFetchFailReason = "notion_page_unreadable";
+      } else {
+        const fetched = await fetchNotionPageOutcome(ctx.pageId, env);
+        if (!fetched.ok) {
+          ctx.notionFetchFailReason = fetched.reason;
+        } else {
+          const props = parseAdDocsPropertiesFromNotionPage(fetched.page);
+          if (!props.ok) {
+            ctx.properties = { ...(ctx.properties ?? {}), adDocsParseOk: false };
+          } else {
+            ctx.properties = { ...(ctx.properties ?? {}), ...props.properties, adDocsParseOk: true };
+            ctx.propertiesAvailable = true;
+            ctx.needsJohnNow = props.properties.needsJohn === true;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    ctx.notionFetchFailReason = `error:${err instanceof Error ? err.name : "Error"}`;
+  }
+  return decideCosPrefilter(ctx, parsed, env);
+}
+
+/** COS_PREFILTER_LIVE: "1" or "true" (any case) = LIVE; anything else (unset, "", "0", …) = SHADOW. */
 export function cosPrefilterLive(env: Pick<Env, "COS_PREFILTER_LIVE">): boolean {
-  return env.COS_PREFILTER_LIVE?.trim() === "1";
+  const v = env.COS_PREFILTER_LIVE?.trim().toLowerCase();
+  return v === "1" || v === "true";
 }
 
 /** Log one prefilter row (stdout + gate_log ring, fail-open). Never logs text or raw ids. */
