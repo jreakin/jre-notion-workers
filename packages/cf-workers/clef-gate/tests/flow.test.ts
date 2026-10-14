@@ -106,7 +106,7 @@ describe("flow", () => {
     expect(e?.error_reason).toBe("clef_bad_output");
     expect(e?.shadow_label).toBe("escalate");
   });
-  test("jre@mail.grokbot.com excluded entirely: no AI, no log row, counter only", async () => {
+  test("jre@mail.grokbot.com excluded entirely: no AI, no stored row, counter + masked drop log", async () => {
     cap = captureLogs();
     for (const p of [payload({ override: "grokbot_inbox" }), payload({ existing_labels: ["jre@mail.grokbot.com"] })]) {
       const { env, calls, kv } = makeEnv();
@@ -150,7 +150,13 @@ describe("flow", () => {
     const { env, calls } = makeEnv();
     expect(await processEmailShadow(env, escaped)).toBeNull();
     expect(calls.length).toBe(0);
-    expect(cap.lines.length).toBe(0);
+    expect(cap.lines.length).toBe(1);
+    const drop = JSON.parse(cap.lines[0]);
+    expect(drop.event).toBe("excluded");
+    expect(drop.error_reason).toBe("excluded_grokbot");
+    expect(drop.msg_id_hash).toBeNull();
+    expect(cap.lines[0]).not.toContain("grokbot.com");
+    noSecretsIn(cap.lines);
   });
   test("outcome: TrainSpam rescue turns a would_skip into a false skip", async () => {
     cap = captureLogs();
@@ -188,14 +194,14 @@ describe("http", () => {
     expect((await worker.fetch(req("/clef/email-shadow", "Bearer "), unset.env, ctx().c)).status).toBe(401);
     expect(calls.length).toBe(0);
   });
-  test("chunked body over the read cap is dropped without processing", async () => {
+  test("chunked body over the read cap → 413, never processed", async () => {
     cap = captureLogs();
     const { env, calls } = makeEnv();
     const big = new TextEncoder().encode("x".repeat(20_000));
     const stream = new ReadableStream({ start(c) { c.enqueue(big); c.close(); } });
     const k = ctx();
     const r = await worker.fetch(new Request("https://w.example/clef/email-shadow", { method: "POST", headers: { authorization: "Bearer tok-123" }, body: stream, duplex: "half" } as RequestInit), env, k.c);
-    expect(r.status).toBe(202);
+    expect(r.status).toBe(413);
     expect(k.p.length).toBe(0);
     expect(calls.length).toBe(0);
   });
@@ -211,18 +217,98 @@ describe("http", () => {
     await Promise.all(k.p);
     expect(calls.length).toBe(1);
   });
-  test("authorized → 202 {logged:true}, even for garbage; other paths 404/405", async () => {
+  test("authorized → 202 only once stored; garbage → 400; other paths 404/405", async () => {
     cap = captureLogs();
     const { env, calls } = makeEnv();
     const k = ctx();
     const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c);
     expect(r.status).toBe(202);
-    expect((await r.json()) as unknown).toEqual({ logged: true });
+    expect((await r.json()) as unknown).toEqual({ logged: true, verdict: "pending" });
     await Promise.all(k.p);
     expect(calls.length).toBe(1);
-    expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123", "POST", "{{"), env, ctx().c)).status).toBe(202);
-    expect((await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", "{}"), env, ctx().c)).status).toBe(202);
+    expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123", "POST", "{{"), env, ctx().c)).status).toBe(400);
+    expect((await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", "{}"), env, ctx().c)).status).toBe(400);
     expect((await worker.fetch(req("/clef/email-shadow/", "Bearer tok-123"), env, ctx().c)).status).toBe(404);
     expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123", "GET"), env, ctx().c)).status).toBe(405);
+  });
+
+  test("202 means the row is in KV before the response (pending verdict), then Clef rewrites it", async () => {
+    cap = captureLogs();
+    const { env, kv } = makeEnv();
+    const k = ctx();
+    const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c);
+    expect(r.status).toBe(202);
+    const pending = JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "null");
+    expect(pending.event).toBe("decision");
+    expect(pending.triage_disposition).toBe("escalate_john");
+    expect(pending.shadow_label).toBeNull();
+    expect(pending.error_reason).toBe("clef_pending");
+    await Promise.all(k.p);
+    const done = JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "null");
+    expect(done.shadow_label).toBe("would_skip");
+    expect(done.error_reason).toBeNull();
+    noSecretsIn([...kv.data.values()]);
+  });
+  test("invalid payload → 400 with masked rejected log, nothing stored", async () => {
+    cap = captureLogs();
+    const { env, kv, calls } = makeEnv();
+    const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123", "POST", JSON.stringify(payload({ v: 2 }))), env, ctx().c);
+    expect(r.status).toBe(400);
+    expect([...kv.data.keys()].some((x) => x.startsWith(RING_PREFIX))).toBe(false);
+    expect(calls.length).toBe(0);
+    expect(JSON.parse(cap.lines[0]).event).toBe("rejected");
+    noSecretsIn(cap.lines);
+  });
+  test("oversized by content-length → 413 and a masked log line", async () => {
+    cap = captureLogs();
+    const { env } = makeEnv();
+    const r = await worker.fetch(new Request("https://w.example/clef/email-shadow", { method: "POST", headers: { authorization: "Bearer tok-123", "content-length": "99999" }, body: "{}" }), env, ctx().c);
+    expect(r.status).toBe(413);
+    expect(JSON.parse(cap.lines[0]).error_reason).toBe("payload_too_large");
+  });
+  test("grokbot exclusion → 200 logged:false (not 202)", async () => {
+    cap = captureLogs();
+    const { env } = makeEnv();
+    const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123", "POST", JSON.stringify(payload({ override: "grokbot_inbox" }))), env, ctx().c);
+    expect(r.status).toBe(200);
+    expect((await r.json()) as unknown).toEqual({ logged: false, reason: "excluded" });
+  });
+  test("KV write failure → 500 + masked store_failed log, no background work", async () => {
+    cap = captureLogs();
+    const { env, calls } = makeEnv();
+    (env.CLEF_KV as unknown as { put: () => Promise<void> }).put = async () => { throw new Error("KV PUT failed: 429"); };
+    const k = ctx();
+    const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c);
+    expect(r.status).toBe(500);
+    expect(k.p.length).toBe(0);
+    expect(calls.length).toBe(0);
+    const line = JSON.parse(cap.lines.at(-1) ?? "{}");
+    expect(line.event).toBe("store_failed");
+    expect(line.error_reason).toBe("kv_put_failed");
+    noSecretsIn(cap.lines);
+    const o = await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam" })), env, ctx().c);
+    expect(o.status).toBe(500);
+  });
+  test("outcome stored inline → 202; oversized outcome → 413", async () => {
+    cap = captureLogs();
+    const { env, kv } = makeEnv();
+    const o = await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam" })), env, ctx().c);
+    expect(o.status).toBe(202);
+    expect(JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "{}").event).toBe("outcome");
+    const big = JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam", pad: "x".repeat(2000) });
+    expect((await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", big), env, ctx().c)).status).toBe(413);
+  });
+  test("outcome racing the Clef call is not clobbered by the completed verdict", async () => {
+    cap = captureLogs();
+    const { env, kv } = makeEnv();
+    const k = ctx();
+    expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c)).status).toBe(202);
+    await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam", escalated: false })), env, ctx().c);
+    await Promise.all(k.p);
+    const row = JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "{}");
+    expect(row.event).toBe("outcome");
+    expect(row.triage_disposition).toBe("spam");
+    expect(row.shadow_label).toBe("would_skip");
+    expect(row.agree).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import { bearerOk } from "./auth.js";
 import type { Env } from "./env.js";
-import { processEmailShadow, processOutcome } from "./shadow.js";
+import { admitEmailShadow, completeEmailShadow, emitFailure, handleOutcome } from "./shadow.js";
 
 const READ_CAP_BYTES = 16_384;
 
@@ -33,7 +33,7 @@ export async function readCapped(request: Request, cap: number): Promise<string 
   return new TextDecoder().decode(buf);
 }
 
-const LOGGED = () => Response.json({ logged: true }, { status: 202 });
+const reply = (status: number, body: Record<string, unknown>) => Response.json(body, { status });
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -46,15 +46,25 @@ export default {
       return new Response("unauthorized", { status: 401 });
     }
     const len = Number.parseInt(request.headers.get("content-length") ?? "0", 10);
-    if (Number.isFinite(len) && len > READ_CAP_BYTES) {
-      return LOGGED(); // oversized: dropped, never read
-    }
-    const body = await readCapped(request, READ_CAP_BYTES);
+    const body = Number.isFinite(len) && len > READ_CAP_BYTES ? null : await readCapped(request, READ_CAP_BYTES);
     if (body === null) {
-      return LOGGED(); // oversized (e.g. chunked) or unreadable: dropped
+      emitFailure("store_failed", "payload_too_large", null); // oversized/unreadable: never parsed
+      return reply(413, { logged: false, reason: "payload_too_large" });
     }
-    const work = route === "decision" ? processEmailShadow(env, body) : processOutcome(env, body);
-    ctx.waitUntil(work.then(() => undefined).catch(() => undefined));
-    return LOGGED();
+    try {
+      if (route === "outcome") {
+        const r = await handleOutcome(env, body);
+        return reply(r.status, { logged: r.status === 202, reason: r.status === 202 ? undefined : r.entry?.error_reason });
+      }
+      const a = await admitEmailShadow(env, body);
+      if (a.kind === "excluded") return reply(200, { logged: false, reason: "excluded" });
+      if (a.kind !== "stored") return reply(a.status, { logged: false, reason: a.entry.error_reason });
+      // Row (triage truth) is durably stored; the Clef verdict is added afterwards and rewrites the row.
+      ctx.waitUntil(completeEmailShadow(env, a.item, a.entry, a.mode));
+      return reply(202, { logged: true, verdict: "pending" });
+    } catch {
+      emitFailure("store_failed", "internal_error", null);
+      return reply(500, { logged: false, reason: "internal_error" });
+    }
   },
 } satisfies ExportedHandler<Env>;
