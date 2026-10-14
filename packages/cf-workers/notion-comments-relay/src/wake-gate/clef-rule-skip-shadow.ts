@@ -20,6 +20,13 @@ export const RULE_SKIP_SAMPLE_PERCENT_DEFAULT = 50;
 /** Persist the soft counter every N calls (≈ cap/N KV writes/day). */
 export const RULE_SKIP_COUNTER_PERSIST_EVERY = 10;
 export const RULE_SKIP_COUNTER_NAME = "clef:rule_skip_calls";
+/** Dedupe repeats have their own cap so sampled rule-skip checks can never starve them. */
+export const DEDUPE_REPEAT_DAILY_CAP_DEFAULT = 100;
+export const DEDUPE_REPEAT_COUNTER_NAME = "clef:dedupe_repeat_calls";
+
+export function readDedupeRepeatDailyCap(env: Env): number {
+  return parsePositiveInt(env.CLEF_DEDUPE_REPEAT_DAILY_CAP, DEDUPE_REPEAT_DAILY_CAP_DEFAULT);
+}
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number.parseInt(raw?.trim() ?? "", 10);
@@ -85,6 +92,11 @@ function takeExcludedLogSlot(): { log: boolean; suppressed: number } {
 export type RuleSkipShadowDeps = {
   log: (entry: ClefShadowLogEntry) => Promise<void>;
   pageEventsLast60s: number;
+  /**
+   * Dedupe repeats: score 100% (bypass the sampler; still capped). Every outcome then logs a row with
+   * `scored` true/false, so the grader can fail the window on an unscored repeat.
+   */
+  scoreAll?: boolean;
 };
 
 /**
@@ -111,26 +123,32 @@ export async function runRuleSkipClefShadow(
 
     const modeRes = await resolveClefMode(env);
     if (!modeRes.allowClefCall) {
-      return; // mode off: no extra row, no call (base row already logged)
+      if (deps.scoreAll) await deps.log({ ...row, scored: false, reason: "rule_skip:mode_off" });
+      return; // mode off: no call (base row already logged)
     }
     if (ruleSkipExcludedGrokbot(parsed)) {
       const slot = takeExcludedLogSlot();
-      if (slot.log) {
-        await deps.log({ ...row, reason: "rule_skip:excluded_grokbot" });
+      if (slot.log || deps.scoreAll) {
+        // Excluded by policy (bot's own inbox): not scored, and not counted as an unscored repeat.
+        await deps.log({ ...row, scored: false, excluded: true, reason: "rule_skip:excluded_grokbot" });
       }
       return; // bot's own inbox: never sent to Clef
     }
-    if (!ruleSkipSampled(itemId, readRuleSkipSamplePercent(env))) {
+    if (!deps.scoreAll && !ruleSkipSampled(itemId, readRuleSkipSamplePercent(env))) {
       return; // unsampled: no extra row keeps log + KV volume flat
     }
     const cap = await trySoftDailyConsume(
       env.RELAY_KV,
-      RULE_SKIP_COUNTER_NAME,
-      readRuleSkipDailyCap(env),
+      deps.scoreAll ? DEDUPE_REPEAT_COUNTER_NAME : RULE_SKIP_COUNTER_NAME,
+      deps.scoreAll ? readDedupeRepeatDailyCap(env) : readRuleSkipDailyCap(env),
       RULE_SKIP_COUNTER_PERSIST_EVERY,
     );
     if (!cap.ok) {
-      await deps.log({ ...row, reason: "rule_skip_daily_cap" });
+      await deps.log(
+        deps.scoreAll
+          ? { ...row, scored: false, cap_exhausted: true, reason: "dedupe_repeat_daily_cap" }
+          : { ...row, scored: false, reason: "rule_skip_daily_cap" },
+      );
       return;
     }
 
@@ -142,7 +160,7 @@ export async function runRuleSkipClefShadow(
     });
     const flash = await invokeClefFlash(env, state);
     if (!flash.ok) {
-      await deps.log({ ...row, reason: `rule_skip:${flash.reason}` });
+      await deps.log({ ...row, scored: false, reason: `rule_skip:${flash.reason}` });
       return;
     }
     const run = flash.parsed;
@@ -156,6 +174,7 @@ export async function runRuleSkipClefShadow(
       model: run.model,
       latency_ms: run.latencyMs,
       candidate_false_skip: run.decision === "would_wake",
+      scored: true,
       reason: "rule_skip:clef_ok",
     });
   } catch (err) {

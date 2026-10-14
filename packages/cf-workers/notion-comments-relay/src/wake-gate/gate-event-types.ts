@@ -58,6 +58,12 @@ export type ClefShadowLogEntry = {
   item_event_count?: number;
   /** Rule said wake, dedupe would drop it: one saved wake. Sum per unique item_id for grading. */
   saved_wake?: boolean;
+  /** rule_skip rows: true when Clef actually scored this skip (false = cap / error / mode off / excluded). */
+  scored?: boolean;
+  /** rule_skip rows: excluded by policy (jre@mail.grokbot.com); never scored, never counted as unscored. */
+  excluded?: boolean;
+  /** rule_skip rows for dedupe repeats: unscored because the dedupe-repeat daily cap was exhausted. */
+  cap_exhausted?: boolean;
 };
 
 export type FleetLocksFieldSnapshot = {
