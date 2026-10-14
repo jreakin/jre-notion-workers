@@ -85,6 +85,11 @@ function takeExcludedLogSlot(): { log: boolean; suppressed: number } {
 export type RuleSkipShadowDeps = {
   log: (entry: ClefShadowLogEntry) => Promise<void>;
   pageEventsLast60s: number;
+  /**
+   * Dedupe repeats: score 100% (bypass the sampler; still capped). Every outcome then logs a row with
+   * `scored` true/false, so the grader can fail the window on an unscored repeat.
+   */
+  scoreAll?: boolean;
 };
 
 /**
@@ -111,16 +116,18 @@ export async function runRuleSkipClefShadow(
 
     const modeRes = await resolveClefMode(env);
     if (!modeRes.allowClefCall) {
-      return; // mode off: no extra row, no call (base row already logged)
+      if (deps.scoreAll) await deps.log({ ...row, scored: false, reason: "rule_skip:mode_off" });
+      return; // mode off: no call (base row already logged)
     }
     if (ruleSkipExcludedGrokbot(parsed)) {
       const slot = takeExcludedLogSlot();
-      if (slot.log) {
-        await deps.log({ ...row, reason: "rule_skip:excluded_grokbot" });
+      if (slot.log || deps.scoreAll) {
+        // Excluded by policy (bot's own inbox): not scored, and not counted as an unscored repeat.
+        await deps.log({ ...row, scored: false, excluded: true, reason: "rule_skip:excluded_grokbot" });
       }
       return; // bot's own inbox: never sent to Clef
     }
-    if (!ruleSkipSampled(itemId, readRuleSkipSamplePercent(env))) {
+    if (!deps.scoreAll && !ruleSkipSampled(itemId, readRuleSkipSamplePercent(env))) {
       return; // unsampled: no extra row keeps log + KV volume flat
     }
     const cap = await trySoftDailyConsume(
@@ -130,7 +137,7 @@ export async function runRuleSkipClefShadow(
       RULE_SKIP_COUNTER_PERSIST_EVERY,
     );
     if (!cap.ok) {
-      await deps.log({ ...row, reason: "rule_skip_daily_cap" });
+      await deps.log({ ...row, scored: false, reason: "rule_skip_daily_cap" });
       return;
     }
 
@@ -142,7 +149,7 @@ export async function runRuleSkipClefShadow(
     });
     const flash = await invokeClefFlash(env, state);
     if (!flash.ok) {
-      await deps.log({ ...row, reason: `rule_skip:${flash.reason}` });
+      await deps.log({ ...row, scored: false, reason: `rule_skip:${flash.reason}` });
       return;
     }
     const run = flash.parsed;
@@ -156,6 +163,7 @@ export async function runRuleSkipClefShadow(
       model: run.model,
       latency_ms: run.latencyMs,
       candidate_false_skip: run.decision === "would_wake",
+      scored: true,
       reason: "rule_skip:clef_ok",
     });
   } catch (err) {

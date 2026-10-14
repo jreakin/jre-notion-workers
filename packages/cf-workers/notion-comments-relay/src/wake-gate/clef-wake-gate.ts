@@ -32,12 +32,15 @@ export function readItemDedupeWindowMs(env: Env): number {
 
 /**
  * Dedupe key, or null (never dedupe):
- * - comment.* → the comment's own id + event type (a different comment on the same page is never a repeat);
+ * - comment.updated → never (an edit can add content);
+ * - other comment.* → the comment's own id + event type (a different comment on the same page is never a repeat);
  * - page events → page id + event type, ONLY when SUBMITTED_PROPERTY_IDS and NEEDS_JOHN_PROPERTY_IDS are
  *   both configured (until then a Needs John flip could not be told apart, so page dedupe stays off).
  */
 export function itemDedupeKey(ctx: GateEventContext, notionType: string | null): string | null {
   if (ctx.isCommentEvent) {
+    // Edits can add real content (an ask, a decision): comment.updated is never deduped.
+    if (notionType === "comment.updated") return null;
     return ctx.commentId ? `comment:${normalizeNotionUuid(ctx.commentId)}|${notionType ?? ""}` : null;
   }
   const idsConfigured = ctx.submittedPropertyIds.size > 0 && (ctx.needsJohnPropertyIds?.size ?? 0) > 0;
@@ -298,6 +301,7 @@ export async function runClefShadowWakeGate(
     await runRuleSkipClefShadow(env, ctx, notionType, parsed, itemId, entry, {
       log: (row) => appendClefShadowLog(env, row),
       pageEventsLast60s: ctx.pageId ? peekPageEventCount(ctx.pageId) : 0,
+      scoreAll: true, // 100% of dedupe repeats are scored (capped); each logs scored true/false
     });
     return;
   }

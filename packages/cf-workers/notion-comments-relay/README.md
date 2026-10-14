@@ -281,17 +281,27 @@ adoption) still wins.
 **Pre-Clef dedupe (shadow):** this runs on the wake path, after the hard overrides (John, Submitted, Needs John,
 mentions…) and before mode/cap/Clef. An event is a repeat when its dedupe key was already seen inside
 `CLEF_ITEM_DEDUPE_WINDOW_S` (default 600 s, counted from the first event; `0` turns it off).
-- `comment.*` events: key = the **comment id** (`entity.id`) + event type. A different comment on the same page is
+- `comment.updated` is **never** deduped, because an edit can add real content.
+- Other `comment.*` events: key = the **comment id** (`entity.id`) + event type. A different comment on the same page is
   never a repeat, and a comment with no id is never deduped.
 - Page events: key = page id + event type, **only when `SUBMITTED_PROPERTY_IDS` and `NEEDS_JOHN_PROPERTY_IDS` are
   both set**. Until then, page events are never deduped.
 - A repeat logs `clef_decision:"would_skip"`, `reason:"dedupe_repeat_item"`, `dedupe_repeat:true`,
-  `item_event_count`, and `saved_wake:true`. It makes no wake-path Clef call. It is then sent through the **same
-  sampled + capped false-skip check as rule skips** (an extra `decision:"rule_skip"` row with `dedupe_repeat:true` and
-  `candidate_false_skip`).
+  `item_event_count`, and `saved_wake:true`. It makes no wake-path Clef call. **Every** repeat (100%, bypassing the
+  rule-skip sampler, still capped) then goes through the false-skip check. That adds a `decision:"rule_skip"` row with
+  `dedupe_repeat:true`, `scored:true|false` and `candidate_false_skip`. A cap hit, Clef error or mode-off logs
+  `scored:false`; excluded mail logs `excluded:true`.
 - Grading: report `saved_wake` rows separately from rule skips. Group them by `item_id` to count saved wakes per item.
 - The dedupe is isolate-local (no KV writes), so a repeat landing on another isolate isn't deduped. That can
   undercount savings but never over-skips.
+
+**Grading (`src/wake-gate/grade-relay.ts` `gradeRelayWindow(rows)`):** pass the window's `clef_wake_shadow`
+rows. It reports per-UTC-day wake-path Clef calls, errors and error rate, plus rule skips and dedupe repeats, each
+split into scored and unscored, plus false skips and saved wakes per `item_id`. The window **fails** on any scored
+false skip (`candidate_false_skip`), on **any unscored dedupe repeat**, on any day with Clef error rate
+> `RELAY_ERROR_RATE_MAX` = 2%, or on any `clef_ai_unbound`. Rule skips are sampled, so unscored rule skips are
+reported but don't fail the window. "Zero false skips" for rule skips therefore means zero among the scored ones;
+always quote `rule_skips_scored`/`rule_skips` with a pass.
 
 **Needs John hard override:** for `page.properties_updated`, the `needs_john_changed` override fires when the page's
 Needs John flag is set (from enriched/fetched properties). It also fires when `NEEDS_JOHN_PROPERTY_IDS` is set and a
