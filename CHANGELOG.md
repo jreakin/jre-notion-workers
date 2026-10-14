@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file.
 Release Please maintains this file going forward from v1.0.0.
 
+## [1.5.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.4.0...jre-notion-workers-v1.5.0) (2026-10-14)
+
+
+### Features
+
+* **dev:** GitNexus code graph for cloud agents (pilot) [BCH ← John] — LOCK-61 ([#43](https://github.com/jreakin/jre-notion-workers/issues/43)) ([bd1902b](https://github.com/jreakin/jre-notion-workers/commit/bd1902bb08e6f5ffa80fa9e788be1b6b21cd6b35))
+
 ## [1.4.0](https://github.com/jreakin/jre-notion-workers/compare/jre-notion-workers-v1.3.1...jre-notion-workers-v1.4.0) (2026-10-11)
 
 
