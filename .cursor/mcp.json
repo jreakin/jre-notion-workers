@@ -7,12 +7,15 @@
       ]
     },
     "gitnexus": {
-      "command": "gitnexus",
+      "type": "stdio",
+      "command": "${workspaceFolder}/tools/gitnexus/node_modules/.bin/gitnexus",
       "args": [
         "mcp"
       ],
       "env": {
-        "GITNEXUS_NO_UPDATE_NOTIFIER": "1"
+        "GITNEXUS_NO_UPDATE_NOTIFIER": "1",
+        "SCARF_ANALYTICS": "false",
+        "GITNEXUS_LBUG_BUFFER_POOL_SIZE": "536870912"
       }
     }
   }

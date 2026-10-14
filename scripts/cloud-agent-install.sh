@@ -1,41 +1,45 @@
 #!/usr/bin/env bash
 # Cursor Cloud Agent install step (.cursor/environment.json "install").
-# Runs at Build time; must stay idempotent (Cursor may re-run it on prepared disk).
-#
-# 1. Require Node >= 22 (repo engines + GitNexus requirement).
-# 2. Package deps: `bun install` in jre-notion-workers/ (same as the prior
-#    dashboard update script; NOT --frozen-lockfile, see jre-notion-workers/AGENTS.md).
-# 3. GitNexus code graph (pilot, LOCK-61): pinned global install + index.
-#    The index (.gitnexus/) is local and gitignored, never committed.
+# Runs at Build time; idempotent. Package deps always install; GitNexus is
+# optional tooling and can never fail the Build.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# shellcheck source=scripts/gitnexus-env.sh
+. scripts/gitnexus-env.sh
 
-GITNEXUS_VERSION="1.6.12"
-
-node_major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
-if [ "$(node_major)" -lt 22 ]; then
-  # Try nvm if the image ships it; otherwise fail loudly (do not silently degrade).
-  if [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
-    # shellcheck disable=SC1091
-    . "${NVM_DIR:-$HOME/.nvm}/nvm.sh"
-    nvm install 22 >/dev/null && nvm alias default 22 >/dev/null
+bun_install() {  # $1 = dir; frozen when a bun.lock exists, plain as fallback
+  local d="$1"
+  if command -v bun >/dev/null 2>&1; then
+    (cd "$d" && { bun install --frozen-lockfile || bun install; })
+  else
+    echo "cloud-agent-install: bun not on PATH; npm install in $d" >&2
+    (cd "$d" && npm install --no-audit --no-fund)
   fi
-fi
-if [ "$(node_major)" -lt 22 ]; then
-  echo "cloud-agent-install: Node >= 22 required, found $(node -v 2>/dev/null || echo none)" >&2
-  exit 1
-fi
+}
 
+# 1. Package dependencies (always).
+#    jre-notion-workers: plain `bun install` (bun.lock may drift; see its AGENTS.md).
 if command -v bun >/dev/null 2>&1; then
   (cd jre-notion-workers && bun install)
 else
-  echo "cloud-agent-install: bun not on PATH; falling back to npm install" >&2
   (cd jre-notion-workers && npm install --no-audit --no-fund)
 fi
+#    Cloudflare workers (wrangler + typescript): bun.lock each, frozen like CI.
+bun_install packages/cf-workers/notion-comments-relay
+bun_install packages/cf-workers/clef-gate
+#    packages/clef-core has no dependencies; packages/workers is the legacy
+#    mirror with no lockfile (not installed, as before).
 
-# GitNexus is optional tooling: a failure here must not fail the Build.
-if [ "$(gitnexus --version 2>/dev/null || true)" != "$GITNEXUS_VERSION" ]; then
-  npm i -g "gitnexus@${GITNEXUS_VERSION}" --no-audit --no-fund \
-    || echo "cloud-agent-install: gitnexus install failed; agents will report impact UNKNOWN" >&2
+# 2. GitNexus (optional). Never fails the Build.
+if ! gitnexus_node_ok; then
+  gitnexus_unknown "node $(node --version 2>/dev/null || echo none) does not satisfy ^22.18.0 || >=24.11.0"
+  exit 0
 fi
-bash scripts/gitnexus-refresh.sh || true
+if ! (cd "$GITNEXUS_TOOL_DIR" && npm ci --no-audit --no-fund); then
+  gitnexus_unknown "npm ci in $GITNEXUS_TOOL_DIR failed"
+  exit 0
+fi
+if ! timeout 300 "$GITNEXUS_BIN" analyze --index-only --skip-agents-md; then
+  gitnexus_unknown "analyze failed or exceeded 300s"
+fi
+exit 0

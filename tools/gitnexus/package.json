@@ -1,0 +1,11 @@
+{
+  "name": "gitnexus-tool",
+  "private": true,
+  "description": "Repo-local, lockfile-pinned GitNexus CLI/MCP for Cursor Cloud Agents (LOCK-61 pilot). Install with `npm ci` via scripts/cloud-agent-install.sh.",
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  },
+  "dependencies": {
+    "gitnexus": "1.6.12"
+  }
+}

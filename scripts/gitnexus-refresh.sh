@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Build/refresh the local GitNexus index. Never fails the caller.
-# --index-only: no AGENTS.md / CLAUDE.md / skills injection (repo docs stay hand-owned).
-# --skip-agents-md: belt-and-braces with --index-only.
+# Refresh the local GitNexus index (environment.json "start").
+# Returns immediately: analyze runs in the background, bounded by `timeout 120`,
+# logging to /tmp/gitnexus-refresh.log. Never fails, never blocks agent start.
+# --index-only/--skip-agents-md: never rewrites AGENTS.md, CLAUDE.md or skills.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-export GITNEXUS_NO_UPDATE_NOTIFIER=1
-if ! command -v gitnexus >/dev/null 2>&1; then
-  echo "gitnexus-refresh: gitnexus not installed; skipping (impact = UNKNOWN)" >&2
+# shellcheck source=scripts/gitnexus-env.sh
+. scripts/gitnexus-env.sh
+LOG="${GITNEXUS_REFRESH_LOG:-/tmp/gitnexus-refresh.log}"
+if ! gitnexus_node_ok || [ ! -x "$GITNEXUS_BIN" ]; then
+  gitnexus_unknown "not installed or unsupported node"
   exit 0
 fi
-gitnexus analyze --index-only --skip-agents-md \
-  || echo "gitnexus-refresh: analyze failed; skipping (impact = UNKNOWN)" >&2
+if [ "${1:-}" = "--foreground" ]; then
+  timeout 120 "$GITNEXUS_BIN" analyze --index-only --skip-agents-md >"$LOG" 2>&1 \
+    || gitnexus_unknown "refresh failed or exceeded 120s (see $LOG)"
+  exit 0
+fi
+nohup timeout 120 "$GITNEXUS_BIN" analyze --index-only --skip-agents-md >"$LOG" 2>&1 </dev/null &
+echo "gitnexus-refresh: started in background (pid $!, log $LOG)" >&2
 exit 0
