@@ -36,6 +36,7 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   - `clef_email_shadow_log:<msg_id_hash>` — decision row (pending → verdict). Written only by `/clef/email-shadow`.
   - `clef_email_shadow_outcome:<msg_id_hash>` — outcome row. Written only by `/clef/email-shadow/outcome` (last write wins). Neither writer touches the other's key, so no overwrite race.
   - Grading reads both and joins with `gradeJoined(decision, outcome)` (outcome triage truth wins; `null` while the verdict is pending).
+- **Grading window:** shadow rows written before this fix (outcome key + idempotent resend) do **not** count toward the 14-day zero-false-skip window. Earlier rows could have an outcome overwritten by a verdict, or a verdict overwritten by a resend. Start the 14-day clock from this fix's deploy.
 - Daily cap `CLEF_EMAIL_DAILY_CALL_CAP` (1000) at `clef:calls:clef_email:<day>` (soft, KV not atomic). The flash sample
   takes a second unit from the same cap, so the effective full-call budget is about 91% of the cap.
 - Request bodies are stream-read with a 16 KB cap (works without content-length); parsed bodies over 8 KB are dropped.
