@@ -15,6 +15,7 @@ import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 import { kvTtl } from "./kv-ttl.js";
 import { flushGateLogRing } from "./gate-log-ring.js";
 import { withMeteredKv } from "./kv-write-meter.js";
+import { claimDebugCaptureSlot } from "./debug-capture-throttle.js";
 
 export { GateLogBuffer } from "./gate-log-do.js";
 import { PLAN_APPROVED_PATH, bearerHeader, handlePlanApprovedAutomation } from "./plan-approved-automation.js";
@@ -520,10 +521,13 @@ export default {
         bodyPreview: rawBody.slice(0, 500),
         notion_type: notionType,
       };
-      try {
-        await env.RELAY_KV.put(LAST_POST_KEY, JSON.stringify(debug));
-      } catch (err) {
-        console.log(JSON.stringify({ event: "debug_kv_put_failed", error: String(err) }));
+      // Throttled (≤1/min/isolate): an unconditional PUT per webhook exceeded the KV write budget.
+      if (claimDebugCaptureSlot()) {
+        try {
+          await env.RELAY_KV.put(LAST_POST_KEY, JSON.stringify(debug));
+        } catch (err) {
+          console.log(JSON.stringify({ event: "debug_kv_put_failed", error: String(err) }));
+        }
       }
 
       const ua = (request.headers.get("user-agent") || "").toLowerCase();
