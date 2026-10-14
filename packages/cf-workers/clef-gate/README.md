@@ -2,10 +2,13 @@
 
 Shadow-only Clef email classifier (Clef Phase 2). Inbox Triage posts one PII-minimized item per processed
 email; the Worker scores it with Workers AI Clef and logs a JSON line to stream `clef_email_shadow`.
-No mailbox access, no labels written, nothing returned to the caller beyond `202 {"logged":true}`.
+No mailbox access, no labels written, nothing returned to the caller beyond a status + `{"logged":…}`.
 
 ## Routes (bearer `CLEF_EMAIL_SHADOW_TOKEN`; missing/unset secret ⇒ 401)
-- `POST /clef/email-shadow` — payload v1 (see spec). Always 202 when authorized.
+- `POST /clef/email-shadow` — payload v1 (see spec). Status contract (authorized):
+  - `202 {"logged":true,"verdict":"pending"}` — parsed, validated, and the row (triage truth, `error_reason:"clef_pending"`) is **already in KV**. The Clef call runs in `waitUntil` and rewrites the row; a racing outcome's triage fields are preserved.
+  - `200 {"logged":false,"reason":"excluded"}` — grokbot exclusion: counter bump + masked `event:"excluded"` log, no row.
+  - `400` invalid payload / JSON · `413` body over the read cap · `500` KV write failed (masked `event:"store_failed"` log). Retries are idempotent (row keyed by `msg_id_hash`).
 - `POST /clef/email-shadow/outcome` — `{msg_id_hash, disposition, escalated?, source?: "trainspam_rescue"}`. Last write wins.
 
 ## Behavior
@@ -44,7 +47,7 @@ No mailbox access, no labels written, nothing returned to the caller beyond `202
 4. Confirm model slugs `@cf/cloudflare/clef` / `@cf/cloudflare/clef-flash`.
 5. `wrangler deploy --dry-run` on Node ≥ 22, then deploy with mode shadow.
 6. Redeploy the relay from main; confirm relay gate rows still appear and webhooks still forward when the gate errors.
-7. Smoke: no auth → 401; auth → 202 + log row without subject/snippet; grokbot payload → no row, counter only;
+7. Smoke: no auth → 401; auth → 202 + log row without subject/snippet; grokbot payload → 200, no row, counter + masked drop log;
    lookalike payload → normal row.
 8. Inbox Triage (its own lane): send `override:"grokbot_inbox"` for to/cc/delivered-to/from jre@ incl. `+` aliases.
 9. Go live only after 14 days with zero false skips and John's sign-off.
