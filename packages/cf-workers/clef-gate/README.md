@@ -6,9 +6,10 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
 
 ## Routes (bearer `CLEF_EMAIL_SHADOW_TOKEN`; missing/unset secret ⇒ 401)
 - `POST /clef/email-shadow` — payload v1 (see spec). Status contract (authorized):
-  - `202 {"logged":true,"verdict":"pending"}` — parsed, validated, and the row (triage truth, `error_reason:"clef_pending"`) is **already in KV**. The Clef call runs in `waitUntil` and rewrites the row; a racing outcome's triage fields are preserved.
+  - `202 {"logged":true,"verdict":"pending"}` — parsed, validated, and the row (triage truth, `error_reason:"clef_pending"`) is **already in KV**. The Clef call runs in `waitUntil` and rewrites only the decision row.
+  - `202 {"logged":true,"duplicate":true}` — a finished (non-pending) decision row already exists for this `msg_id_hash`: no rewrite, no Clef call. A still-pending row is re-admitted (recovers a dead background step). KV reads can be ~60 s stale across PoPs, so a near-simultaneous duplicate may still re-run Clef once (verdict overwrite only; outcomes are unaffected).
   - `200 {"logged":false,"reason":"excluded"}` — grokbot exclusion: counter bump + masked `event:"excluded"` log, no row.
-  - `400` invalid payload / JSON · `413` body over the read cap · `500` KV write failed (masked `event:"store_failed"` log). Retries are idempotent (row keyed by `msg_id_hash`).
+  - `400` invalid payload / JSON / unreadable body · `413` body over the read cap (logged `event:"rejected"`, `payload_too_large`) · `500` KV write failed (masked `event:"store_failed"`, `kv_put_failed`; background crash logs `clef_completion_failed`). Retries are idempotent (row keyed by `msg_id_hash`).
 - `POST /clef/email-shadow/outcome` — `{msg_id_hash, disposition, escalated?, source?: "trainspam_rescue"}`. Last write wins.
 
 ## Behavior
@@ -31,7 +32,10 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   p_bulk ≥ .9 and p_person ≤ .05 and p_money_sec ≤ .05; else fyi. Error/timeout/bad output ⇒ escalate.
 - Join flags vs Inbox Triage disposition: `agree`, `false_skip` (would_skip but escalated/handoff/TrainSpam rescue),
   `false_wake` (escalate but spam/archive).
-- KV ring: `clef_email_shadow_log:<msg_id_hash>`, 30-day TTL.
+- KV layout (30-day TTL each):
+  - `clef_email_shadow_log:<msg_id_hash>` — decision row (pending → verdict). Written only by `/clef/email-shadow`.
+  - `clef_email_shadow_outcome:<msg_id_hash>` — outcome row. Written only by `/clef/email-shadow/outcome` (last write wins). Neither writer touches the other's key, so no overwrite race.
+  - Grading reads both and joins with `gradeJoined(decision, outcome)` (outcome triage truth wins; `null` while the verdict is pending).
 - Daily cap `CLEF_EMAIL_DAILY_CALL_CAP` (1000) at `clef:calls:clef_email:<day>` (soft, KV not atomic). The flash sample
   takes a second unit from the same cap, so the effective full-call budget is about 91% of the cap.
 - Request bodies are stream-read with a 16 KB cap (works without content-length); parsed bodies over 8 KB are dropped.

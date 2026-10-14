@@ -15,6 +15,8 @@ export const GATE = "clef_email";
 export const GATE_VERSION = "email-shadow-v1";
 export const STREAM = "clef_email_shadow";
 export const RING_PREFIX = "clef_email_shadow_log:";
+/** Outcomes live under their own key so a decision/verdict write can never overwrite one (and vice versa). */
+export const OUTCOME_PREFIX = "clef_email_shadow_outcome:";
 export const RING_TTL_SECONDS = 60 * 60 * 24 * 30;
 export const EMAIL_CAP_DEFAULT = 1000;
 
@@ -75,16 +77,16 @@ export function emitLog(entry: EmailShadowLogEntry): void {
 }
 
 /** Writes the row; throws on KV failure so callers can answer 5xx / log honestly. */
-async function writeRingStrict(env: Env, entry: EmailShadowLogEntry): Promise<void> {
+async function writeRingStrict(env: Env, entry: EmailShadowLogEntry, prefix = RING_PREFIX): Promise<void> {
   if (!entry.msg_id_hash) throw new Error("missing_msg_id_hash");
-  await env.CLEF_KV.put(`${RING_PREFIX}${entry.msg_id_hash}`, JSON.stringify(entry), {
+  await env.CLEF_KV.put(`${prefix}${entry.msg_id_hash}`, JSON.stringify(entry), {
     expirationTtl: RING_TTL_SECONDS,
   });
 }
 
 /** Masked failure line: hash + reason only, never subject/snippet/addresses. */
 export function emitFailure(
-  event: "store_failed" | "excluded",
+  event: "store_failed" | "excluded" | "rejected",
   reason: string,
   msgIdHash: string | null,
   mode = "n/a",
@@ -143,6 +145,7 @@ export type Admission =
   | { status: 200; kind: "excluded" }
   | { status: 400; kind: "rejected"; entry: EmailShadowLogEntry }
   | { status: 500; kind: "store_failed"; entry: EmailShadowLogEntry }
+  | { status: 202; kind: "duplicate" }
   | { status: 202; kind: "stored"; entry: EmailShadowLogEntry; item: EmailShadowItem; mode: ClefModeLike };
 
 type ClefModeLike = Awaited<ReturnType<typeof resolveClefModeFromKv>>;
@@ -168,6 +171,19 @@ export async function admitEmailShadow(env: Env, rawBody: string): Promise<Admis
     return { status: 400, kind: "rejected", entry: e };
   }
   const item = parsed.item;
+  // Idempotent resend: a finished row is never rewritten and Clef is not re-run.
+  // (A still-pending row is re-admitted so a dead background step can recover. KV reads can be
+  // stale for ~60 s across PoPs, so a near-simultaneous duplicate may still re-run Clef once.)
+  const existing = await env.CLEF_KV.get(`${RING_PREFIX}${item.msg_id_hash}`);
+  if (existing !== null) {
+    let pending = true;
+    try {
+      pending = (JSON.parse(existing) as Partial<EmailShadowLogEntry>).error_reason === PENDING_REASON;
+    } catch {
+      pending = true;
+    }
+    if (!pending) return { status: 202, kind: "duplicate" };
+  }
   const mode = await resolveClefModeFromKv(env.CLEF_KV, env.CLEF_DEFAULT_MODE, GATE);
   const entry = blankEntry("decision", mode.modeLabel);
   applyTriage(entry, item);
@@ -199,7 +215,7 @@ export async function completeEmailShadow(
 /** Process one POST /clef/email-shadow body end-to-end. Returns the log entry (or null when excluded). */
 export async function processEmailShadow(env: Env, rawBody: string): Promise<EmailShadowLogEntry | null> {
   const a = await admitEmailShadow(env, rawBody);
-  if (a.kind === "excluded") return null;
+  if (a.kind === "excluded" || a.kind === "duplicate") return null;
   if (a.kind !== "stored") return a.entry;
   return completeEmailShadow(env, a.item, a.entry, a.mode);
 }
@@ -257,28 +273,10 @@ async function completeInner(
       }
     }
   }
-  await mergeRacingOutcome(env, entry);
   finishFlags(entry);
   emitLog(entry);
   await writeRing(env, entry);
   return entry;
-}
-
-/** If an outcome landed while Clef was running, keep its (newer) triage truth on the final row. */
-async function mergeRacingOutcome(env: Env, entry: EmailShadowLogEntry): Promise<void> {
-  try {
-    const raw = await env.CLEF_KV.get(`${RING_PREFIX}${entry.msg_id_hash}`);
-    const cur = raw ? (JSON.parse(raw) as Partial<EmailShadowLogEntry>) : null;
-    if (cur?.event !== "outcome") return;
-    if ((DISPOSITIONS as readonly unknown[]).includes(cur.triage_disposition)) {
-      entry.triage_disposition = cur.triage_disposition as Disposition;
-    }
-    entry.triage_escalated = cur.triage_escalated === true;
-    entry.triage_rescued = cur.triage_rescued === true;
-    entry.event = "outcome";
-  } catch {
-    // read failure: keep decision-time truth
-  }
 }
 
 const HASH_RE = /^[a-f0-9]{16,128}$/;
@@ -329,10 +327,10 @@ export async function handleOutcome(env: Env, rawBody: string): Promise<OutcomeR
   if (!prior) entry.error_reason = "outcome_without_decision";
   finishFlags(entry);
   try {
-    await writeRingStrict(env, entry);
+    await writeRingStrict(env, entry, OUTCOME_PREFIX);
   } catch {
     emitFailure("store_failed", "kv_put_failed", hash, entry.mode);
-    return { status: 500, entry };
+    return { status: 500, entry: { ...entry, error_reason: "kv_put_failed" } };
   }
   emitLog(entry);
   return { status: 202, entry };
@@ -346,4 +344,26 @@ function pickLogFields(src: EmailShadowLogEntry): Partial<EmailShadowLogEntry> {
     if (k in src) out[k] = (src as Record<string, unknown>)[k];
   }
   return out as Partial<EmailShadowLogEntry>;
+}
+
+/**
+ * Grading join: decision row (`clef_email_shadow_log:<hash>`) + optional outcome row
+ * (`clef_email_shadow_outcome:<hash>`). The outcome's triage truth wins; flags are recomputed
+ * from the decision's verdict. Returns null while the verdict is still pending.
+ */
+export function gradeJoined(
+  decision: EmailShadowLogEntry,
+  outcome: EmailShadowLogEntry | null,
+): EmailShadowLogEntry | null {
+  if (!decision.shadow_label || decision.error_reason === PENDING_REASON) return null;
+  const g: EmailShadowLogEntry = { ...decision };
+  if (outcome?.triage_disposition) {
+    g.event = "outcome";
+    g.triage_disposition = outcome.triage_disposition;
+    g.triage_escalated = outcome.triage_escalated === true;
+    g.triage_rescued = outcome.triage_rescued === true;
+  }
+  g.agree = g.false_skip = g.false_wake = null;
+  finishFlags(g);
+  return g;
 }
