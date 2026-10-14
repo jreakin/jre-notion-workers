@@ -6,6 +6,12 @@
  * Only Kind=Plan, Status=Approved, non-empty Project is forwarded; everything else
  * is acknowledged and ignored. Dedupe key = page id + Approved At (one KV get per
  * request; one KV put only after a successful AS wake).
+ *
+ * Double-wake: the KV get→put is not atomic. Two identical posts that arrive
+ * concurrently (or a re-fire while the first AS wake is still in flight, up to
+ * AS_WAKE_TIMEOUT_MS) can both pass the dedupe read and both wake AS. Notion
+ * automations fire once per trigger so this is rare; AS must treat the wake as
+ * idempotent (key: page_id + approved_at).
  */
 import type { Env } from "./env.js";
 import { kvTtl } from "./kv-ttl.js";
@@ -15,7 +21,11 @@ export const AUTOMATION_SECRET_HEADER = "X-Relay-Automation-Secret";
 export const PLAN_APPROVED_DEDUPE_PREFIX = "plan_approved:v1:";
 /** 7 days: covers Notion automation re-fires / manual re-runs of the same approval. */
 export const PLAN_APPROVED_DEDUPE_TTL_SECONDS = 7 * 24 * 60 * 60;
-const MAX_BODY_BYTES = 256 * 1024;
+export const MAX_BODY_BYTES = 256 * 1024;
+/** Outbound AS wake timeout; a timeout returns 502 (not deduped, so a re-fire can retry). */
+export const AS_WAKE_TIMEOUT_MS = 10_000;
+/** Exact Notion property names the "Send webhook" action must have ticked. */
+export const PINNED_PROPERTIES = ["ID", "Kind", "Status", "Project", "Approved At"] as const;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -69,6 +79,17 @@ export type PlanApprovedFields = {
   approvedAt: string;
 };
 
+/** Names of pinned properties absent from the payload (Send webhook only sends ticked ones). */
+export function missingPinnedProperties(parsed: Record<string, unknown>): string[] {
+  const data =
+    parsed.data && typeof parsed.data === "object" ? (parsed.data as Record<string, unknown>) : parsed;
+  const props =
+    data.properties && typeof data.properties === "object"
+      ? (data.properties as Record<string, unknown>)
+      : data;
+  return PINNED_PROPERTIES.filter((n) => findProp(props, n) === undefined);
+}
+
 function findProp(props: Record<string, unknown>, name: string): unknown {
   if (name in props) return props[name];
   const want = name.toLowerCase().replace(/[\s_]/g, "");
@@ -114,13 +135,20 @@ export function dedupeKey(f: PlanApprovedFields): string {
   return `${PLAN_APPROVED_DEDUPE_PREFIX}${f.pageId || f.id}:${f.approvedAt}`;
 }
 
-function asAuthHeader(env: Env): string {
-  const v = env.AS_WEBHOOK_AUTHORIZATION!;
-  return v.startsWith("Bearer ") ? v : `Bearer ${v}`;
+/** Normalise to `Bearer <token>`; an existing prefix is matched case-insensitively. */
+export function bearerHeader(raw: string): string {
+  const v = raw.trim();
+  const m = /^bearer\s+(.*)$/i.exec(v);
+  return `Bearer ${m ? m[1]!.trim() : v}`;
+}
+
+/** Secrets that are missing or whitespace-only count as unset. */
+export function secretSet(v: string | undefined): v is string {
+  return typeof v === "string" && v.trim().length > 0;
 }
 
 export async function handlePlanApprovedAutomation(request: Request, env: Env): Promise<Response> {
-  if (!env.NOTION_AUTOMATION_SECRET) {
+  if (!secretSet(env.NOTION_AUTOMATION_SECRET)) {
     return json({ error: "unauthorized" }, 401);
   }
   const provided = request.headers.get(AUTOMATION_SECRET_HEADER);
@@ -128,8 +156,13 @@ export async function handlePlanApprovedAutomation(request: Request, env: Env): 
     return json({ error: "unauthorized" }, 401);
   }
 
+  // Reject declared-oversize bodies before reading; re-check actual size after.
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return json({ error: "payload_too_large" }, 413);
+  }
   const rawBody = await request.text();
-  if (rawBody.length > MAX_BODY_BYTES) return json({ error: "payload_too_large" }, 413);
+  if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) return json({ error: "payload_too_large" }, 413);
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody);
@@ -140,6 +173,10 @@ export async function handlePlanApprovedAutomation(request: Request, env: Env): 
     return json({ error: "invalid_json" }, 400);
   }
 
+  const missing = missingPinnedProperties(parsed as Record<string, unknown>);
+  if (missing.length > 0) {
+    console.warn(JSON.stringify({ event: "plan_approved_missing_properties", missing }));
+  }
   const fields = extractFields(parsed as Record<string, unknown>);
   const v = validatePlanApproved(fields);
   if (!v.ok) {
@@ -147,7 +184,7 @@ export async function handlePlanApprovedAutomation(request: Request, env: Env): 
     return json({ ok: true, ignored: true, reason: v.reason });
   }
 
-  if (!env.AS_WEBHOOK_URL || !env.AS_WEBHOOK_AUTHORIZATION) {
+  if (!secretSet(env.AS_WEBHOOK_URL) || !secretSet(env.AS_WEBHOOK_AUTHORIZATION)) {
     console.log(JSON.stringify({ event: "plan_approved_as_not_configured" }));
     return json({ error: "as_wake_not_configured" }, 503);
   }
@@ -172,14 +209,17 @@ export async function handlePlanApprovedAutomation(request: Request, env: Env): 
   try {
     const upstream = await fetch(env.AS_WEBHOOK_URL, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: asAuthHeader(env) },
+      headers: { "content-type": "application/json", authorization: bearerHeader(env.AS_WEBHOOK_AUTHORIZATION) },
       body: wakeBody,
+      signal: AbortSignal.timeout(AS_WAKE_TIMEOUT_MS),
     });
     status = upstream.status;
     await upstream.body?.cancel();
   } catch (err) {
-    console.log(JSON.stringify({ event: "plan_approved_wake_error", error: err instanceof Error ? err.name : "Error" }));
-    return json({ error: "as_wake_failed" }, 502);
+    const name = err instanceof Error ? err.name : "Error";
+    console.log(JSON.stringify({ event: "plan_approved_wake_error", error: name }));
+    const timedOut = name === "TimeoutError" || name === "AbortError";
+    return json({ error: timedOut ? "as_wake_timeout" : "as_wake_failed" }, 502);
   }
   console.log(JSON.stringify({ event: "plan_approved_forwarded", status }));
   if (status < 200 || status >= 300) {
