@@ -33,3 +33,18 @@ jobs:
         run: bun run check
       - working-directory: packages/cf-workers/notion-comments-relay
         run: bun run test
+
+  clef-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - working-directory: packages/cf-workers/clef-gate
+        run: bun install --frozen-lockfile
+      - working-directory: packages/cf-workers/clef-gate
+        run: bun run check
+      - working-directory: packages/cf-workers/clef-gate
+        run: bun run test
