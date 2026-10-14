@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import worker from "../src/index.js";
-import { processEmailShadow, processOutcome, RING_PREFIX } from "../src/shadow.js";
+import { gradeJoined, OUTCOME_PREFIX, processEmailShadow, processOutcome, RING_PREFIX, type EmailShadowLogEntry } from "../src/shadow.js";
 import { resolveOverride } from "../src/overrides.js";
 import { parseEmailShadowBody } from "../src/payload.js";
 import { answers, captureLogs, HASH_FLASH, HASH_NOFLASH, makeEnv, payload, SECRET_SNIPPET, SECRET_SUBJECT } from "./helpers.js";
@@ -294,21 +294,108 @@ describe("http", () => {
     const { env, kv } = makeEnv();
     const o = await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam" })), env, ctx().c);
     expect(o.status).toBe(202);
-    expect(JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "{}").event).toBe("outcome");
+    expect(JSON.parse(kv.data.get(`${OUTCOME_PREFIX}${HASH_NOFLASH}`) ?? "{}").event).toBe("outcome");
+    expect(kv.data.has(`${RING_PREFIX}${HASH_NOFLASH}`)).toBe(false);
     const big = JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam", pad: "x".repeat(2000) });
     expect((await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", big), env, ctx().c)).status).toBe(413);
   });
-  test("outcome racing the Clef call is not clobbered by the completed verdict", async () => {
+  test("outcome landing inside the race window (between Clef start and verdict put) is never clobbered", async () => {
     cap = captureLogs();
     const { env, kv } = makeEnv();
+    const ai = env.AI.run;
+    // Outcome is written while the Clef call is in flight, i.e. after admit and before the verdict put.
+    env.AI.run = (async (...a: unknown[]) => {
+      await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam", escalated: false })), env, ctx().c);
+      return (ai as (...x: unknown[]) => Promise<unknown>)(...a);
+    }) as unknown as Ai["run"];
     const k = ctx();
     expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c)).status).toBe(202);
-    await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam", escalated: false })), env, ctx().c);
+    await Promise.all(k.p);
+    const decision = JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "{}") as EmailShadowLogEntry;
+    const outcome = JSON.parse(kv.data.get(`${OUTCOME_PREFIX}${HASH_NOFLASH}`) ?? "{}") as EmailShadowLogEntry;
+    expect(decision.event).toBe("decision");
+    expect(decision.shadow_label).toBe("would_skip");
+    expect(outcome.event).toBe("outcome");
+    expect(outcome.triage_disposition).toBe("spam");
+    const g = gradeJoined(decision, outcome);
+    expect(g?.triage_disposition).toBe("spam");
+    expect(g?.agree).toBe(true);
+    expect(g?.false_skip).toBe(false);
+    expect(gradeJoined({ ...decision, shadow_label: null, error_reason: "clef_pending" }, outcome)).toBeNull();
+  });
+  test("resend after a completed 202 is idempotent: 202 duplicate, no rewrite, no Clef call", async () => {
+    cap = captureLogs();
+    const { env, kv, calls } = makeEnv();
+    const k = ctx();
+    expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c)).status).toBe(202);
+    await Promise.all(k.p);
+    const before = kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`);
+    const k2 = ctx();
+    const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k2.c);
+    expect(r.status).toBe(202);
+    expect((await r.json()) as unknown).toEqual({ logged: true, duplicate: true });
+    expect(k2.p.length).toBe(0);
+    expect(calls.length).toBe(1);
+    expect(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`)).toBe(before);
+  });
+  test("500 on KV failure, then a successful retry stores and completes", async () => {
+    cap = captureLogs();
+    const { env, kv, calls } = makeEnv();
+    const put = kv.put.bind(kv);
+    let fail = true;
+    (env.CLEF_KV as unknown as { put: typeof put }).put = async (key: string, v: string) => {
+      if (fail) throw new Error("KV PUT failed: 429");
+      return put(key, v);
+    };
+    expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, ctx().c)).status).toBe(500);
+    fail = false;
+    const k = ctx();
+    expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c)).status).toBe(202);
+    await Promise.all(k.p);
+    expect(calls.length).toBe(1);
+    expect(JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "{}").shadow_label).toBe("would_skip");
+  });
+  test("clef_completion_failed: background crash logs masked line, row stays pending, resend re-admits", async () => {
+    cap = captureLogs();
+    const { env, kv } = makeEnv();
+    const realAi = env.AI;
+    // Unexpected throw inside the background step only (admit never touches env.AI).
+    Object.defineProperty(env, "AI", { configurable: true, get() { throw new Error("binding gone"); } });
+    const k = ctx();
+    expect((await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c)).status).toBe(202);
     await Promise.all(k.p);
     const row = JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "{}");
-    expect(row.event).toBe("outcome");
-    expect(row.triage_disposition).toBe("spam");
-    expect(row.shadow_label).toBe("would_skip");
-    expect(row.agree).toBe(true);
+    expect(row.error_reason).toBe("clef_pending");
+    const fail = cap.lines.map((l) => JSON.parse(l)).find((l) => l.error_reason === "clef_completion_failed");
+    expect(fail?.event).toBe("store_failed");
+    expect(fail?.msg_id_hash).toBe(HASH_NOFLASH);
+    noSecretsIn(cap.lines);
+    Object.defineProperty(env, "AI", { configurable: true, writable: true, value: realAi });
+    const k2 = ctx();
+    const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k2.c);
+    expect((await r.json()) as unknown).toEqual({ logged: true, verdict: "pending" });
+    await Promise.all(k2.p);
+    expect(JSON.parse(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`) ?? "{}").shadow_label).toBe("would_skip");
+  });
+  test("413 logs rejected/payload_too_large (not store_failed); unreadable body → 400", async () => {
+    cap = captureLogs();
+    const { env } = makeEnv();
+    const r = await worker.fetch(new Request("https://w.example/clef/email-shadow", { method: "POST", headers: { authorization: "Bearer tok-123", "content-length": "99999" }, body: "{}" }), env, ctx().c);
+    expect(r.status).toBe(413);
+    const l = JSON.parse(cap.lines[0]);
+    expect(l.event).toBe("rejected");
+    expect(l.error_reason).toBe("payload_too_large");
+    const broken = new ReadableStream({ pull() { throw new Error("socket reset"); } });
+    const r2 = await worker.fetch(new Request("https://w.example/clef/email-shadow", { method: "POST", headers: { authorization: "Bearer tok-123" }, body: broken, duplex: "half" } as RequestInit), env, ctx().c);
+    expect(r2.status).toBe(400);
+    expect((await r2.json()) as unknown).toEqual({ logged: false, reason: "unreadable_body" });
+  });
+  test("outcome KV failure → 500 with reason kv_put_failed", async () => {
+    cap = captureLogs();
+    const { env } = makeEnv();
+    (env.CLEF_KV as unknown as { put: () => Promise<void> }).put = async () => { throw new Error("x"); };
+    const o = await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam" })), env, ctx().c);
+    expect(o.status).toBe(500);
+    expect((await o.json()) as unknown).toEqual({ logged: false, reason: "kv_put_failed" });
   });
 });

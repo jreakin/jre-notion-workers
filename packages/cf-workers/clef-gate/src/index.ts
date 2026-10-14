@@ -5,7 +5,10 @@ import { admitEmailShadow, completeEmailShadow, emitFailure, handleOutcome } fro
 const READ_CAP_BYTES = 16_384;
 
 /** Stream the body, aborting once it exceeds `cap` bytes (content-length may be absent). */
-export async function readCapped(request: Request, cap: number): Promise<string | null> {
+export const TOO_LARGE = Symbol("too_large");
+export const UNREADABLE = Symbol("unreadable");
+
+export async function readCapped(request: Request, cap: number): Promise<string | typeof TOO_LARGE | typeof UNREADABLE> {
   if (!request.body) return "";
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -17,12 +20,12 @@ export async function readCapped(request: Request, cap: number): Promise<string 
       total += value.byteLength;
       if (total > cap) {
         await reader.cancel().catch(() => {});
-        return null;
+        return TOO_LARGE;
       }
       chunks.push(value);
     }
   } catch {
-    return null;
+    return UNREADABLE;
   }
   const buf = new Uint8Array(total);
   let off = 0;
@@ -46,10 +49,14 @@ export default {
       return new Response("unauthorized", { status: 401 });
     }
     const len = Number.parseInt(request.headers.get("content-length") ?? "0", 10);
-    const body = Number.isFinite(len) && len > READ_CAP_BYTES ? null : await readCapped(request, READ_CAP_BYTES);
-    if (body === null) {
-      emitFailure("store_failed", "payload_too_large", null); // oversized/unreadable: never parsed
+    const body = Number.isFinite(len) && len > READ_CAP_BYTES ? TOO_LARGE : await readCapped(request, READ_CAP_BYTES);
+    if (body === TOO_LARGE) {
+      emitFailure("rejected", "payload_too_large", null); // never parsed
       return reply(413, { logged: false, reason: "payload_too_large" });
+    }
+    if (body === UNREADABLE) {
+      emitFailure("rejected", "unreadable_body", null);
+      return reply(400, { logged: false, reason: "unreadable_body" });
     }
     try {
       if (route === "outcome") {
@@ -58,6 +65,7 @@ export default {
       }
       const a = await admitEmailShadow(env, body);
       if (a.kind === "excluded") return reply(200, { logged: false, reason: "excluded" });
+      if (a.kind === "duplicate") return reply(202, { logged: true, duplicate: true });
       if (a.kind !== "stored") return reply(a.status, { logged: false, reason: a.entry.error_reason });
       // Row (triage truth) is durably stored; the Clef verdict is added afterwards and rewrites the row.
       ctx.waitUntil(completeEmailShadow(env, a.item, a.entry, a.mode));
