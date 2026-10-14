@@ -24,7 +24,7 @@ export const EMAIL_CAP_DEFAULT = 1000;
  */
 export type EmailShadowLogEntry = {
   stream: typeof STREAM;
-  event: "decision" | "outcome" | "rejected";
+  event: "decision" | "outcome" | "rejected" | "excluded" | "store_failed";
   gate: typeof GATE;
   gate_version: string;
   mode: string;
@@ -74,18 +74,39 @@ export function emitLog(entry: EmailShadowLogEntry): void {
   console.log(JSON.stringify(entry));
 }
 
-async function writeRing(env: Env, entry: EmailShadowLogEntry): Promise<void> {
-  if (!entry.msg_id_hash) return;
+/** Writes the row; throws on KV failure so callers can answer 5xx / log honestly. */
+async function writeRingStrict(env: Env, entry: EmailShadowLogEntry): Promise<void> {
+  if (!entry.msg_id_hash) throw new Error("missing_msg_id_hash");
+  await env.CLEF_KV.put(`${RING_PREFIX}${entry.msg_id_hash}`, JSON.stringify(entry), {
+    expirationTtl: RING_TTL_SECONDS,
+  });
+}
+
+/** Masked failure line: hash + reason only, never subject/snippet/addresses. */
+export function emitFailure(
+  event: "store_failed" | "excluded",
+  reason: string,
+  msgIdHash: string | null,
+  mode = "n/a",
+): void {
+  const e = blankEntry(event, mode);
+  e.msg_id_hash = msgIdHash;
+  e.error_reason = reason;
+  emitLog(e);
+}
+
+async function writeRing(env: Env, entry: EmailShadowLogEntry): Promise<boolean> {
   try {
-    await env.CLEF_KV.put(`${RING_PREFIX}${entry.msg_id_hash}`, JSON.stringify(entry), {
-      expirationTtl: RING_TTL_SECONDS,
-    });
+    await writeRingStrict(env, entry);
+    return true;
   } catch {
-    // best effort
+    emitFailure("store_failed", "kv_put_failed", entry.msg_id_hash, entry.mode);
+    return false;
   }
 }
 
 async function bumpExcludedCounter(env: Env): Promise<void> {
+  emitFailure("excluded", "excluded_grokbot", null);
   const key = `clef_email:excluded:${utcDayKey()}`;
   try {
     const n = Number.parseInt((await env.CLEF_KV.get(key)) ?? "0", 10);
@@ -118,24 +139,77 @@ function finishFlags(entry: EmailShadowLogEntry): void {
   entry.false_wake = f.false_wake;
 }
 
-/** Process one POST /clef/email-shadow body. Returns the log entry (or null when excluded). */
-export async function processEmailShadow(env: Env, rawBody: string): Promise<EmailShadowLogEntry | null> {
+export type Admission =
+  | { status: 200; kind: "excluded" }
+  | { status: 400; kind: "rejected"; entry: EmailShadowLogEntry }
+  | { status: 500; kind: "store_failed"; entry: EmailShadowLogEntry }
+  | { status: 202; kind: "stored"; entry: EmailShadowLogEntry; item: EmailShadowItem; mode: ClefModeLike };
+
+type ClefModeLike = Awaited<ReturnType<typeof resolveClefModeFromKv>>;
+
+export const PENDING_REASON = "clef_pending";
+
+/**
+ * Synchronous half of POST /clef/email-shadow: parse, validate, and durably store a pending
+ * decision row (triage truth + hashes, no Clef verdict yet). Only a "stored" admission may
+ * be answered with 202.
+ */
+export async function admitEmailShadow(env: Env, rawBody: string): Promise<Admission> {
   const parsed = parseEmailShadowBody(rawBody);
   if (!parsed.ok) {
     if (parsed.excluded) {
       await bumpExcludedCounter(env);
-      return null;
+      return { status: 200, kind: "excluded" };
     }
     const e = blankEntry("rejected", "n/a");
     e.msg_id_hash = parsed.msg_id_hash ?? null;
     e.error_reason = parsed.reason;
     emitLog(e);
-    return e;
+    return { status: 400, kind: "rejected", entry: e };
   }
   const item = parsed.item;
   const mode = await resolveClefModeFromKv(env.CLEF_KV, env.CLEF_DEFAULT_MODE, GATE);
   const entry = blankEntry("decision", mode.modeLabel);
   applyTriage(entry, item);
+  entry.error_reason = PENDING_REASON;
+  try {
+    await writeRingStrict(env, entry);
+  } catch {
+    emitFailure("store_failed", "kv_put_failed", entry.msg_id_hash, entry.mode);
+    return { status: 500, kind: "store_failed", entry };
+  }
+  return { status: 202, kind: "stored", entry: { ...entry, error_reason: null }, item, mode };
+}
+
+/** Async half: Clef call(s), then overwrite the pending row. Preserves a racing outcome's triage truth. */
+export async function completeEmailShadow(
+  env: Env,
+  item: EmailShadowItem,
+  entry: EmailShadowLogEntry,
+  mode: ClefModeLike,
+): Promise<EmailShadowLogEntry> {
+  try {
+    return await completeInner(env, item, entry, mode);
+  } catch {
+    emitFailure("store_failed", "clef_completion_failed", entry.msg_id_hash, entry.mode);
+    return entry;
+  }
+}
+
+/** Process one POST /clef/email-shadow body end-to-end. Returns the log entry (or null when excluded). */
+export async function processEmailShadow(env: Env, rawBody: string): Promise<EmailShadowLogEntry | null> {
+  const a = await admitEmailShadow(env, rawBody);
+  if (a.kind === "excluded") return null;
+  if (a.kind !== "stored") return a.entry;
+  return completeEmailShadow(env, a.item, a.entry, a.mode);
+}
+
+async function completeInner(
+  env: Env,
+  item: EmailShadowItem,
+  entry: EmailShadowLogEntry,
+  mode: ClefModeLike,
+): Promise<EmailShadowLogEntry> {
 
   const override = resolveOverride(item);
   if (override) {
@@ -183,34 +257,61 @@ export async function processEmailShadow(env: Env, rawBody: string): Promise<Ema
       }
     }
   }
+  await mergeRacingOutcome(env, entry);
   finishFlags(entry);
   emitLog(entry);
   await writeRing(env, entry);
   return entry;
 }
 
+/** If an outcome landed while Clef was running, keep its (newer) triage truth on the final row. */
+async function mergeRacingOutcome(env: Env, entry: EmailShadowLogEntry): Promise<void> {
+  try {
+    const raw = await env.CLEF_KV.get(`${RING_PREFIX}${entry.msg_id_hash}`);
+    const cur = raw ? (JSON.parse(raw) as Partial<EmailShadowLogEntry>) : null;
+    if (cur?.event !== "outcome") return;
+    if ((DISPOSITIONS as readonly unknown[]).includes(cur.triage_disposition)) {
+      entry.triage_disposition = cur.triage_disposition as Disposition;
+    }
+    entry.triage_escalated = cur.triage_escalated === true;
+    entry.triage_rescued = cur.triage_rescued === true;
+    entry.event = "outcome";
+  } catch {
+    // read failure: keep decision-time truth
+  }
+}
+
 const HASH_RE = /^[a-f0-9]{16,128}$/;
+
+export type OutcomeResult = { status: 202 | 400 | 413 | 500; entry: EmailShadowLogEntry | null };
+
+function rejectOutcome(reason: string, hash: string | null = null): OutcomeResult {
+  const e = blankEntry("rejected", "n/a");
+  e.msg_id_hash = hash;
+  e.error_reason = reason;
+  emitLog(e);
+  return { status: reason === "outcome_too_large" ? 413 : 400, entry: e };
+}
 
 /** POST /clef/email-shadow/outcome {msg_id_hash, disposition, escalated?, source?}. Last write wins. */
 export async function processOutcome(env: Env, rawBody: string): Promise<EmailShadowLogEntry | null> {
-  if (new TextEncoder().encode(rawBody).length > 1024) return null;
+  return (await handleOutcome(env, rawBody)).entry;
+}
+
+/** Fully inline (KV read + write); only a stored row is answered with 202. */
+export async function handleOutcome(env: Env, rawBody: string): Promise<OutcomeResult> {
+  if (new TextEncoder().encode(rawBody).length > 1024) return rejectOutcome("outcome_too_large");
   let b: Record<string, unknown>;
   try {
     const j = JSON.parse(rawBody);
-    if (!j || typeof j !== "object" || Array.isArray(j)) return null;
+    if (!j || typeof j !== "object" || Array.isArray(j)) return rejectOutcome("invalid_outcome");
     b = j as Record<string, unknown>;
   } catch {
-    return null;
+    return rejectOutcome("invalid_json");
   }
   const hash = typeof b.msg_id_hash === "string" && HASH_RE.test(b.msg_id_hash) ? b.msg_id_hash : null;
   const disposition = (DISPOSITIONS as readonly unknown[]).includes(b.disposition) ? (b.disposition as Disposition) : null;
-  if (!hash || !disposition) {
-    const e = blankEntry("rejected", "n/a");
-    e.msg_id_hash = hash;
-    e.error_reason = "invalid_outcome";
-    emitLog(e);
-    return e;
-  }
+  if (!hash || !disposition) return rejectOutcome("invalid_outcome", hash);
   let prior: EmailShadowLogEntry | null = null;
   try {
     const raw = await env.CLEF_KV.get(`${RING_PREFIX}${hash}`);
@@ -227,9 +328,14 @@ export async function processOutcome(env: Env, rawBody: string): Promise<EmailSh
   entry.triage_rescued = b.source === "trainspam_rescue";
   if (!prior) entry.error_reason = "outcome_without_decision";
   finishFlags(entry);
+  try {
+    await writeRingStrict(env, entry);
+  } catch {
+    emitFailure("store_failed", "kv_put_failed", hash, entry.mode);
+    return { status: 500, entry };
+  }
   emitLog(entry);
-  await writeRing(env, entry);
-  return entry;
+  return { status: 202, entry };
 }
 
 /** Re-pick only allowlisted keys from a stored row (defends against tampered KV values). */
