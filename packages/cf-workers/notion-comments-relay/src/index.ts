@@ -15,6 +15,7 @@ import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 import { kvTtl } from "./kv-ttl.js";
 import { flushGateLogRing } from "./gate-log-ring.js";
 import { withMeteredKv } from "./kv-write-meter.js";
+import { PLAN_APPROVED_PATH, handlePlanApprovedAutomation } from "./plan-approved-automation.js";
 
 export type { Env } from "./env.js";
 
@@ -478,6 +479,11 @@ export default {
         }
         const flushed = await flushCoalesce(env);
         return json({ ok: true, flushed });
+      }
+
+      if (url.pathname === PLAN_APPROVED_PATH) {
+        if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+        return await handlePlanApprovedAutomation(request, env);
       }
 
       if (request.method !== "POST") {

@@ -55,6 +55,30 @@ Sibling to `packages/workers/` (recovered Notion Workers / Bun). This package us
 | `COS_WEBHOOK_AUTHORIZATION` | yes | `Authorization` header value for CoS |
 | `SETUP_SECRET` | yes | `X-Setup-Secret` header for `/setup/*` routes |
 | `NOTION_VERIFICATION_TOKEN` | optional | Fallback if token not yet stored in KV from Notion handshake |
+| `NOTION_AUTOMATION_SECRET` | for plan-approved route | Shared secret Notion automations send in `X-Relay-Automation-Secret` |
+| `AS_WEBHOOK_URL` | for plan-approved route | Abstract Secretary Grok Bot webhook ingress URL |
+| `AS_WEBHOOK_AUTHORIZATION` | for plan-approved route | `Authorization` header value for AS (`Bearer ` added if missing) |
+
+## Notion automation: plan approved → AS wake
+
+`POST /notion/automation/plan-approved` accepts Notion database-automation "Send webhook" posts
+(unsigned). Auth: header `X-Relay-Automation-Secret`, constant-time compared to
+`NOTION_AUTOMATION_SECRET`; missing/wrong → `401`. Properties read: `ID`, `Kind`, `Status`,
+`Project`, `Approved At`. Only `Kind=Plan`, `Status=Approved`, non-empty `Project` and non-empty
+`Approved At` wake AS; anything else → `200 {ignored:true, reason}`. Dedupe key
+`plan_approved:v1:<page id>:<Approved At>` (TTL 7d via `kvTtl()`); one KV read per valid request,
+one KV write only after a 2xx AS response. AS unset → `503`; AS non-2xx → `502` (not deduped).
+
+Setup (generate without printing):
+
+```bash
+openssl rand -hex 32 | tr -d '\n' | wrangler secret put NOTION_AUTOMATION_SECRET
+wrangler secret put AS_WEBHOOK_URL
+wrangler secret put AS_WEBHOOK_AUTHORIZATION
+```
+
+Store the same secret value (e.g. generate into 1Password first and pipe from `op read`) in the
+Notion automation's webhook custom header `X-Relay-Automation-Secret`, and include the properties above.
 
 Set via Wrangler (see cutover). **Do not rotate** during repo migration — reuse existing live values.
 

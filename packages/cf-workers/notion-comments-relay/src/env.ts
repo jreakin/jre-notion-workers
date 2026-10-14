@@ -29,6 +29,12 @@ export interface Env {
   COS_WEBHOOK_URL: string;
   COS_WEBHOOK_AUTHORIZATION: string;
   SETUP_SECRET: string;
+  /** Shared secret for unsigned Notion automation webhooks (header X-Relay-Automation-Secret). */
+  NOTION_AUTOMATION_SECRET?: string;
+  /** Abstract Secretary Grok Bot webhook ingress URL (plan-approved automation wake). */
+  AS_WEBHOOK_URL?: string;
+  /** `Authorization` header value for AS (Bearer prefix added if missing). */
+  AS_WEBHOOK_AUTHORIZATION?: string;
   NOTION_VERIFICATION_TOKEN?: string;
   /** Notion integration token for shadow gate property fetch (name only in wrangler/README). */
   NOTION_API_TOKEN?: string;
