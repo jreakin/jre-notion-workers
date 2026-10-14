@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Ensure Node ^22.18.0 || >=24.11.0 on Cursor Cloud Agent VMs (LOCK-61).
-# Source from the install step: `. scripts/ensure-node.sh && ensure_node22`.
+# Source from the install step: `. scripts/ensure-node.sh` then `ensure_node22 || true`
+# (callers run under set -e; always write `ensure_node22 || true`).
 # Idempotent and non-fatal: on any failure it warns and returns 1; callers
 # decide (GitNexus then records impact UNKNOWN). Installs Node 22 LTS with a
 # pinned nvm, then links node/npm/npx into a PATH dir so later shells and MCP
 # servers (which don't read ~/.bashrc) get the same binary.
 # ENSURE_NODE_BIN_DIR overrides the link dir (tests).
 NVM_VERSION="v0.40.3"
-NODE_MAJOR="22"
+# sha256 of https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh (verified before running).
+NVM_INSTALL_SHA256="2d8359a64a3cb07c02389ad88ceecd43f2fa469c06104f92f98df5b6f315275f"
+# Exact Node version (>= 22.18). nvm verifies the Node tarball's SHASUMS256 itself.
+NODE_VERSION="22.23.3"
 
 _node_ok() {
   command -v node >/dev/null 2>&1 || return 1
@@ -46,15 +50,24 @@ ensure_node22() {
   fi
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ ! -s "$NVM_DIR/nvm.sh" ]; then
-    curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" \
-      | PROFILE=/dev/null bash >/dev/null 2>&1 \
-      || { echo "ensure-node: nvm ${NVM_VERSION} install failed" >&2; return 1; }
+    local tmp got
+    tmp="$(mktemp)" || return 1
+    if ! curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" -o "$tmp"; then
+      rm -f "$tmp"; echo "ensure-node: nvm ${NVM_VERSION} download failed" >&2; return 1
+    fi
+    got="$(sha256sum "$tmp" 2>/dev/null || shasum -a 256 "$tmp")"; got="${got%% *}"
+    if [ "$got" != "$NVM_INSTALL_SHA256" ]; then
+      rm -f "$tmp"; echo "ensure-node: nvm install.sh sha256 mismatch (got $got)" >&2; return 1
+    fi
+    PROFILE=/dev/null bash "$tmp" >/dev/null 2>&1 \
+      || { rm -f "$tmp"; echo "ensure-node: nvm ${NVM_VERSION} install failed" >&2; return 1; }
+    rm -f "$tmp"
   fi
   # shellcheck source=/dev/null
   . "$NVM_DIR/nvm.sh" || { echo "ensure-node: cannot load nvm" >&2; return 1; }
-  nvm install "$NODE_MAJOR" >/dev/null 2>&1 && nvm alias default "$NODE_MAJOR" >/dev/null 2>&1 \
-    || { echo "ensure-node: nvm install $NODE_MAJOR failed" >&2; return 1; }
-  _link_node_bins "$(dirname "$(nvm which "$NODE_MAJOR")")"
+  nvm install "$NODE_VERSION" >/dev/null 2>&1 && nvm alias default "$NODE_VERSION" >/dev/null 2>&1 \
+    || { echo "ensure-node: nvm install $NODE_VERSION failed" >&2; return 1; }
+  _link_node_bins "$(dirname "$(nvm which "$NODE_VERSION")")"
   if _node_ok; then
     echo "ensure-node: using $(command -v node) $(node --version)" >&2
     return 0
