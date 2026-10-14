@@ -65,9 +65,57 @@ export function gateLogKey(now: Date, flushId: string): string {
   return `${GATE_LOG_PREFIX}${iso.slice(0, 10)}:${iso.slice(11, 13)}:${flushId}`;
 }
 
+/** Rows waiting for the end-of-request RPC to the durable buffer (DO path only). */
+let doPending: GateLogRow[] = [];
+export const GATE_LOG_DO_RPC_TIMEOUT_MS = 2_000;
+
+/**
+ * DO path: send this isolate's pending rows to the single GateLogBuffer DO in ONE RPC
+ * (one DO request per webhook). Fail-open: on error/timeout rows are dropped from KV
+ * (Workers Logs still has them) and nothing propagates to the forward path.
+ */
+export async function shipGateLogRowsToDurableObject(env: Env): Promise<boolean> {
+  if (!env.GATE_LOG_DO || doPending.length === 0) return false;
+  const rows = doPending;
+  doPending = [];
+  try {
+    const ns = env.GATE_LOG_DO;
+    const stub = ns.get(ns.idFromName("gate_log"));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, rej) => {
+      timer = setTimeout(() => rej(new Error("gate_log_do_timeout")), GATE_LOG_DO_RPC_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([stub.append(rows), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    return true;
+  } catch (err) {
+    try {
+      console.log(
+        JSON.stringify({
+          event: "gate_log_do_error",
+          error: err instanceof Error ? err.message.slice(0, 40) : "Error",
+          dropped_rows: rows.length,
+        }),
+      );
+    } catch {
+      // ignore
+    }
+    return false;
+  }
+}
+
 export async function enqueueGateLogRow(env: Env, row: GateLogRow): Promise<void> {
   try {
     if (!streamEnabled(env, row.stream)) return;
+    if (env.GATE_LOG_DO) {
+      if (readGateLogDailyWriteCap(env) === 0) return;
+      doPending.push(row);
+      if (doPending.length > GATE_LOG_BUFFER_MAX) doPending = doPending.slice(-GATE_LOG_BUFFER_MAX);
+      return; // shipped at end of request (no KV reads/writes here)
+    }
     const cap = readGateLogDailyWriteCap(env);
     if (cap === 0) return;
     const used = await peekSoftDailyCount(env.RELAY_KV, GATE_LOG_COUNTER_NAME);
@@ -103,6 +151,9 @@ export function pacedMinAgeMs(used: number, cap: number, now: Date = new Date())
  * GATE_LOG_DAILY_WRITE_CAP.
  */
 export async function flushGateLogRing(env: Env, opts: { force?: boolean } = {}): Promise<boolean> {
+  if (env.GATE_LOG_DO) {
+    return shipGateLogRowsToDurableObject(env); // durable path: DO alarm owns pacing + cap
+  }
   try {
     if (buffer.length === 0) return false;
     const cap = readGateLogDailyWriteCap(env);
@@ -143,7 +194,12 @@ export function gateLogBufferSizeForTests(): number {
   return buffer.length;
 }
 
+export function gateLogDoPendingForTests(): number {
+  return doPending.length;
+}
+
 export function resetGateLogRingForTests(): void {
+  doPending = [];
   buffer = [];
   oldestAt = 0;
   seq = 0;

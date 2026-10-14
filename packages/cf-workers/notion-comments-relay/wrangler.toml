@@ -27,6 +27,15 @@ WAKE_GATE_KV_RING = "1"
 CLEF_RING = "1"
 GATE_LOG_DAILY_WRITE_CAP = "60"
 
+# Durable gate_log buffer (SQLite-backed DO, Workers Free compatible). See README "Gate log KV ring".
+[[durable_objects.bindings]]
+name = "GATE_LOG_DO"
+class_name = "GateLogBuffer"
+
+[[migrations]]
+tag = "v1-gate-log-buffer"
+new_sqlite_classes = ["GateLogBuffer"]
+
 [observability]
 enabled = true
 head_sampling_rate = 1
