@@ -1,4 +1,8 @@
+import type { GateLogBuffer } from "./gate-log-do.js";
+
 export interface Env {
+  /** SQLite-backed Durable Object holding gate_log rows until the alarm flushes them to KV. */
+  GATE_LOG_DO?: DurableObjectNamespace<GateLogBuffer>;
   RELAY_KV: KVNamespace;
   AI?: Ai;
   /** Comma-separated property IDs known to be non-Submitted (optional allowlist). */

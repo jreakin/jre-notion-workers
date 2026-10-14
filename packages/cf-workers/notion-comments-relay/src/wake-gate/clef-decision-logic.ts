@@ -14,6 +14,10 @@ export function decideClefOutcome(
   if (pAction <= CLEF_P_ACTION_SKIP_MAX && pDup >= CLEF_P_DUP_SKIP_MIN) {
     return "would_skip";
   }
+  // q_when=ignore must never be louder than batch (bug: it fell through to would_wake).
+  if (qWhen === "ignore" && pAction <= CLEF_P_ACTION_BATCH_MAX) {
+    return pDup >= CLEF_P_DUP_SKIP_MIN ? "would_skip" : "would_batch";
+  }
   if (pAction <= CLEF_P_ACTION_BATCH_MAX && qWhen === "batch") {
     return "would_batch";
   }

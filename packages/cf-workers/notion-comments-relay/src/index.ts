@@ -15,6 +15,8 @@ import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 import { kvTtl } from "./kv-ttl.js";
 import { flushGateLogRing } from "./gate-log-ring.js";
 import { withMeteredKv } from "./kv-write-meter.js";
+
+export { GateLogBuffer } from "./gate-log-do.js";
 import { PLAN_APPROVED_PATH, bearerHeader, handlePlanApprovedAutomation } from "./plan-approved-automation.js";
 
 export type { Env } from "./env.js";

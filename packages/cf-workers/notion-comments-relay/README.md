@@ -291,6 +291,8 @@ KV: `wake_gate_adopted_at:<pageId>` (**90-day** TTL) for adopted-change dedupe a
 
 ## Gate log KV ring (durable gate log, v1)
 
+**Durable buffer (when `GATE_LOG_DO` is bound — default in `wrangler.toml`):** each request sends its rows in **one RPC** to a single SQLite-backed Durable Object `GateLogBuffer` (`idFromName("gate_log")`). The DO stores them in SQLite (survives isolate churn) and a **DO alarm** flushes ≤ 500 rows per KV value, paced at max(5 min, time left in UTC day ÷ flushes left) and capped by `GATE_LOG_DAILY_WRITE_CAP`. The flush counter lives in DO storage (exact; **0 KV writes**). Over the cap, rows are **kept** and drained after 00:00 UTC; storage is bounded at 20,000 rows (oldest pruned, counted in DO meta `pruned:<day>`). Key schema below is unchanged except `flushId` = `do-<epoch-ms base36>` (still unique). Without the binding the in-isolate ring below is used (legacy fallback). Fail-open: RPC errors/timeouts (2 s) drop that request's rows from KV only (`gate_log_do_error` log line); forwarding is never affected. DO flush writes use the raw binding and are **not** seen by the KV write meter (≤ cap/day).
+
 `WAKE_GATE_KV_RING=1` / `CLEF_RING=1` buffer shadow rows in isolate memory and write **one KV value per batch**. This replaces the old per-event read-modify-write keys `wake_gate:ring`, `wake_gate_shadow_log`, and `clef_shadow_log`, which are no longer written. Notion Steward's Gate Log writer reads these keys.
 
 | Item | Value |
