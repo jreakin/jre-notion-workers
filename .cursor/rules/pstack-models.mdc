@@ -1,0 +1,29 @@
+---
+description: pstack per-role model choices for this repo (overrides skill defaults; committed so Cursor Cloud Agents get it)
+alwaysApply: true
+---
+# pstack model configuration (LOCK-61, approved by John). One line per role.
+# Policy: every role runs grok-4.7. Arena, architect and interrogate panels run
+# grok-4.7, grok-4.6 and grok-4.5 (one subagent per entry). Never use a `-fast`
+# slug, `auto` or `inherit-parent`. If grok-4.7 is rejected, stop and report;
+# do not fall back.
+# This repo file is the source of truth for cloud agents; keep it in sync with
+# ~/.cursor/rules/pstack-models.mdc rather than re-running /setup-pstack here.
+# budget: unlimited (max)
+feature, refactoring: grok-4.7
+bug-fix: grok-4.7
+perf-issue: grok-4.7
+hillclimb: grok-4.7
+judgment and prose: grok-4.7
+hardest tasks: grok-4.7
+how explorer: grok-4.7
+how explainer: grok-4.7
+why investigators: grok-4.7
+why synthesizer: grok-4.7
+reflect tooling: grok-4.7
+reflect judgment, divergent, synthesizer: grok-4.7
+arena runners: grok-4.7, grok-4.6, grok-4.5
+arena cross-judge pool: grok-4.7, grok-4.6, grok-4.5
+swarm workers: grok-4.7
+architect runners: grok-4.7, grok-4.6, grok-4.5
+interrogate reviewers: grok-4.7, grok-4.6, grok-4.5
