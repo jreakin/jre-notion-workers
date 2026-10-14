@@ -204,6 +204,7 @@ export function buildGateContext(
     johnUserIds: parseIdSet(env.JOHN_NOTION_USER_IDS),
     fleetCommentsBotIds: parseIdSet(env.FLEET_COMMENTS_BOT_NOTION_USER_IDS),
     submittedPropertyIds: parseIdSet(env.SUBMITTED_PROPERTY_IDS),
+    needsJohnPropertyIds: parseIdSet(env.NEEDS_JOHN_PROPERTY_IDS),
     nonSubmittedPropertyIds: buildNonSubmittedPropertyIds(env),
     updatedPropertyIds,
     fleetLocksDataSourceId: trimOptionalEnvId(env.FLEET_LOCKS_DATA_SOURCE_ID),

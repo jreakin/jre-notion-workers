@@ -61,7 +61,11 @@ export default {
     try {
       if (route === "outcome") {
         const r = await handleOutcome(env, body);
-        return reply(r.status, { logged: r.status === 202, reason: r.status === 202 ? undefined : r.entry?.error_reason });
+        if (r.status === 202) {
+          // matched:false ⇒ no decision row for this hash (wrong message id, salt, or the post never landed).
+          return reply(202, { logged: true, matched: r.entry?.error_reason !== "outcome_without_decision" });
+        }
+        return reply(r.status, { logged: false, reason: r.entry?.error_reason });
       }
       const a = await admitEmailShadow(env, body);
       if (a.kind === "excluded") return reply(200, { logged: false, reason: "excluded" });

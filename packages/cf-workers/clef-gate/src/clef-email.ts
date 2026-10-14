@@ -53,7 +53,12 @@ export const EMAIL_THRESHOLDS = {
 
 export const FLASH_SAMPLE_MOD = 10;
 
-export type ShadowLabel = "escalate" | "fyi" | "would_skip";
+/**
+ * `error`: Clef could not produce a verdict (gateway/AI error, timeout, bad output, unbound, cap store
+ * unavailable) after retries + fallback. It is its own category: never graded as a wake or a skip.
+ * (If a live mode is ever added, `error` must fail open to escalate.)
+ */
+export type ShadowLabel = "escalate" | "fyi" | "would_skip" | "error";
 
 export type ParsedEmailRun = {
   p_person: number;
@@ -126,30 +131,75 @@ export function buildEmailState(item: EmailShadowItem): string {
 }
 
 export type EmailClefCall =
-  | { ok: true; parsed: ParsedEmailRun; latency_ms: number; model: string }
-  | { ok: false; reason: string; latency_ms: number; model: string };
+  | { ok: true; parsed: ParsedEmailRun; latency_ms: number; model: string; attempts: number; fallback: boolean }
+  | { ok: false; reason: string; latency_ms: number; model: string; attempts: number; fallback: boolean };
 
+/** Transient failures worth a retry: AI Gateway / Workers AI errors and timeouts (not config or bad output). */
+export function isTransientClefReason(reason: string): boolean {
+  return reason === "clef_timeout" || reason.startsWith("clef_error:");
+}
+
+/** Backoff before retry n (1-based) of the same model. Small: this runs in waitUntil after the 202. */
+export const CLEF_RETRY_BACKOFF_MS = [250, 750] as const;
+
+export type Sleep = (ms: number) => Promise<void>;
+const realSleep: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function invokeOnce(
+  ai: AiRunBinding,
+  gatewayId: string,
+  variant: "full" | "flash",
+  state: string,
+): Promise<{ ok: true; parsed: ParsedEmailRun } | { ok: false; reason: string }> {
+  const slug = variant === "full" ? CLEF_FULL_MODEL : CLEF_FLASH_MODEL;
+  const name = variant === "full" ? CLEF_FULL_MODEL_NAME : CLEF_FLASH_MODEL_NAME;
+  try {
+    // Email state carries masked subject/snippet: never let AI Gateway log or cache it.
+    const gateway = { id: gatewayId, collectLog: false, skipCache: true };
+    const raw = await runClefModel(ai, gateway, slug, name, state, EMAIL_QUESTIONS);
+    const parsed = parseEmailClefResponse(raw);
+    return parsed ? { ok: true, parsed } : { ok: false, reason: "clef_bad_output" };
+  } catch (err) {
+    return { ok: false, reason: clefErrorReason(err) };
+  }
+}
+
+/**
+ * Call Clef `variant`. On a transient failure retry the same model with backoff (CLEF_RETRY_BACKOFF_MS);
+ * when `fallbackToFlash` and the full model still fails transiently, try clef-flash once.
+ * `reason` on failure is the LAST attempt's reason; `attempts` counts every model call.
+ */
 export async function invokeEmailClef(
   ai: AiRunBinding | undefined,
   gatewayId: string | undefined,
   variant: "full" | "flash",
   state: string,
+  opts: { fallbackToFlash?: boolean; sleep?: Sleep; backoffMs?: readonly number[] } = {},
 ): Promise<EmailClefCall> {
-  const slug = variant === "full" ? CLEF_FULL_MODEL : CLEF_FLASH_MODEL;
   const name = variant === "full" ? CLEF_FULL_MODEL_NAME : CLEF_FLASH_MODEL_NAME;
   const started = Date.now();
-  if (!ai) return { ok: false, reason: "clef_ai_unbound", latency_ms: 0, model: name };
+  if (!ai) return { ok: false, reason: "clef_ai_unbound", latency_ms: 0, model: name, attempts: 0, fallback: false };
   // Fail closed: without the gateway there is no rate limit and no gateway no-log guarantee.
-  if (!gatewayId?.trim()) return { ok: false, reason: "clef_gateway_unset", latency_ms: 0, model: name };
-  try {
-    // Email state carries masked subject/snippet: never let AI Gateway log or cache it.
-    const gateway = { id: gatewayId.trim(), collectLog: false, skipCache: true };
-    const raw = await runClefModel(ai, gateway, slug, name, state, EMAIL_QUESTIONS);
-    const parsed = parseEmailClefResponse(raw);
-    const latency_ms = Date.now() - started;
-    if (!parsed) return { ok: false, reason: "clef_bad_output", latency_ms, model: name };
-    return { ok: true, parsed, latency_ms, model: name };
-  } catch (err) {
-    return { ok: false, reason: clefErrorReason(err), latency_ms: Date.now() - started, model: name };
+  if (!gatewayId?.trim()) {
+    return { ok: false, reason: "clef_gateway_unset", latency_ms: 0, model: name, attempts: 0, fallback: false };
   }
+  const sleep = opts.sleep ?? realSleep;
+  const backoff = opts.backoffMs ?? CLEF_RETRY_BACKOFF_MS;
+  let attempts = 0;
+  let last: { ok: true; parsed: ParsedEmailRun } | { ok: false; reason: string } = { ok: false, reason: "clef_error:Error" };
+  for (let i = 0; i <= backoff.length; i++) {
+    if (i > 0) await sleep(backoff[i - 1] ?? 0);
+    attempts++;
+    last = await invokeOnce(ai, gatewayId.trim(), variant, state);
+    if (last.ok || !isTransientClefReason(last.reason)) break;
+  }
+  if (last.ok) return { ok: true, parsed: last.parsed, latency_ms: Date.now() - started, model: name, attempts, fallback: false };
+  if (variant === "full" && opts.fallbackToFlash && isTransientClefReason(last.reason)) {
+    attempts++;
+    const fb = await invokeOnce(ai, gatewayId.trim(), "flash", state);
+    const latency_ms = Date.now() - started;
+    if (fb.ok) return { ok: true, parsed: fb.parsed, latency_ms, model: CLEF_FLASH_MODEL_NAME, attempts, fallback: true };
+    return { ok: false, reason: fb.reason, latency_ms, model: CLEF_FLASH_MODEL_NAME, attempts, fallback: true };
+  }
+  return { ok: false, reason: last.reason, latency_ms: Date.now() - started, model: name, attempts, fallback: false };
 }

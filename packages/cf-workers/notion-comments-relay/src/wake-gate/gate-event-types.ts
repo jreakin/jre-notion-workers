@@ -52,6 +52,12 @@ export type ClefShadowLogEntry = {
   decision?: "rule_skip";
   /** True when rules skipped but Clef said would_wake (false-skip candidate). */
   candidate_false_skip?: boolean;
+  /** Pre-Clef same-item dedupe: this event repeated an item+event type already seen in the window. */
+  dedupe_repeat?: boolean;
+  /** 1-based count of this item+event type inside the dedupe window (set on repeats). */
+  item_event_count?: number;
+  /** Rule said wake, dedupe would drop it: one saved wake. Sum per unique item_id for grading. */
+  saved_wake?: boolean;
 };
 
 export type FleetLocksFieldSnapshot = {
@@ -85,6 +91,8 @@ export type GateEventContext = {
   johnUserIds: Set<string>;
   fleetCommentsBotIds: Set<string>;
   submittedPropertyIds: Set<string>;
+  /** Optional (NEEDS_JOHN_PROPERTY_IDS). Empty ⇒ the properties_updated change rule is inert. */
+  needsJohnPropertyIds?: Set<string>;
   nonSubmittedPropertyIds: Set<string>;
   updatedPropertyIds: string[];
   fleetLocksDataSourceId?: string;

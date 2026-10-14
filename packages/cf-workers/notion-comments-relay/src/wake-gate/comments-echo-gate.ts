@@ -1,4 +1,10 @@
-import { isJohn, isTruthyFlag, submittedPropertyChanged } from "./gate-context-safety.js";
+import {
+  explicitPropertyRuleActive,
+  isJohn,
+  isTruthyFlag,
+  needsJohnPropertyChanged,
+  submittedPropertyChanged,
+} from "./gate-context-safety.js";
 import type { GateEventContext, WakeGateDecision } from "./gate-event-types.js";
 
 const LOG_ONLY_DB_HINTS = ["day log", "people", "lane"];
@@ -54,6 +60,9 @@ export function decideCommentsEchoGate(ctx: GateEventContext): WakeGateDecision 
     if (submittedPropertyChanged(ctx)) {
       return wake(gateName, "submitted_changed", ctx);
     }
+    if (needsJohnPropertyChanged(ctx)) {
+      return wake(gateName, "needs_john_changed", ctx);
+    }
     if (isJohn(ctx)) {
       return wake(gateName, "john_authored", ctx);
     }
@@ -71,6 +80,10 @@ export function decideCommentsEchoGate(ctx: GateEventContext): WakeGateDecision 
       const needsJohn = isTruthyFlag(ctx.needsJohnNow);
       if (logOnlyDb && !needsJohn) {
         return logOnly(gateName, "lane_row_property_flicker", ctx);
+      }
+      // Shadow rule (dr eggbot day-1 review): neither Submitted nor Needs John changed ⇒ skip.
+      if (explicitPropertyRuleActive(ctx)) {
+        return skip(gateName, "no_submitted_or_needs_john_change", ctx);
       }
     }
     return wake(gateName, "default_wake", ctx);

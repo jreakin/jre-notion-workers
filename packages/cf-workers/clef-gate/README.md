@@ -11,6 +11,23 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   - `200 {"logged":false,"reason":"excluded"}` — grokbot exclusion: counter bump + masked `event:"excluded"` log, no row.
   - `400` invalid payload / JSON / unreadable body · `413` body over the read cap (logged `event:"rejected"`, `payload_too_large`) · `500` KV write failed (masked `event:"store_failed"`, `kv_put_failed`; background crash logs `clef_completion_failed`). Retries are idempotent (row keyed by `msg_id_hash`).
 - `POST /clef/email-shadow/outcome` — `{msg_id_hash, disposition, escalated?, source?: "trainspam_rescue"}`. Last write wins.
+  `202 {"logged":true,"matched":true|false}`; `matched:false` means no decision row exists for that hash (wrong
+  message id / salt, or the decision post never landed): the outcome is stored but cannot be graded until one does.
+  Day-1 data: 454 decisions vs 7 outcome posts, 0 rejected. The Worker accepted every outcome it got; Inbox Triage
+  simply was not posting one per email. Contract: see "Outcome posting contract" below.
+
+### Outcome posting contract (Inbox Triage)
+1. For **every** email it posted a decision for, Inbox Triage posts exactly one outcome **at the end of the same
+   run, after the disposition is applied** (labels set / archived / spam / handed off / escalated):
+   `clef-email-shadow outcome --message-id <same Gmail message id used for post> --disposition <final>
+   [--escalated true|false]`. Same message id + same salt ⇒ same `msg_id_hash`.
+2. `disposition` is the **final applied** action, one of `spam | archive_fyi | escalate_john | handoff_lane | leave`
+   (not the planned one). `--escalated true` whenever John was told about it (chat/brief), even if archived.
+3. Later corrections post again (last write wins): John rescues from TrainSpam / spam ⇒
+   `--disposition escalate_john --source trainspam_rescue`; John archives something escalated ⇒ `archive_fyi`.
+4. Never post for mail that was not posted as a decision, nor for `jre@mail.grokbot.com` (excluded).
+5. On `matched:false`, re-check the message id (not thread id) and that the decision post returned 202. On 5xx the
+   helper retries once; never block triage on it. No subject/sender/content in the outcome, ever.
 
 ## Behavior
 - Defensive re-mask of subject (140) / snippet (400): emails, URLs, phones, digit runs ≥ 6. Body > 8 KB dropped.
@@ -28,6 +45,15 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   called (`error_reason:"clef_gateway_unset"`), so the gateway rate limit and no-log layer can't be bypassed.
 - One Clef call (`@cf/cloudflare/clef`) with six questions; deterministic 10% `@cf/cloudflare/clef-flash` side-by-side
   (last 8 hex of msg_id_hash mod 10 = 0). Gateway `clef-shadow-gate`.
+- **Retry + fallback:** a transient Clef failure (`clef_error:*` such as `AiGatewayError`/`AiError`, or `clef_timeout`)
+  is retried on the same model after 250 ms and 750 ms (3 calls), then `@cf/cloudflare/clef-flash` is tried once.
+  Rows log `clef_attempts` and `clef_fallback`; a fallback verdict sets `model:"clef-flash"` and skips the 10% flash
+  side-by-side. Bad output and config errors (`clef_gateway_unset`, `clef_ai_unbound`) are not retried. Worst case
+  ≈ 4 × 3 s + 1 s inside `waitUntil`, after the 202.
+- **`shadow_label:"error"`:** no verdict after retries/fallback (or bad output, gateway unset, AI unbound, cap store
+  unreadable/invalid). It is its own category: `agree`/`false_skip`/`false_wake` stay `null` and graders must count it
+  as neither a wake nor a skip (report it as an error rate). A reached daily cap stays `escalate` (policy). If a live
+  mode is ever added, `error` must fail open to escalate.
 - Derived `shadow_label`: escalate if p_person ≥ .5 / p_money_sec ≥ .3 / p_calendar ≥ .5 / lane ≠ none; would_skip if
   p_bulk ≥ .9 and p_person ≤ .05 and p_money_sec ≤ .05; else fyi. Error/timeout/bad output ⇒ escalate.
 - Join flags (computed by `gradeJoined`) vs Inbox Triage disposition: `agree`, `false_skip` (would_skip but escalated/handoff/TrainSpam rescue),

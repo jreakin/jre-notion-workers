@@ -269,6 +269,23 @@ Shadow rule gates (console + optional KV ring): comments echo, Fleet Locks adopt
 
 **Privacy / sampling notes:** Console `item_id` uses an unsalted 32-bit hash (`opaque:<hex>`) — collisions are possible and pages cannot be recovered from logs alone. The 10% full Clef sample is keyed by **page id hash**, so ~10% of pages are sampled, not 10% of events. AI Gateway logging retains the Clef `state` string (title and snippet up to 120 chars each). The irreversible-action Clef override inspects **structured fields only** (Kind, Document Type, Status, Author Lane), not free-text client-facing copy.
 
+**properties_updated change rule (shadow, day-1 review):** when `SUBMITTED_PROPERTY_IDS` **and**
+`NEEDS_JOHN_PROPERTY_IDS` are both set and the webhook lists `updated_properties`, a
+`page.properties_updated` that touches neither set is `would_skip` / `no_submitted_or_needs_john_change`
+(echo gate). A listed Needs John id wakes `needs_john_changed` (also a Clef hard override); a listed
+Submitted id wakes `submitted_changed`. Opaque updates (no ids), or either env unset, keep the old
+wake. In aggregation, a `not_fleet_locks` wake from the adopted-change gate ("not my event") no
+longer outvotes an explicit skip; every other wake (unset Fleet Locks ids, unreadable page, errors,
+adoption) still wins.
+
+**Pre-Clef same-item dedupe (shadow):** on the wake path, after hard overrides (John, Submitted,
+Needs John, mentions…) and before mode/cap/Clef, a repeat of the same item + event type inside
+`CLEF_ITEM_DEDUPE_WINDOW_S` (counted from the first event) logs `clef_decision:"would_skip"`,
+`reason:"dedupe_repeat_item"`, `dedupe_repeat:true`, `item_event_count:N`, `saved_wake:true` and makes
+no Clef call. Saved wakes = rows with `saved_wake:true`; group by `item_id` for per-unique-item counts.
+Isolate-local (no KV writes), so a repeat landing on another isolate is not deduped (undercounts
+savings, never over-skips). Rule-skipped events are not deduped: each is still scored for false skips.
+
 **`NON_SUBMITTED_PROPERTY_IDS`:** When unset, Fleet Locks property ids from code defaults are used so Clef/Fleet gates can distinguish non-Submitted property updates. Set the env var to override that list.
 
 ### Deploy vars (`wrangler.toml` `[vars]`)
@@ -282,6 +299,8 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `GATE_LOG_DATA_SOURCE_IDS` | optional | Gate Log drop disabled — all parents forward |
 | `SUBMITTED_PROPERTY_IDS` | optional | Submitted-property safety uses env/secret only when set (e.g. `;Xo<` in committed vars) |
 | `NON_SUBMITTED_PROPERTY_IDS` | optional | Falls back to built-in Fleet Locks non-Submitted property id list |
+| `NEEDS_JOHN_PROPERTY_IDS` | optional | Needs John property ids. With `SUBMITTED_PROPERTY_IDS` also set, enables the properties_updated change rule below; unset ⇒ inert |
+| `CLEF_ITEM_DEDUPE_WINDOW_S` | optional | Pre-Clef same-item dedupe window in seconds (default `600`; `0` disables) |
 | `JOHN_NOTION_USER_IDS`, `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | recommended | Clef shadow overrides `john_ids_unset` / `bot_ids_unset` (wake, no model) |
 | `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP` | Clef shadow | Clef mode/cap from defaults |
 | `CLEF_RING` | optional | Default off; `1` enables `clef_shadow_log` KV ring |

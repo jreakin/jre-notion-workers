@@ -18,11 +18,64 @@ import { runRuleSkipClefShadow } from "./clef-rule-skip-shadow.js";
 
 const DUPLICATE_WINDOW_MS = 60_000;
 
+/** Default window for the pre-Clef same-item dedupe (CLEF_ITEM_DEDUPE_WINDOW_S). */
+export const ITEM_DEDUPE_WINDOW_S_DEFAULT = 600;
+const ITEM_DEDUPE_MAX_KEYS = 5000;
+/** Isolate-local (no KV write per event). Key: item id + event type. */
+const itemDedupe = new Map<string, { firstTs: number; count: number }>();
+
+export function readItemDedupeWindowMs(env: Env): number {
+  const raw = env.CLEF_ITEM_DEDUPE_WINDOW_S?.trim();
+  const n = raw ? Number.parseInt(raw, 10) : ITEM_DEDUPE_WINDOW_S_DEFAULT;
+  return Number.isFinite(n) && n >= 0 ? n * 1000 : ITEM_DEDUPE_WINDOW_S_DEFAULT * 1000;
+}
+
+/**
+ * Same item + event type seen within the window (counted from the FIRST event, so a steady stream
+ * resurfaces once per window). Returns the 1-based count inside the window; 1 = first (not a repeat).
+ * Unknown items are never deduped.
+ */
+export function noteItemEvent(env: Env, itemId: string, notionType: string | null, now = Date.now()): number {
+  const windowMs = readItemDedupeWindowMs(env);
+  if (windowMs === 0 || itemId === "unknown" || !itemId.trim()) return 1;
+  const key = `${normalizeNotionUuid(itemId)}|${notionType ?? ""}`;
+  const prev = itemDedupe.get(key);
+  if (prev && now - prev.firstTs >= 0 && now - prev.firstTs < windowMs) {
+    prev.count += 1;
+    return prev.count;
+  }
+  if (itemDedupe.size >= ITEM_DEDUPE_MAX_KEYS) {
+    for (const [k, v] of itemDedupe) {
+      if (now - v.firstTs >= windowMs) itemDedupe.delete(k);
+    }
+    if (itemDedupe.size >= ITEM_DEDUPE_MAX_KEYS) itemDedupe.clear();
+  }
+  itemDedupe.set(key, { firstTs: now, count: 1 });
+  return 1;
+}
+
+export function resetItemDedupeForTests(): void {
+  itemDedupe.clear();
+}
+
 const pageEventCounts = new Map<string, { ts: number; count: number }>();
 
+/**
+ * Wakes that only mean "this event is not mine" (no rule claimed it). They never outvote another
+ * gate's explicit skip. Deliberately narrow: unset config / unreadable page / errors still wake.
+ */
+export const PASS_THROUGH_WAKE_REASONS: ReadonlySet<string> = new Set(["not_fleet_locks"]);
+
 export function aggregateRuleDecision(decisions: WakeGateDecision[]): WakeDecisionOutcome {
-  if (decisions.some((d) => d.decision === "would_wake")) {
+  const hasSkip = decisions.some((d) => d.decision === "would_skip");
+  const claimingWake = decisions.some(
+    (d) => d.decision === "would_wake" && !(hasSkip && PASS_THROUGH_WAKE_REASONS.has(d.reason)),
+  );
+  if (claimingWake) {
     return "would_wake";
+  }
+  if (hasSkip && decisions.every((d) => d.decision !== "would_log_only")) {
+    return "would_skip";
   }
   if (decisions.every((d) => d.decision === "would_skip")) {
     return "would_skip";
@@ -85,6 +138,7 @@ function peekPageEventCount(pageId: string): number {
 
 export function resetClefPageEventCountsForTests(): void {
   pageEventCounts.clear();
+  itemDedupe.clear();
 }
 
 function isBotEcho(ctx: GateEventContext): boolean {
@@ -181,6 +235,7 @@ export async function runClefShadowWakeGate(
       "clef_skipped_rule_not_wake",
     );
     await appendClefShadowLog(env, entry);
+    // Rule skips are not deduped: each one is still scored for false skips (sampled + capped).
     if (ruleDecision === "would_skip") {
       await runRuleSkipClefShadow(env, ctx, notionType, parsed, itemId, entry, {
         log: (row) => appendClefShadowLog(env, row),
@@ -204,6 +259,26 @@ export async function runClefShadowWakeGate(
     if (modeRes.reason) {
       entry.reason = `${overrideReason};${modeRes.reason}`;
     }
+    await appendClefShadowLog(env, entry);
+    return;
+  }
+
+  // Pre-Clef dedupe (after hard overrides, so John / Submitted / Needs John never dedupe).
+  const itemCount = noteItemEvent(env, itemId, notionType);
+  if (itemCount > 1) {
+    const entry = baseLogEntry(
+      ctx,
+      notionType,
+      itemId,
+      ruleDecision,
+      "would_skip",
+      modeRes.modeLabel,
+      "dedupe_repeat_item",
+    );
+    entry.dedupe_repeat = true;
+    entry.item_event_count = itemCount;
+    // Rule said wake; this repeat is the wake the dedupe saves (count per unique item_id).
+    entry.saved_wake = true;
     await appendClefShadowLog(env, entry);
     return;
   }
