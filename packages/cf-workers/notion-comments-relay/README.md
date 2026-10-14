@@ -67,7 +67,21 @@ Sibling to `packages/workers/` (recovered Notion Workers / Bun). This package us
 `Project`, `Approved At`. Only `Kind=Plan`, `Status=Approved`, non-empty `Project` and non-empty
 `Approved At` wake AS; anything else → `200 {ignored:true, reason}`. Dedupe key
 `plan_approved:v1:<page id>:<Approved At>` (TTL 7d via `kvTtl()`); one KV read per valid request,
-one KV write only after a 2xx AS response. AS unset → `503`; AS non-2xx → `502` (not deduped).
+one KV write only after a 2xx AS response. AS unset (or whitespace-only) → `503`; AS non-2xx,
+network error, or 10s timeout → `502` (not deduped). Bodies over 256 KiB → `413` (checked from
+`Content-Length` before reading, then again on the actual bytes). Whitespace-only secrets count as unset.
+An existing `Bearer` prefix in `*_WEBHOOK_AUTHORIZATION` is matched case-insensitively.
+
+**Property names are pinned.** Notion's *Send webhook* action only includes the properties you
+tick, so tick exactly these (case/space-insensitive match, but keep these names):
+`ID`, `Kind`, `Status`, `Project`, `Approved At`. Any missing one logs a
+`plan_approved_missing_properties` warning (names only) and the post is ignored if a required
+field ends up empty. The page id comes from the body's `data.id` (falls back to `ID`).
+
+**Double wake.** Dedupe is a non-atomic KV get→put written only after AS returns 2xx. Two identical
+posts arriving concurrently, or a re-fire while the first wake is still in flight (≤10s), can both
+wake AS. Notion fires once per trigger so this is rare; AS must treat the wake as idempotent on
+`page_id` + `approved_at`.
 
 Setup (generate without printing):
 

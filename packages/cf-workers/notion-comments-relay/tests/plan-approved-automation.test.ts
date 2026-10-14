@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { Env } from "../src/env.js";
 import {
+  AS_WAKE_TIMEOUT_MS,
   AUTOMATION_SECRET_HEADER,
+  MAX_BODY_BYTES,
+  bearerHeader,
+  missingPinnedProperties,
   PLAN_APPROVED_PATH,
   extractFields,
   secretMatches,
@@ -127,6 +131,7 @@ describe("plan-approved automation route", () => {
   test.each([
     ["Kind", { type: "select", select: { name: "Task" } }, "kind_not_plan"],
     ["Status", { type: "status", status: { name: "Draft" } }, "status_not_approved"],
+    ["Status", { type: "status", status: { name: "approved" } }, "status_not_approved"],
     ["Project", { type: "relation", relation: [] }, "project_empty"],
     ["Approved At", { type: "date", date: null }, "missing_approved_at"],
   ])("ignores %s mismatch", async (prop, value, reason) => {
@@ -182,5 +187,181 @@ describe("helpers", () => {
   test("rich_text / title project", () => {
     const f = extractFields(automationBody({ Project: { type: "rich_text", rich_text: [{ plain_text: "  " }] } }));
     expect(validatePlanApproved(f)).toEqual({ ok: false, reason: "project_empty" });
+  });
+});
+
+describe("plan-approved hardening (B1/B2)", () => {
+  test("missing id (no data.id and no ID) → ignored missing_page_id", async () => {
+    const calls = mockFetch();
+    const puts: Put[] = [];
+    const b = automationBody({ ID: { type: "rich_text", rich_text: [] } });
+    delete (b.data as Record<string, unknown>).id;
+    const res = await post(makeEnv(new Map(), puts), b);
+    expect((await res.json()) as object).toMatchObject({ ignored: true, reason: "missing_page_id" });
+    expect(calls.length + puts.length).toBe(0);
+  });
+
+  test("oversize body → 413 via Content-Length before read, and via actual size", async () => {
+    const calls = mockFetch();
+    const res = await post(makeEnv(), "{}", { [AUTOMATION_SECRET_HEADER]: SECRET, "content-length": String(MAX_BODY_BYTES + 1) });
+    expect(res.status).toBe(413);
+    const big = JSON.stringify({ pad: "x".repeat(MAX_BODY_BYTES) });
+    expect((await post(makeEnv(), big)).status).toBe(413);
+    expect(calls.length).toBe(0);
+  });
+
+  test("array and null bodies → 400", async () => {
+    mockFetch();
+    expect((await post(makeEnv(), "[1,2]")).status).toBe(400);
+    expect((await post(makeEnv(), "null")).status).toBe(400);
+  });
+
+  test("fetch throws → 502, no dedupe write", async () => {
+    const puts: Put[] = [];
+    globalThis.fetch = mock(async () => {
+      throw new TypeError("network down");
+    }) as unknown as typeof fetch;
+    const res = await post(makeEnv(new Map(), puts), automationBody());
+    expect(res.status).toBe(502);
+    expect((await res.json()) as object).toMatchObject({ error: "as_wake_failed" });
+    expect(puts.length).toBe(0);
+  });
+
+  test("B1: outbound wake carries an AbortSignal; timeout → 502 as_wake_timeout", async () => {
+    expect(AS_WAKE_TIMEOUT_MS).toBe(10_000);
+    const puts: Put[] = [];
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = mock(async (_u: unknown, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    }) as unknown as typeof fetch;
+    const res = await post(makeEnv(new Map(), puts), automationBody());
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(res.status).toBe(502);
+    expect((await res.json()) as object).toMatchObject({ error: "as_wake_timeout" });
+    expect(puts.length).toBe(0);
+  });
+
+  test("B1: a hung AS is actually aborted by the signal", async () => {
+    const realTimeout = AbortSignal.timeout;
+    (AbortSignal as unknown as { timeout: (ms: number) => AbortSignal }).timeout = () => realTimeout.call(AbortSignal, 20);
+    try {
+      globalThis.fetch = mock(
+        (_u: unknown, init?: RequestInit) =>
+          new Promise<Response>((_res, rej) => {
+            init?.signal?.addEventListener("abort", () => rej(init.signal!.reason));
+          }),
+      ) as unknown as typeof fetch;
+      const res = await post(makeEnv(), automationBody());
+      expect(res.status).toBe(502);
+      expect((await res.json()) as object).toMatchObject({ error: "as_wake_timeout" });
+    } finally {
+      (AbortSignal as unknown as { timeout: typeof realTimeout }).timeout = realTimeout;
+    }
+  });
+
+  test("trimmed 'Approved ' status is accepted", async () => {
+    const calls = mockFetch();
+    await post(makeEnv(), automationBody({ Status: { type: "status", status: { name: "Approved " } } }));
+    expect(calls.length).toBe(1);
+  });
+
+  test("whitespace-only secrets count as unset", async () => {
+    const calls = mockFetch();
+    expect((await post(makeEnv(new Map(), [], { NOTION_AUTOMATION_SECRET: "   " }), automationBody(), { [AUTOMATION_SECRET_HEADER]: "   " })).status).toBe(401);
+    expect((await post(makeEnv(new Map(), [], { AS_WEBHOOK_AUTHORIZATION: "  " }), automationBody())).status).toBe(503);
+    expect((await post(makeEnv(new Map(), [], { AS_WEBHOOK_URL: " " }), automationBody())).status).toBe(503);
+    expect(calls.length).toBe(0);
+  });
+
+  test("bearerHeader matches prefix case-insensitively", () => {
+    expect(bearerHeader("tok")).toBe("Bearer tok");
+    expect(bearerHeader("Bearer tok")).toBe("Bearer tok");
+    expect(bearerHeader("bearer tok")).toBe("Bearer tok");
+    expect(bearerHeader("BEARER   tok ")).toBe("Bearer tok");
+  });
+
+  test("lowercase bearer in AS secret is not double-prefixed on the wire", async () => {
+    const calls = mockFetch();
+    await post(makeEnv(new Map(), [], { AS_WEBHOOK_AUTHORIZATION: "bearer as-token" }), automationBody());
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer as-token");
+  });
+
+  test("missing pinned properties log a warning (names only)", async () => {
+    mockFetch();
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = ((l: unknown) => warns.push(String(l))) as typeof console.warn;
+    try {
+      const b = automationBody();
+      const props = (b.data as { properties: Record<string, unknown> }).properties;
+      delete props["Approved At"];
+      delete props.ID;
+      expect(missingPinnedProperties(b)).toEqual(["ID", "Approved At"]);
+      const res = await post(makeEnv(), b);
+      expect((await res.json()) as object).toMatchObject({ ignored: true, reason: "missing_approved_at" });
+      expect(warns.some((w) => w.includes("plan_approved_missing_properties") && w.includes("Approved At"))).toBe(true);
+      expect(warns.join("")).not.toContain(SECRET);
+    } finally {
+      console.warn = orig;
+    }
+  });
+
+  test("end-to-end: realistic Notion Send webhook automation body", async () => {
+    const calls = mockFetch();
+    const store = new Map<string, string>();
+    const puts: Put[] = [];
+    const body = {
+      source: {
+        type: "automation",
+        automation_id: "1557d7f5-6298-80a1-b2c3-004b1a2c3d4e",
+        action_id: "1557d7f5-6298-80f0-9a8b-00c1d2e3f4a5",
+        event_id: "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+        attempt: 1,
+      },
+      data: {
+        object: "page",
+        id: "28a7d7f5-6298-8011-9c2e-e1f0a1b2c3d4",
+        created_time: "2026-10-12T15:04:00.000Z",
+        last_edited_time: "2026-10-14T00:41:00.000Z",
+        created_by: { object: "user", id: "2e7d872b-594c-8161-92a2-00024b29e816" },
+        last_edited_by: { object: "user", id: "2e7d872b-594c-8161-92a2-00024b29e816" },
+        cover: null,
+        icon: null,
+        parent: { type: "data_source_id", data_source_id: "2e97d7f5-6298-804c-b8a5-000b18b72684", database_id: "2e97d7f5-6298-8001-aaaa-c0ffee000001" },
+        archived: false,
+        in_trash: false,
+        properties: {
+          ID: { id: "%3Ax%3E", type: "unique_id", unique_id: { prefix: "LOCK", number: 61 } },
+          Name: { id: "title", type: "title", title: [{ type: "text", text: { content: "Relay plan", link: null }, plain_text: "Relay plan", href: null }] },
+          Kind: { id: "Kd%3F", type: "select", select: { id: "a1", name: "Plan", color: "blue" } },
+          Status: { id: "St%40", type: "status", status: { id: "b2", name: "Approved", color: "green" } },
+          Project: { id: "Pr%23", type: "relation", relation: [{ id: "3157d7f5-6298-8057-b079-ef0d3c48eb46" }], has_more: false },
+          "Approved At": { id: "Ap%24", type: "date", date: { start: "2026-10-14T00:41:00.000+00:00", end: null, time_zone: null } },
+        },
+        url: "https://www.notion.so/Relay-plan-28a7d7f5629880119c2ee1f0a1b2c3d4",
+        public_url: null,
+      },
+    };
+    const res = await post(makeEnv(store, puts), body);
+    expect(res.status).toBe(200);
+    expect((await res.json()) as object).toMatchObject({ ok: true, forwarded: true, status: 200 });
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.url).toBe("https://as.example/webhook");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      source: "notion-comments-relay",
+      event: "notion.automation.plan_approved",
+      page_id: "28a7d7f5629880119c2ee1f0a1b2c3d4",
+      id: "LOCK-61",
+      kind: "Plan",
+      status: "Approved",
+      project: "3157d7f5-6298-8057-b079-ef0d3c48eb46",
+      approved_at: "2026-10-14T00:41:00.000+00:00",
+    });
+    expect(puts.map((p) => p.key)).toEqual(["plan_approved:v1:28a7d7f5629880119c2ee1f0a1b2c3d4:2026-10-14T00:41:00.000+00:00"]);
+    // second delivery of same event → duplicate, no new wake/write
+    await post(makeEnv(store, puts), body);
+    expect(calls.length).toBe(1);
+    expect(puts.length).toBe(1);
   });
 });
