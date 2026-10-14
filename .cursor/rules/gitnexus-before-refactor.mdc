@@ -1,0 +1,41 @@
+---
+description: GitNexus impact analysis before refactors and commits. Soft (UNKNOWN) outside Plan Prompts; hard stop inside a Plan Prompt that requires GitNexus.
+alwaysApply: true
+---
+<!-- Version: 1.0.0 | Last Updated: 2026-10-14 -->
+
+# GitNexus: check impact before refactors
+
+Cursor Cloud Agents for this repo may have a local [GitNexus](https://github.com/abhigyanpatwari/GitNexus) index. `scripts/cloud-agent-install.sh` installs the lockfile-pinned CLI in `tools/gitnexus/` and builds the index. `scripts/gitnexus-refresh.sh` refreshes it in the background on start (log: `/tmp/gitnexus-refresh.log`). The `.gitnexus/` folder is gitignored and never committed. CLI path: `tools/gitnexus/node_modules/.bin/gitnexus` (written as `gitnexus` below).
+
+## Scope: soft by default, hard inside Plan Prompts
+
+- **Outside a Plan Prompt (soft).** If GitNexus is unavailable (not installed, no index, MCP missing, unsupported Node, or a hook or command error), say "GitNexus unavailable, impact UNKNOWN", check callers with `rg`, and continue. Never invent callers or a clean scope.
+- **Inside a Plan Prompt that requires GitNexus (hard).** If GitNexus is unavailable, or the index is stale and the refresh fails, **STOP**. Report the failure and do not proceed. On any conflict, the Plan Prompt's GitNexus section wins over this rule.
+
+## Availability check (once per session)
+
+- Use the `gitnexus` MCP tools if they are listed. Otherwise use the CLI: `gitnexus status`.
+- If the index is stale, run `bash scripts/gitnexus-refresh.sh --foreground`. It is bounded to 120s and writes only `.gitnexus/`. If it fails, apply the scope rule above.
+
+## Before editing a function, class, or method
+
+- Run impact analysis upstream. MCP: `impact` with `target: "<symbol>"`, `direction: "upstream"`. CLI: `gitnexus impact "<symbol>" --direction upstream`.
+- Report the blast radius: direct callers, affected processes, and risk level.
+- Warn the user before proceeding if the risk is **HIGH** or **CRITICAL**.
+- Results that are `truncated`, `partial`, or have 0 resolved callers for a symbol that clearly has call sites count as **UNKNOWN**, not clean. Confirm them with `rg`.
+
+## Before committing
+
+- MCP `detect_changes` (`{scope: "all"}`) or CLI `gitnexus detect-changes`. Confirm the affected scope matches what you intended, and document any unexpected impact.
+
+## Refactors and renames
+
+- Renames: use `rename` with `dry_run: true` first, review the preview, then apply.
+- Extract or split: run `context` on the target, then `impact` upstream, then `detect_changes` afterwards.
+
+## Read-only vs. mutating
+
+Read-only, always fine: `status`, `query`, `context`, `impact`, `trace`, `detect-changes`, `check`, `cypher` (MATCH only), `list`.
+Writes only `.gitnexus/`: `analyze --index-only --skip-agents-md` (prefer `scripts/gitnexus-refresh.sh`).
+Do **not** run: plain `gitnexus analyze` without `--index-only` (it rewrites AGENTS.md/CLAUDE.md and adds skills), `setup`, `uninstall`, `clean`, `wiki`, or `update`.
