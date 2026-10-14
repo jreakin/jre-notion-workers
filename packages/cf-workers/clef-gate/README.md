@@ -7,7 +7,7 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
 ## Routes (bearer `CLEF_EMAIL_SHADOW_TOKEN`; missing/unset secret ⇒ 401)
 - `POST /clef/email-shadow` — payload v1 (see spec). Status contract (authorized):
   - `202 {"logged":true,"verdict":"pending"}` — parsed, validated, and the row (triage truth, `error_reason:"clef_pending"`) is **already in KV**. The Clef call runs in `waitUntil` and rewrites only the decision row.
-  - `202 {"logged":true,"duplicate":true}` — a finished (non-pending) decision row already exists for this `msg_id_hash`: no rewrite, no Clef call. A still-pending row is re-admitted (recovers a dead background step). KV reads can be ~60 s stale across PoPs, so a near-simultaneous duplicate may still re-run Clef once (verdict overwrite only; outcomes are unaffected).
+  - `202 {"logged":true,"duplicate":true}` — a finished (non-pending) decision row already exists for this `msg_id_hash`: no rewrite, no Clef call. A still-pending row is re-admitted (recovers a dead background step). KV reads can be ~60 s stale across PoPs, so a near-simultaneous duplicate may still re-run Clef once. **A duplicate sent while the first copy is still `clef_pending` also re-runs Clef** (by design, so a dead background step can recover): two completions then race last-write-wins on the decision row, the flash sample may differ, and Clef budget can be spent twice. Only the decision row is rewritten; outcomes are unaffected.
   - `200 {"logged":false,"reason":"excluded"}` — grokbot exclusion: counter bump + masked `event:"excluded"` log, no row.
   - `400` invalid payload / JSON / unreadable body · `413` body over the read cap (logged `event:"rejected"`, `payload_too_large`) · `500` KV write failed (masked `event:"store_failed"`, `kv_put_failed`; background crash logs `clef_completion_failed`). Retries are idempotent (row keyed by `msg_id_hash`).
 - `POST /clef/email-shadow/outcome` — `{msg_id_hash, disposition, escalated?, source?: "trainspam_rescue"}`. Last write wins.
@@ -30,12 +30,12 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   (last 8 hex of msg_id_hash mod 10 = 0). Gateway `clef-shadow-gate`.
 - Derived `shadow_label`: escalate if p_person ≥ .5 / p_money_sec ≥ .3 / p_calendar ≥ .5 / lane ≠ none; would_skip if
   p_bulk ≥ .9 and p_person ≤ .05 and p_money_sec ≤ .05; else fyi. Error/timeout/bad output ⇒ escalate.
-- Join flags vs Inbox Triage disposition: `agree`, `false_skip` (would_skip but escalated/handoff/TrainSpam rescue),
+- Join flags (computed by `gradeJoined`) vs Inbox Triage disposition: `agree`, `false_skip` (would_skip but escalated/handoff/TrainSpam rescue),
   `false_wake` (escalate but spam/archive).
 - KV layout (30-day TTL each):
   - `clef_email_shadow_log:<msg_id_hash>` — decision row (pending → verdict). Written only by `/clef/email-shadow`.
   - `clef_email_shadow_outcome:<msg_id_hash>` — outcome row. Written only by `/clef/email-shadow/outcome` (last write wins). Neither writer touches the other's key, so no overwrite race.
-  - Grading reads both and joins with `gradeJoined(decision, outcome)` (outcome triage truth wins; `null` while the verdict is pending).
+  - **Grading must go through `gradeFromKv(kv, hash)` / `gradeJoined(decision, outcome)` only** — including the 14-day zero-false-skip window and any Gate Log rollup. Outcome triage truth wins; `null` while the verdict is pending. The outcome row (and its `event:"outcome"` log line) intentionally carries **no** verdict and **no** `agree`/`false_skip`/`false_wake`; never read flags off it. Decision-row flags reflect decision-time triage only and are superseded by the join.
 - **Grading window:** shadow rows written before this fix (outcome key + idempotent resend) do **not** count toward the 14-day zero-false-skip window. Earlier rows could have an outcome overwritten by a verdict, or a verdict overwritten by a resend. Start the 14-day clock from this fix's deploy.
 - Daily cap `CLEF_EMAIL_DAILY_CALL_CAP` (1000) at `clef:calls:clef_email:<day>` (soft, KV not atomic). The flash sample
   takes a second unit from the same cap, so the effective full-call budget is about 91% of the cap.

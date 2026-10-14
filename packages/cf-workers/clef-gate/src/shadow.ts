@@ -317,15 +317,18 @@ export async function handleOutcome(env: Env, rawBody: string): Promise<OutcomeR
   } catch {
     prior = null;
   }
-  const entry: EmailShadowLogEntry = prior ? { ...blankEntry("outcome", prior.mode), ...pickLogFields(prior) } : blankEntry("outcome", "n/a");
-  entry.event = "outcome";
-  entry.ts = new Date().toISOString();
+  // Outcome row = triage truth + identifiers only. It deliberately carries NO verdict and NO
+  // agree/false_skip/false_wake flags (they would be stale if the decision was still pending).
+  // Grade only via gradeJoined()/gradeFromKv().
+  const entry = blankEntry("outcome", prior?.mode ?? "n/a");
   entry.msg_id_hash = hash;
+  entry.run_id = prior?.run_id ?? null;
+  entry.mailbox = prior?.mailbox ?? null;
+  entry.thread_id_hash = prior?.thread_id_hash ?? null;
   entry.triage_disposition = disposition;
   entry.triage_escalated = b.escalated === true || disposition === "escalate_john" || disposition === "handoff_lane";
   entry.triage_rescued = b.source === "trainspam_rescue";
   if (!prior) entry.error_reason = "outcome_without_decision";
-  finishFlags(entry);
   try {
     await writeRingStrict(env, entry, OUTCOME_PREFIX);
   } catch {
@@ -336,15 +339,6 @@ export async function handleOutcome(env: Env, rawBody: string): Promise<OutcomeR
   return { status: 202, entry };
 }
 
-/** Re-pick only allowlisted keys from a stored row (defends against tampered KV values). */
-function pickLogFields(src: EmailShadowLogEntry): Partial<EmailShadowLogEntry> {
-  const keys = Object.keys(blankEntry("outcome", "shadow")) as (keyof EmailShadowLogEntry)[];
-  const out: Record<string, unknown> = {};
-  for (const k of keys) {
-    if (k in src) out[k] = (src as Record<string, unknown>)[k];
-  }
-  return out as Partial<EmailShadowLogEntry>;
-}
 
 /**
  * Grading join: decision row (`clef_email_shadow_log:<hash>`) + optional outcome row
@@ -366,4 +360,27 @@ export function gradeJoined(
   g.agree = g.false_skip = g.false_wake = null;
   finishFlags(g);
   return g;
+}
+
+function parseRow(raw: string | null): EmailShadowLogEntry | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as EmailShadowLogEntry) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The single grading entry point for any consumer (14-day zero-false-skip window, Gate Log, etc.):
+ * reads both keys for a hash and joins them via gradeJoined. Never read flags off an outcome row.
+ */
+export async function gradeFromKv(kv: KVNamespace, msgIdHash: string): Promise<EmailShadowLogEntry | null> {
+  const [d, o] = await Promise.all([
+    kv.get(`${RING_PREFIX}${msgIdHash}`),
+    kv.get(`${OUTCOME_PREFIX}${msgIdHash}`),
+  ]);
+  const decision = parseRow(d);
+  return decision ? gradeJoined(decision, parseRow(o)) : null;
 }

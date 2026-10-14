@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import worker from "../src/index.js";
-import { gradeJoined, OUTCOME_PREFIX, processEmailShadow, processOutcome, RING_PREFIX, type EmailShadowLogEntry } from "../src/shadow.js";
+import { gradeFromKv, gradeJoined, OUTCOME_PREFIX, processEmailShadow, processOutcome, RING_PREFIX, type EmailShadowLogEntry } from "../src/shadow.js";
 import { resolveOverride } from "../src/overrides.js";
 import { parseEmailShadowBody } from "../src/payload.js";
 import { answers, captureLogs, HASH_FLASH, HASH_NOFLASH, makeEnv, payload, SECRET_SNIPPET, SECRET_SUBJECT } from "./helpers.js";
@@ -164,8 +164,10 @@ describe("flow", () => {
     await processEmailShadow(env, JSON.stringify(payload({ triage: { disposition: "spam", lane: "none", labels_applied: [], escalated: false } })));
     const o = await processOutcome(env, JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam", source: "trainspam_rescue" }));
     expect(o?.event).toBe("outcome");
-    expect(o?.false_skip).toBe(true);
-    expect(o?.shadow_label).toBe("would_skip");
+    expect(o?.triage_rescued).toBe(true);
+    const g = await gradeFromKv(env.CLEF_KV, HASH_NOFLASH);
+    expect(g?.false_skip).toBe(true);
+    expect(g?.shadow_label).toBe("would_skip");
     const o2 = await processOutcome(env, JSON.stringify({ msg_id_hash: "d".repeat(64), disposition: "escalate_john", subject: "leak me" }));
     expect(o2?.error_reason).toBe("outcome_without_decision");
     expect(o2?.mode).toBe("n/a");
@@ -397,5 +399,29 @@ describe("http", () => {
     const o = await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "spam" })), env, ctx().c);
     expect(o.status).toBe(500);
     expect((await o.json()) as unknown).toEqual({ logged: false, reason: "kv_put_failed" });
+  });
+  test("grading goes through gradeJoined only: outcome row carries no verdict or flags, even if it raced a pending decision", async () => {
+    cap = captureLogs();
+    const { env, kv } = makeEnv();
+    const ai = env.AI.run;
+    env.AI.run = (async (...a: unknown[]) => {
+      // outcome arrives while the decision row is still clef_pending
+      await worker.fetch(req("/clef/email-shadow/outcome", "Bearer tok-123", "POST", JSON.stringify({ msg_id_hash: HASH_NOFLASH, disposition: "escalate_john" })), env, ctx().c);
+      return (ai as (...x: unknown[]) => Promise<unknown>)(...a);
+    }) as unknown as Ai["run"];
+    const k = ctx();
+    await worker.fetch(req("/clef/email-shadow", "Bearer tok-123", "POST", JSON.stringify(payload({ triage: { disposition: "spam", lane: "none", labels_applied: [], escalated: false } }))), env, k.c);
+    await Promise.all(k.p);
+    const outcome = JSON.parse(kv.data.get(`${OUTCOME_PREFIX}${HASH_NOFLASH}`) ?? "{}") as EmailShadowLogEntry;
+    for (const f of ["shadow_label", "agree", "false_skip", "false_wake", "p_person", "lane", "model"] as const) {
+      expect(outcome[f]).toBeNull();
+    }
+    const outcomeLog = cap.lines.map((l) => JSON.parse(l)).find((l) => l.event === "outcome");
+    expect(outcomeLog?.false_skip).toBeNull();
+    const g = await gradeFromKv(env.CLEF_KV, HASH_NOFLASH);
+    expect(g?.shadow_label).toBe("would_skip");
+    expect(g?.triage_disposition).toBe("escalate_john");
+    expect(g?.false_skip).toBe(true);
+    expect(await gradeFromKv(env.CLEF_KV, "e".repeat(64))).toBeNull();
   });
 });
