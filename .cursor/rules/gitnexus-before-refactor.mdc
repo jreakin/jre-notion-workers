@@ -2,6 +2,7 @@
 description: GitNexus impact analysis before refactors and commits. Soft (UNKNOWN) outside Plan Prompts; hard stop inside a Plan Prompt that requires GitNexus.
 alwaysApply: true
 ---
+<!-- Version: 1.0.0 | Last Updated: 2026-10-14 -->
 
 # GitNexus: check impact before refactors
 

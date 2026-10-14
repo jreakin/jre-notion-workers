@@ -35,8 +35,8 @@ if ! gitnexus_node_ok; then
   gitnexus_unknown "node $(node --version 2>/dev/null || echo none) does not satisfy ^22.18.0 || >=24.11.0"
   exit 0
 fi
-if ! (cd "$GITNEXUS_TOOL_DIR" && npm ci --no-audit --no-fund); then
-  gitnexus_unknown "npm ci in $GITNEXUS_TOOL_DIR failed"
+if ! timeout 600 bash -c "cd \"$GITNEXUS_TOOL_DIR\" && npm ci --no-audit --no-fund"; then
+  gitnexus_unknown "npm ci in $GITNEXUS_TOOL_DIR failed or exceeded 600s"
   exit 0
 fi
 if ! timeout 300 "$GITNEXUS_BIN" analyze --index-only --skip-agents-md; then

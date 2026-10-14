@@ -13,8 +13,10 @@ if ! gitnexus_node_ok || [ ! -x "$GITNEXUS_BIN" ]; then
   exit 0
 fi
 if [ "${1:-}" = "--foreground" ]; then
-  timeout 120 "$GITNEXUS_BIN" analyze --index-only --skip-agents-md >"$LOG" 2>&1 \
-    || gitnexus_unknown "refresh failed or exceeded 120s (see $LOG)"
+  if ! timeout 120 "$GITNEXUS_BIN" analyze --index-only --skip-agents-md >"$LOG" 2>&1; then
+    gitnexus_unknown "refresh failed or exceeded 120s (see $LOG)"
+    exit 1
+  fi
   exit 0
 fi
 nohup timeout 120 "$GITNEXUS_BIN" analyze --index-only --skip-agents-md >"$LOG" 2>&1 </dev/null &
