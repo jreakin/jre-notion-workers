@@ -14,11 +14,9 @@ export function decideClefOutcome(
   if (pAction <= CLEF_P_ACTION_SKIP_MAX && pDup >= CLEF_P_DUP_SKIP_MIN) {
     return "would_skip";
   }
-  // q_when=ignore must never be louder than batch (bug: it fell through to would_wake).
-  if (qWhen === "ignore" && pAction <= CLEF_P_ACTION_BATCH_MAX) {
-    return pDup >= CLEF_P_DUP_SKIP_MIN ? "would_skip" : "would_batch";
-  }
-  if (pAction <= CLEF_P_ACTION_BATCH_MAX && qWhen === "batch") {
+  // Clef Decision Model amendment (needs John's sign-off): q_when=ignore batches like
+  // q_when=batch. It never skips; skip stays p_action <= 0.05 && p_dup >= 0.80 only.
+  if (pAction <= CLEF_P_ACTION_BATCH_MAX && (qWhen === "batch" || qWhen === "ignore")) {
     return "would_batch";
   }
   return "would_wake";

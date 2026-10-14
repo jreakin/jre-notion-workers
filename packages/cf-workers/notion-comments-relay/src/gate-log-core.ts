@@ -15,15 +15,23 @@ export const DO_FLUSH_MIN_INTERVAL_MS = 5 * 60_000;
 export const DO_FLUSH_MAX_ROWS = 500;
 /** Storage bound: oldest rows beyond this are pruned (counted in meta `pruned:<day>`). */
 export const DO_MAX_STORED_ROWS = 20_000;
-/** Retry delay after a failed KV put. */
+/** First retry delay after a failed KV put / alarm error; doubles per consecutive failure. */
 export const DO_RETRY_MS = 60_000;
+/** Retry backoff ceiling (≤ 48 attempts/day while KV writes stay blocked). */
+export const DO_RETRY_MAX_MS = 30 * 60_000;
+
+/** min(DO_RETRY_MS · 2^failures, DO_RETRY_MAX_MS) */
+export function doRetryDelayMs(failures: number): number {
+  const f = Math.max(0, Math.min(failures, 20));
+  return Math.min(DO_RETRY_MS * 2 ** f, DO_RETRY_MAX_MS);
+}
 export const GATE_LOG_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export interface GateLogStore {
   insert(rowsJson: string[], at: number): void;
   count(): number;
   take(limit: number): { id: number; json: string }[];
-  deleteThrough(maxId: number): void;
+  deleteThrough(maxId: number, taken: number): void;
   pruneTo(max: number): number;
   getMeta(key: string): string | null;
   setMeta(key: string, value: string): void;
@@ -37,6 +45,8 @@ export interface AlarmCtl {
   get(): Promise<number | null>;
   set(at: number): Promise<void>;
 }
+
+const RETRY_FAILS_KEY = "retry_fails";
 
 function utcDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
@@ -82,6 +92,24 @@ export class GateLogBufferCore {
     return { stored: json.length };
   }
 
+  private retryFailures(): number {
+    const n = Number.parseInt(this.store.getMeta(RETRY_FAILS_KEY) ?? "0", 10);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  private async scheduleRetry(now: number): Promise<void> {
+    const fails = this.retryFailures();
+    this.store.setMeta(RETRY_FAILS_KEY, String(fails + 1));
+    await this.alarm.set(now + doRetryDelayMs(fails));
+  }
+
+  /** Called when the alarm handler threw: re-arm (with backoff) if a backlog remains. */
+  async rearmAfterError(): Promise<void> {
+    if (this.store.count() > 0 && (await this.alarm.get()) === null) {
+      await this.scheduleRetry(this.now());
+    }
+  }
+
   /** Alarm entry: flush ≤ one batch to KV (respecting the daily cap), then reschedule. */
   async onAlarm(): Promise<{ flushed: number; key?: string }> {
     const now = this.now();
@@ -108,10 +136,11 @@ export class GateLogBufferCore {
         expirationTtl: kvTtl(GATE_LOG_TTL_SECONDS),
       });
     } catch {
-      await this.alarm.set(now + DO_RETRY_MS); // keep rows; retry
+      await this.scheduleRetry(now); // keep rows; retry with backoff
       return { flushed: 0 };
     }
-    this.store.deleteThrough(batch[batch.length - 1]!.id);
+    this.store.deleteThrough(batch[batch.length - 1]!.id, batch.length);
+    if (this.retryFailures() > 0) this.store.setMeta(RETRY_FAILS_KEY, "0");
     this.store.setMeta(`flushes:${utcDay(now)}`, String(used + 1));
     if (this.store.count() > 0) {
       await this.alarm.set(now + doPacedIntervalMs(used + 1, this.cap, now));
