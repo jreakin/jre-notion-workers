@@ -1,17 +1,21 @@
 ---
-description: Use the GitNexus code graph for impact analysis before refactors and before commits, when it is available. Never fail closed.
+description: GitNexus impact analysis before refactors and commits. Soft (UNKNOWN) outside Plan Prompts; hard stop inside a Plan Prompt that requires GitNexus.
 alwaysApply: true
 ---
 
-# GitNexus: check impact before refactors (use if present)
+# GitNexus: check impact before refactors
 
-Cursor Cloud Agents for this repo may have a local [GitNexus](https://github.com/abhigyanpatwari/GitNexus) index. `scripts/cloud-agent-install.sh` builds it and `scripts/gitnexus-refresh.sh` refreshes it on start. The `.gitnexus/` folder is gitignored and never committed.
+Cursor Cloud Agents for this repo may have a local [GitNexus](https://github.com/abhigyanpatwari/GitNexus) index. `scripts/cloud-agent-install.sh` installs the lockfile-pinned CLI in `tools/gitnexus/` and builds the index. `scripts/gitnexus-refresh.sh` refreshes it in the background on start (log: `/tmp/gitnexus-refresh.log`). The `.gitnexus/` folder is gitignored and never committed. CLI path: `tools/gitnexus/node_modules/.bin/gitnexus` (written as `gitnexus` below).
 
-## Availability check (do this once per session)
+## Scope: soft by default, hard inside Plan Prompts
+
+- **Outside a Plan Prompt (soft).** If GitNexus is unavailable (not installed, no index, MCP missing, unsupported Node, or a hook or command error), say "GitNexus unavailable, impact UNKNOWN", check callers with `rg`, and continue. Never invent callers or a clean scope.
+- **Inside a Plan Prompt that requires GitNexus (hard).** If GitNexus is unavailable, or the index is stale and the refresh fails, **STOP**. Report the failure and do not proceed. On any conflict, the Plan Prompt's GitNexus section wins over this rule.
+
+## Availability check (once per session)
 
 - Use the `gitnexus` MCP tools if they are listed. Otherwise use the CLI: `gitnexus status`.
-- If neither works (not installed, no index, MCP missing, or a hook or command error), **do not block**. Say "GitNexus unavailable, impact UNKNOWN", then check callers with text search (`rg`) instead. Never invent callers or a clean scope.
-- If `gitnexus status` reports a stale index, run `bash scripts/gitnexus-refresh.sh` first. It is safe, local, and writes only `.gitnexus/`.
+- If the index is stale, run `bash scripts/gitnexus-refresh.sh --foreground`. It is bounded to 120s and writes only `.gitnexus/`. If it fails, apply the scope rule above.
 
 ## Before editing a function, class, or method
 
@@ -32,5 +36,5 @@ Cursor Cloud Agents for this repo may have a local [GitNexus](https://github.com
 ## Read-only vs. mutating
 
 Read-only, always fine: `status`, `query`, `context`, `impact`, `trace`, `detect-changes`, `check`, `cypher` (MATCH only), `list`.
-Writes only `.gitnexus/`: `analyze --index-only --skip-agents-md`.
+Writes only `.gitnexus/`: `analyze --index-only --skip-agents-md` (prefer `scripts/gitnexus-refresh.sh`).
 Do **not** run: plain `gitnexus analyze` without `--index-only` (it rewrites AGENTS.md/CLAUDE.md and adds skills), `setup`, `uninstall`, `clean`, `wiki`, or `update`.
