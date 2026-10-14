@@ -82,6 +82,11 @@ export type GateEventContext = {
   rawBody: string;
   /** Opaque hash of the webhook event (event id, else raw body). Same for the forward path and shadow gates. */
   eventKey?: string;
+  /**
+   * Per-request page-fetch memo scope (random, one per webhook request). The prefilter and the shadow
+   * gates of the same request share one Notion GET per page; a later delivery never reuses it.
+   */
+  fetchScope?: string;
   pageId?: string;
   authorId?: string;
   webhookAuthorIds?: string[];

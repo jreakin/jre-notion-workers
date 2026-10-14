@@ -11,3 +11,8 @@ mock.module("cloudflare:workers", () => ({
     }
   },
 }));
+
+// The per-event page-fetch memo is module-level; tests reuse event payloads, so clear it per test.
+import { beforeEach } from "bun:test";
+import { resetPageFetchMemo } from "../src/wake-gate/notion-page-fetch.js";
+beforeEach(() => resetPageFetchMemo());

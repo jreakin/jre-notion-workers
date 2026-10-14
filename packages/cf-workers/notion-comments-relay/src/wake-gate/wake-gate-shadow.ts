@@ -168,6 +168,7 @@ async function resolveCommentParentForAdDocs(
   env: Env,
   token: string,
   pageId: string,
+  scope?: string,
 ): Promise<
   | { adDocs: true; dataSourceId: string; databaseId: string | null; matchedVia: "data_source_id" | "database_id" }
   | { adDocs: false }
@@ -185,7 +186,7 @@ async function resolveCommentParentForAdDocs(
     };
   }
 
-  const page = await fetchNotionPage(token, pageId);
+  const page = await fetchNotionPage(token, pageId, undefined, { scope, caller: "ad_docs_comment_parent" });
   const membership = pageBelongsToAdDocs(page, env);
   if (!membership.isAdDocs) {
     setCachedCommentParentResolution(pageId, "not_ad_docs");
@@ -204,6 +205,7 @@ async function runAdDocsWakeGateShadow(
   env: Env,
   parsed: Record<string, unknown>,
   notionType: string | null,
+  scope?: string,
 ): Promise<void> {
   try {
     const payload = parseWebhookForWakeGate(parsed);
@@ -229,7 +231,7 @@ async function runAdDocsWakeGateShadow(
         return;
       }
       try {
-        const resolved = await resolveCommentParentForAdDocs(env, token, payload.pageId);
+        const resolved = await resolveCommentParentForAdDocs(env, token, payload.pageId, scope);
         if (!resolved.adDocs) {
           logShadow({
             decision: "would_wake",
@@ -289,7 +291,7 @@ async function runAdDocsWakeGateShadow(
     }
 
     try {
-      const page = await fetchNotionPage(token, payload.pageId);
+      const page = await fetchNotionPage(token, payload.pageId, undefined, { scope, caller: "ad_docs_shadow" });
       const parentIds = readPageParentIds(page);
       const membership = pageBelongsToAdDocs(page, env);
       const resolvedDs =
@@ -371,9 +373,11 @@ export async function runShadowWakeGates(
   notionType: string | null,
   rawBody = "",
   parseOk = true,
+  /** Per-request page-fetch memo scope shared with the forward-path prefilter (see GateEventContext). */
+  fetchScope?: string,
 ): Promise<void> {
-  await runAdDocsWakeGateShadow(env, parsed, notionType);
-  await runHarnessRuleShadowGates(env, parsed, notionType, rawBody, parseOk);
+  await runAdDocsWakeGateShadow(env, parsed, notionType, fetchScope);
+  await runHarnessRuleShadowGates(env, parsed, notionType, rawBody, parseOk, fetchScope);
   // End of request: flush a partial gate_log batch if it is old enough (low-traffic path).
   await flushGateLogRing(env);
 }

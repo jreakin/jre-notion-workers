@@ -25,6 +25,7 @@ import type { Env } from "../env.js";
 import { mustWakeOverrideReason } from "./clef-overrides.js";
 import { enrichContextFromNotionPage, fetchNotionPageOutcome } from "./gate-orchestration.js";
 import { parseAdDocsPropertiesFromNotionPage } from "./fleet-locks-properties.js";
+import type { PageFetchResult } from "./notion-page-fetch.js";
 import { explicitPropertyRuleActive, isJohn } from "./gate-context-safety.js";
 import type { GateEventContext } from "./gate-event-types.js";
 import { idInNotionIdSet } from "./notion-ids.js";
@@ -41,9 +42,15 @@ export type CosPrefilterReason =
   | "self_echo_lane"
   | "non_actionable_property";
 
+/** Page fetch done for the decision (absent when no fetch was needed). */
+export type CosPrefilterFetch = { ms: number; outcome: string; fetches: number; cached: number };
+
 export type CosPrefilterVerdict =
-  | { decision: "would_drop"; reason: CosPrefilterReason }
-  | { decision: "pass"; reason: string };
+  | { decision: "would_drop"; reason: CosPrefilterReason; fetch?: CosPrefilterFetch }
+  | { decision: "pass"; reason: string; fetch?: CosPrefilterFetch };
+
+/** Prefilter page-fetch budget: it runs before the webhook's 200, so keep it short. Fail open on timeout. */
+export const PREFILTER_FETCH_MS = 1_000;
 
 const ACK_PHRASES = new Set([
   "thanks", "thank you", "thank you so much", "thanks so much", "thanks a lot", "thx", "ty", "tysm", "tks",
@@ -214,13 +221,26 @@ export async function decideCosPrefilterAfterFetch(
 ): Promise<CosPrefilterVerdict> {
   const pre = decideCosPrefilter(ctx, parsed, env);
   if (pre.decision !== "would_drop") return pre;
+  const fetch: CosPrefilterFetch = { ms: 0, outcome: "ok", fetches: 0, cached: 0 };
+  const opts = {
+    timeoutMs: PREFILTER_FETCH_MS,
+    scope: ctx.fetchScope,
+    caller: "cos_prefilter",
+    logLatency: true,
+    onResult: (r: PageFetchResult) => {
+      fetch.ms += r.ms;
+      fetch.fetches += 1;
+      if (r.cached) fetch.cached += 1;
+      if (r.outcome !== "ok" && fetch.outcome === "ok") fetch.outcome = r.outcome;
+    },
+  };
   try {
-    await enrichContextFromNotionPage(env, ctx, ctx.notionType);
+    await enrichContextFromNotionPage(env, ctx, ctx.notionType, opts);
     if (ctx.isCommentEvent && !ctx.propertiesAvailable && !ctx.notionFetchFailReason) {
       if (!ctx.pageId) {
         ctx.notionFetchFailReason = "notion_page_unreadable";
       } else {
-        const fetched = await fetchNotionPageOutcome(ctx.pageId, env);
+        const fetched = await fetchNotionPageOutcome(ctx.pageId, env, opts);
         if (!fetched.ok) {
           ctx.notionFetchFailReason = fetched.reason;
         } else {
@@ -238,7 +258,9 @@ export async function decideCosPrefilterAfterFetch(
   } catch (err) {
     ctx.notionFetchFailReason = `error:${err instanceof Error ? err.name : "Error"}`;
   }
-  return decideCosPrefilter(ctx, parsed, env);
+  if (ctx.notionFetchFailReason && fetch.outcome === "ok") fetch.outcome = ctx.notionFetchFailReason;
+  const verdict = decideCosPrefilter(ctx, parsed, env);
+  return fetch.fetches > 0 || fetch.outcome !== "ok" ? { ...verdict, fetch } : verdict;
 }
 
 /** COS_PREFILTER_LIVE: "1" or "true" (any case) = LIVE; anything else (unset, "", "0", …) = SHADOW. */
@@ -262,6 +284,9 @@ export async function logCosPrefilter(
     reason: verdict.reason,
     mode: cosPrefilterLive(env) ? "live" : "shadow",
     dropped: verdict.decision === "would_drop" && cosPrefilterLive(env),
+    ...(verdict.fetch
+      ? { fetch_outcome: verdict.fetch.outcome, fetch_ms: verdict.fetch.ms, fetch_cached: verdict.fetch.cached }
+      : {}),
   };
   console.log(JSON.stringify(row));
   try {

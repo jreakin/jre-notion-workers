@@ -50,6 +50,12 @@ export const PREFILTER_MUST_WAKE: ReadonlySet<string> = new Set<string>([
 ]);
 
 export type PrefilterGrade = {
+  /** Candidate drops that needed a page fetch, and how many of those failed (timeout / 429 / error / no token). */
+  fetches: number;
+  fetch_failures: number;
+  /** fetch_failures / fetches (0 when no fetches). A high rate means the prefilter is mostly failing open. */
+  fetch_failure_rate: number;
+  fetch_failures_by_outcome: Record<string, number>;
   events: number;
   would_drop: number;
   /** Drops actually applied (COS_PREFILTER_LIVE=1). */
@@ -115,6 +121,7 @@ function gradePrefilter(rows: Row[]): PrefilterGrade {
     clef.set(key, v);
   }
   const g: PrefilterGrade = {
+    fetches: 0, fetch_failures: 0, fetch_failure_rate: 0, fetch_failures_by_outcome: {},
     events: 0, would_drop: 0, dropped_live: 0, drops_by_reason: {}, scored_by_reason: {},
     unscored_by_reason: {}, false_drops_by_reason: {}, override_breaches: 0,
   };
@@ -122,6 +129,13 @@ function gradePrefilter(rows: Row[]): PrefilterGrade {
   for (const r of rows) {
     if (r.stream !== "cos_prefilter") continue;
     g.events += 1;
+    if (typeof r.fetch_outcome === "string") {
+      g.fetches += 1;
+      if (r.fetch_outcome !== "ok") {
+        g.fetch_failures += 1;
+        bump(g.fetch_failures_by_outcome, r.fetch_outcome);
+      }
+    }
     if (r.decision !== "would_drop") continue;
     const reason = str(r.reason) || "unknown";
     g.would_drop += 1;
@@ -136,6 +150,7 @@ function gradePrefilter(rows: Row[]): PrefilterGrade {
       bump(g.unscored_by_reason, reason);
     }
   }
+  g.fetch_failure_rate = g.fetches ? g.fetch_failures / g.fetches : 0;
   return g;
 }
 

@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import type { Env } from "../src/env.js";
 import {
   GROKBOT_FLEET_COMMENTS_BOT_ID,
+  PREFILTER_FETCH_MS,
   cosPrefilterLive,
   decideCosPrefilter,
   decideCosPrefilterAfterFetch,
@@ -13,6 +14,8 @@ import type { GateEventContext } from "../src/wake-gate/gate-event-types.js";
 import { buildGateContext, opaqueEventKey } from "../src/wake-gate/gate-orchestration.js";
 import { PREFILTER_MUST_WAKE, gradeRelayWindow } from "../src/wake-gate/grade-relay.js";
 import { MUST_WAKE_OVERRIDE_NAMES, clefHardOverrideReason } from "../src/wake-gate/clef-overrides.js";
+import { resetPageFetchCache } from "../src/wake-gate/page-fetch-cache.js";
+import { legacyClefHardOverrideReason } from "./legacy-clef-overrides.js";
 
 const JOHN = "2e7d872b-594c-8161-92a2-00024b29e816";
 const BOT = GROKBOT_FLEET_COMMENTS_BOT_ID;
@@ -245,7 +248,7 @@ const page = (needsJohn: boolean) => ({
   object: "page", id: "page-1", parent: { type: "page_id", page_id: "x" },
   properties: { "Needs John": { id: "nj", type: "checkbox", checkbox: needsJohn } },
 });
-let pageResponse: () => Response = () => Response.json(page(false));
+let pageResponse: (init?: RequestInit) => Response | Promise<Response> = () => Response.json(page(false));
 let notionFetches = 0;
 
 describe("worker: shadow vs live", () => {
@@ -255,8 +258,8 @@ describe("worker: shadow vs live", () => {
   beforeEach(() => {
     logs = []; orig = console.log; console.log = ((l: unknown) => logs.push(String(l))) as typeof console.log;
     origFetch = globalThis.fetch; notionFetches = 0; pageResponse = () => Response.json(page(false));
-    globalThis.fetch = (async (url: string | URL | Request) => {
-      if (String(url instanceof Request ? url.url : url).startsWith("https://api.notion.com/")) { notionFetches += 1; return pageResponse(); }
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url instanceof Request ? url.url : url).startsWith("https://api.notion.com/")) { notionFetches += 1; return pageResponse(init); }
       return new Response("ok");
     }) as typeof fetch;
   });
@@ -291,9 +294,9 @@ describe("worker: decision after the page fetch", () => {
   let origFetch: typeof fetch;
   beforeEach(() => {
     logs = []; orig = console.log; console.log = ((l: unknown) => logs.push(String(l))) as typeof console.log;
-    origFetch = globalThis.fetch; notionFetches = 0;
-    globalThis.fetch = (async (url: string | URL | Request) => {
-      if (String(url instanceof Request ? url.url : url).startsWith("https://api.notion.com/")) { notionFetches += 1; return pageResponse(); }
+    origFetch = globalThis.fetch; notionFetches = 0; pageResponse = () => Response.json(page(false));
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url instanceof Request ? url.url : url).startsWith("https://api.notion.com/")) { notionFetches += 1; return pageResponse(init); }
       return new Response("ok");
     }) as typeof fetch;
   });
@@ -315,6 +318,60 @@ describe("worker: decision after the page fetch", () => {
     expect(rows("cos_prefilter")).toMatchObject([{ decision: "pass", reason: "override:notion_fetch_failed" }]);
     expect(store.get("coalesce_buffer")).toContain("comment.created");
   });
+  test("page fetch times out at the short prefilter budget → pass (fail open), latency logged", async () => {
+    pageResponse = (init) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+      });
+    const { env, store } = kvEnv({ COS_PREFILTER_LIVE: "1" });
+    const t0 = Date.now();
+    await post(env, ackComment());
+    const took = Date.now() - t0;
+    expect(took).toBeGreaterThanOrEqual(PREFILTER_FETCH_MS - 50);
+    expect(took).toBeLessThan(PREFILTER_FETCH_MS + 1_000);
+    expect(rows("cos_prefilter")).toMatchObject([
+      { decision: "pass", reason: "override:notion_fetch_timeout", fetch_outcome: "timeout" },
+    ]);
+    const lat = logs.filter((l) => l.includes('"event":"notion_page_fetch"')).map((l) => JSON.parse(l));
+    expect(lat).toMatchObject([{ caller: "cos_prefilter", timeout_ms: PREFILTER_FETCH_MS, outcome: "timeout" }]);
+    expect(lat[0].ms).toBeGreaterThanOrEqual(PREFILTER_FETCH_MS - 50);
+    expect(logs.join("\n")).not.toContain("page-1");
+    expect(store.get("coalesce_buffer")).toContain("comment.created");
+  });
+  test("Notion 429 → pass (fail open), outcome http_429", async () => {
+    pageResponse = () => new Response("slow down", { status: 429, headers: { "retry-after": "1" } });
+    const { env, store } = kvEnv({ COS_PREFILTER_LIVE: "1" });
+    await post(env, ackComment());
+    expect(rows("cos_prefilter")).toMatchObject([
+      { decision: "pass", reason: "override:notion_fetch_failed", fetch_outcome: "http_429" },
+    ]);
+    expect(logs.some((l) => l.includes('"outcome":"http_429"'))).toBe(true);
+    expect(store.get("coalesce_buffer")).toContain("comment.created");
+  });
+  test("one Notion GET per page per request, shared by the prefilter and the shadow gates", async () => {
+    resetPageFetchCache(); // the ad-docs comment-parent cache would otherwise skip the shadow fetch
+    const { env } = kvEnv();
+    const body = JSON.stringify(ackComment());
+    const sig = `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
+    const { default: worker } = await import("../src/index.js");
+    const pending: Promise<unknown>[] = [];
+    await worker.fetch(
+      new Request("https://relay/", { method: "POST", headers: { "X-Notion-Signature": sig, "content-type": "application/json" }, body }),
+      env,
+      { waitUntil(p: Promise<unknown>) { pending.push(p); } } as unknown as ExecutionContext,
+    );
+    expect(notionFetches).toBe(1); // prefilter fetched before the 200
+    await Promise.race([Promise.allSettled(pending), new Promise((r) => setTimeout(r, 300))]);
+    expect(logs.some((l) => l.includes("ad_docs_wake_gate_shadow"))).toBe(true); // shadow gate ran
+    expect(notionFetches).toBe(1); // ... and reused it
+    expect(rows("cos_prefilter")[0]).toMatchObject({ fetch_outcome: "ok", fetch_cached: 0 });
+  });
+  test("a second delivery of the same event fetches again (memo is per request)", async () => {
+    const { env } = kvEnv();
+    await post(env, ackComment());
+    await post(env, ackComment());
+    expect(notionFetches).toBe(2);
+  });
   test("no NOTION_API_TOKEN → pass (fail open)", async () => {
     const { env } = kvEnv({ COS_PREFILTER_LIVE: "1", NOTION_API_TOKEN: undefined });
     await post(env, ackComment());
@@ -323,8 +380,10 @@ describe("worker: decision after the page fetch", () => {
   test("non-candidate events skip the extra fetch", async () => {
     const { env } = kvEnv();
     await post(env, { ...ackComment(), data: { page_id: "page-1", text: "please send the deck" } });
-    expect(notionFetches).toBe(0);
+    // No prefilter fetch (the shadow gates may still fetch in waitUntil).
+    expect(logs.some((l) => l.includes('"caller":"cos_prefilter"'))).toBe(false);
     expect(rows("cos_prefilter")).toMatchObject([{ decision: "pass", reason: "actionable_comment" }]);
+    expect(rows("cos_prefilter")[0].fetch_outcome).toBeUndefined();
   });
   test("gate_log events: dropped first, no prefilter row (counts not inflated)", async () => {
     const GL = "6e7d872b-594c-8161-92a2-00024b29e816";
@@ -367,5 +426,78 @@ describe("decideCosPrefilterAfterFetch (unit)", () => {
     const c = ctx();
     expect(await decideCosPrefilterAfterFetch({} as Env, c, txt("please send"))).toMatchObject({ decision: "pass" });
     expect(c.notionFetchFailReason).toBeUndefined();
+  });
+});
+
+describe("gradeRelayWindow: prefilter fetch failures", () => {
+  test("counts fetches, failures, rate and outcome breakdown", () => {
+    const row = (fetch_outcome?: string) => ({
+      stream: "cos_prefilter", event_key: "k", decision: "pass", reason: "x", ...(fetch_outcome ? { fetch_outcome } : {}),
+    });
+    const g = gradeRelayWindow([row("ok"), row("ok"), row("timeout"), row("http_429"), row()]);
+    expect(g.prefilter).toMatchObject({
+      events: 5, fetches: 4, fetch_failures: 2, fetch_failure_rate: 0.5,
+      fetch_failures_by_outcome: { timeout: 1, http_429: 1 },
+    });
+    expect(gradeRelayWindow([row()]).prefilter.fetch_failure_rate).toBe(0);
+  });
+});
+
+describe("Clef overrides: reordered labels, same events", () => {
+  // Every override input, alone and in pairs: the new order may pick a different label, but an event is
+  // an override (non-null) exactly when it was before (540bd32 frozen copy).
+  const BOTX = "7e7d872b-594c-8161-92a2-00024b29e816";
+  const mentionJohn = { type: "mention", mention: { user: { id: JOHN } } };
+  const mentionBot = { type: "mention", mention: { type: "user", user: { id: BOTX, type: "bot" } } };
+  const features: Record<string, { c?: Partial<GateEventContext>; p?: Record<string, unknown>; type?: string }> = {
+    john_author: { c: { authorId: JOHN, webhookAuthorIds: [JOHN] } },
+    bot_author: { c: { authorId: BOT, webhookAuthorIds: [BOT] } },
+    john_ids_unset: { c: { johnUserIds: new Set() } },
+    bot_ids_unset: { c: { fleetCommentsBotIds: new Set() } },
+    fetch_fail: { c: { notionFetchFailReason: "notion_fetch_timeout" } },
+    no_text: { p: { data: {} } },
+    john_mention: { p: { data: { rich_text: [mentionJohn, { plain_text: " hi" }] } } },
+    bot_mention: { p: { data: { rich_text: [mentionBot, { plain_text: " hi" }] } } },
+    needs_john: { c: { properties: { needsJohn: true } } },
+    sensitive: { c: { properties: { sensitive: true } } },
+    unreadable: { c: { properties: { adDocsParseOk: false } } },
+    irreversible: { c: { properties: { kind: "Send" } } },
+    source_repo: { c: { properties: { sourceRepo: "jre" } } },
+    props_unavailable: { c: { propertiesAvailable: false, properties: {} } },
+    adopted: { c: { fleetLocksFields: { statusName: "Adopted" } as GateEventContext["fleetLocksFields"] } },
+    submitted: { type: "page.properties_updated", c: { isCommentEvent: false, updatedPropertyIds: [] } },
+    nj_changed: {
+      type: "page.properties_updated",
+      c: { isCommentEvent: false, updatedPropertyIds: [NJ], needsJohnPropertyIds: new Set([NJ]), submittedPropertyIds: new Set([SUB]) },
+    },
+    plain: {},
+  };
+  const build = (names: string[]) => {
+    let type = "comment.created";
+    let over: Partial<GateEventContext> = {};
+    let p: Record<string, unknown> = txt("thanks");
+    for (const n of names) {
+      const f = features[n]!;
+      if (f.type) type = f.type;
+      over = { ...over, ...f.c, properties: { ...(over.properties ?? { needsJohn: false }), ...(f.c?.properties ?? {}) } };
+      if (f.c && "propertiesAvailable" in f.c) over.properties = {};
+      if (f.p) p = f.p;
+    }
+    const c = ctx(type, { ...over, isCommentEvent: over.isCommentEvent ?? type.startsWith("comment.") });
+    return { c, p };
+  };
+  const names = Object.keys(features);
+  const combos: string[][] = names.map((n) => [n]);
+  for (let i = 0; i < names.length; i += 1) for (let j = i + 1; j < names.length; j += 1) combos.push([names[i]!, names[j]!]);
+  test.each(combos.map((c) => [c.join("+"), c] as const))("%s", (_label, combo) => {
+    const { c, p } = build([...combo]);
+    const now = clefHardOverrideReason(c, p, true, []);
+    const before = legacyClefHardOverrideReason(c, p, true, []);
+    expect(now === null).toBe(before === null);
+  });
+  test("labels did change for some combos (documented in the PR)", () => {
+    const { c, p } = build(["props_unavailable", "bot_mention"]);
+    expect(legacyClefHardOverrideReason(c, p, true, [])).toBe("properties_unavailable");
+    expect(clefHardOverrideReason(c, p, true, [])).toBe("bot_mention");
   });
 });

@@ -12,7 +12,7 @@ import {
   readWebhookParentFromBlock,
   webhookParentIsFleetLocks,
 } from "./notion-ids.js";
-import { fetchNotionPage } from "./notion-page-fetch.js";
+import { fetchNotionPage, type PageFetchOpts } from "./notion-page-fetch.js";
 import {
   FLEET_LOCKS_NON_SUBMITTED_PROPERTY_ID_VALUES,
   parseAdDocsPropertiesFromNotionPage,
@@ -287,13 +287,14 @@ async function storeAdoptedAtDedupe(
 export async function fetchNotionPageOutcome(
   pageId: string,
   env: Env,
+  opts: PageFetchOpts = {},
 ): Promise<{ ok: true; page: Record<string, unknown> } | { ok: false; reason: string }> {
   const token = env.NOTION_API_TOKEN?.trim();
   if (!token) {
     return { ok: false, reason: "notion_token_missing" };
   }
   try {
-    const page = await fetchNotionPage(token, pageId);
+    const page = await fetchNotionPage(token, pageId, undefined, opts);
     return { ok: true, page };
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
@@ -307,6 +308,7 @@ export async function enrichContextFromNotionPage(
   env: Env,
   ctx: GateEventContext,
   notionType: string | null,
+  opts: PageFetchOpts = {},
 ): Promise<void> {
   if (!ctx.pageId) {
     return;
@@ -315,7 +317,11 @@ export async function enrichContextFromNotionPage(
     return;
   }
 
-  const fetched = await fetchNotionPageOutcome(ctx.pageId, env);
+  const fetched = await fetchNotionPageOutcome(ctx.pageId, env, {
+    scope: ctx.fetchScope,
+    caller: "shadow_gates",
+    ...opts,
+  });
   if (!fetched.ok) {
     ctx.notionFetchFailReason = fetched.reason;
     return;
@@ -491,9 +497,11 @@ export async function runHarnessRuleShadowGates(
   notionType: string | null,
   rawBody: string,
   parseOk = true,
+  fetchScope?: string,
 ): Promise<void> {
   try {
     const ctx = buildGateContext(parsed, notionType, rawBody, env);
+    ctx.fetchScope = fetchScope;
     if (shouldDropGateLogEvent(ctx, env)) {
       await logGateLogDrop(env, ctx, notionType);
       return;

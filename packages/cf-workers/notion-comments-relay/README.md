@@ -334,7 +334,12 @@ hits the `properties_unavailable` override.
 **Fail open:** `JOHN_NOTION_USER_IDS` empty/unset → nothing is dropped (`override:john_ids_unset`, same as Clef).
 
 **After the page fetch:** a candidate drop fetches the page first (the gate enrichment, plus Needs John / Sensitive /
-Kind for the comment's page) and is decided on the real properties; a failed fetch passes.
+Kind for the comment's page) and is decided on the real properties; a failed fetch (timeout, 429, error, no
+token) passes. The prefilter fetch budget is `PREFILTER_FETCH_MS` (1 s) because it runs before the webhook's 200;
+each prefilter fetch logs `{"event":"notion_page_fetch","caller":"cos_prefilter","ms",...}` (no ids) and the row carries
+`fetch_outcome` / `fetch_ms` / `fetch_cached`. **One GET per page per request:** the prefilter and the shadow gates
+share a per-request memo (`fetchScope`); a shadow gate re-fetches with its own 3 s budget only if the prefilter's
+1 s fetch timed out. A later delivery of the same event always fetches fresh.
 
 **Hard overrides always pass:** John authored, plus the shared must-wake list `MUST_WAKE_OVERRIDE_NAMES`
 (`clef-overrides.ts`, also used by the Clef gate and `gradeRelayWindow`): John @mention (node, or plain `@John`),
@@ -350,7 +355,8 @@ carry the same `event_key`. `gradeRelayWindow(rows).prefilter` joins the two:
 - fails `prefilter_dropped_override` when a would_drop hit an event Clef marked with a must-wake override (the
   shared list, John authored, or a failed page fetch);
 - fails `prefilter_false_drop` when Clef scored a dropped event as would_wake;
-- reports `scored_by_reason` / `unscored_by_reason` coverage. Bot self-echoes are mostly unscored, because Clef
+- reports `scored_by_reason` / `unscored_by_reason` coverage, and `fetches` / `fetch_failures` /
+  `fetch_failure_rate` / `fetch_failures_by_outcome` (a high rate means the prefilter is mostly failing open); Bot self-echoes are mostly unscored, because Clef
   hard-overrides fleet-bot authors, so state the coverage with any pass.
 
 Go live only after a clean window: `wrangler.toml` `COS_PREFILTER_LIVE = "1"` (John's call).

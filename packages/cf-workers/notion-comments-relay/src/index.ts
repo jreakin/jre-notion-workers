@@ -623,9 +623,12 @@ export default {
       }
 
       let cosDrop: string | null = null;
+      // One Notion page GET per page per request, shared by the prefilter and the shadow gates.
+      const fetchScope = crypto.randomUUID();
       if (parseOk) {
         try {
           const gateCtx = buildGateContext(parsed, notionType, rawBody, env);
+          gateCtx.fetchScope = fetchScope;
           if (gateLogBlocksForward(true, gateCtx, env)) {
             const dropped = {
               at: new Date().toISOString(),
@@ -658,7 +661,7 @@ export default {
           );
         }
         try {
-          ctx.waitUntil(runShadowWakeGates(env, parsed, notionType, rawBody, true));
+          ctx.waitUntil(runShadowWakeGates(env, parsed, notionType, rawBody, true, fetchScope));
         } catch (shadowErr) {
           const shadowErrorName = shadowErr instanceof Error ? shadowErr.name : "Error";
           console.log(
