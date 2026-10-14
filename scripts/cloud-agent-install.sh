@@ -30,6 +30,16 @@ bun_install packages/cf-workers/clef-gate
 #    packages/clef-core has no dependencies; packages/workers is the legacy
 #    mirror with no lockfile (not installed, as before).
 
+# 1b. Repo-root Python checks (verify-completion: uv run pytest tests/unit).
+if ! command -v uv >/dev/null 2>&1; then
+  if python3 -m pip install --user -q uv 2>/dev/null; then
+    export PATH="${HOME}/.local/bin:${PATH}"
+  fi
+fi
+if command -v uv >/dev/null 2>&1; then
+  uv sync --frozen-lockfile 2>/dev/null || uv sync
+fi
+
 # 2. GitNexus (optional). Never fails the Build.
 if ! gitnexus_node_ok; then
   gitnexus_unknown "node $(node --version 2>/dev/null || echo none) does not satisfy ^22.18.0 || >=24.11.0"

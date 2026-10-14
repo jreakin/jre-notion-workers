@@ -4,7 +4,9 @@ import {
   DO_FLUSH_MAX_ROWS,
   DO_FLUSH_MIN_INTERVAL_MS,
   DO_MAX_STORED_ROWS,
+  DO_RETRY_MAX_MS,
   GateLogBufferCore,
+  doRetryDelayMs,
   doPacedIntervalMs,
 } from "../src/gate-log-core.js";
 import { GateLogBuffer, SqlGateLogStore } from "../src/gate-log-do.js";
@@ -108,6 +110,42 @@ describe("GateLogBufferCore (SQLite store)", () => {
     expect(alarmAt).toBe(clock + 60_000);
   });
 
+  test("KV retries back off exponentially (capped at 30 min) and reset after a success", async () => {
+    let fail = true;
+    const flaky = { put: async (k: string, v: string) => { if (fail) throw new Error("kv down"); kvStore.set(k, v); } };
+    const store = new SqlGateLogStore(sqlShim());
+    const c = new GateLogBufferCore(store, flaky, alarm, 60, () => clock);
+    await c.append([row(1)]);
+    const delays: number[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      await c.onAlarm();
+      delays.push(alarmAt! - clock);
+      clock = alarmAt!;
+    }
+    expect(delays.slice(0, 5)).toEqual([60_000, 120_000, 240_000, 480_000, 960_000]);
+    expect(delays.slice(5)).toEqual([DO_RETRY_MAX_MS, DO_RETRY_MAX_MS, DO_RETRY_MAX_MS]);
+    fail = false;
+    expect((await c.onAlarm()).flushed).toBe(1);
+    expect(store.getMeta("retry_fails")).toBe("0");
+    expect(doRetryDelayMs(1000)).toBe(DO_RETRY_MAX_MS);
+  });
+
+  test("row count is kept in meta, not recounted per append", async () => {
+    const queries: string[] = [];
+    const base = sqlShim();
+    const spy = { exec: (q: string, ...b: unknown[]) => (queries.push(q), base.exec(q, ...b)) } as unknown as SqlStorage;
+    const store = new SqlGateLogStore(spy);
+    const c = new GateLogBufferCore(store, kv(), alarm, 60, () => clock);
+    await c.append([row(1)]); // seeds the cached count once
+    queries.length = 0;
+    for (let i = 0; i < 5; i += 1) await c.append([row(i), row(i + 1)]);
+    expect(queries.some((q) => /COUNT\(\*\)/i.test(q))).toBe(false);
+    expect(store.count()).toBe(11);
+    clock = alarmAt!;
+    await c.onAlarm();
+    expect(store.count()).toBe(0);
+  });
+
   test("batches are bounded and backlog keeps the alarm armed", async () => {
     const c = core();
     for (let i = 0; i < 3; i += 1) await c.append(Array.from({ length: DO_FLUSH_MAX_ROWS }, (_, j) => row(i * 1000 + j)));
@@ -146,6 +184,28 @@ describe("GateLogBuffer Durable Object class", () => {
     expect((await d.append([row(1)])).stored).toBe(1);
     await d.alarm();
     expect(keys()).toHaveLength(1);
+  });
+
+  test("alarm handler error re-arms instead of stranding the backlog", async () => {
+    const env = { RELAY_KV: kv() as unknown as KVNamespace, GATE_LOG_DAILY_WRITE_CAP: "60" } as Env;
+    const base = sqlShim();
+    let breakTake = false;
+    const sql = {
+      exec: (q: string, ...b: unknown[]) => {
+        if (breakTake && /^SELECT id, json/.test(q)) throw new Error("sql boom");
+        return base.exec(q, ...b);
+      },
+    } as unknown as SqlStorage;
+    const ctx = {
+      storage: { sql, getAlarm: async () => alarmAt, setAlarm: async (at: number) => void (alarmAt = at) },
+    } as unknown as DurableObjectState;
+    const d = new GateLogBuffer(ctx, env);
+    await d.append([row(1)]);
+    alarmAt = null; // the runtime clears the pending alarm when it fires
+    breakTake = true;
+    await d.alarm();
+    expect(alarmAt).not.toBeNull();
+    expect(keys()).toHaveLength(0);
   });
 });
 
