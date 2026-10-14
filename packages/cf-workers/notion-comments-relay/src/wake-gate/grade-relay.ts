@@ -22,6 +22,13 @@
  * Rule skips are SAMPLED (CLEF_RULE_SKIP_SAMPLE_PERCENT, daily cap): unsampled rule skips are reported
  * as `rule_skips_unscored` but do not fail the window, so "zero false skips" for rule skips means
  * zero among the scored ones. State that coverage alongside any pass.
+ *
+ * CoS pre-filter (`stream: "cos_prefilter"` rows, joined to Clef rows by opaque `event_key`):
+ * - a `would_drop` whose Clef row shows a hard override (John authored / @mention, Submitted, Needs John)
+ *   → `prefilter_dropped_override` (must never happen);
+ * - a `would_drop` that Clef scored as would_wake (wake-path `clef_ok` + would_wake, or a scored skip
+ *   check with `candidate_false_skip`) → `prefilter_false_drop`;
+ * - drops with no Clef verdict are reported per reason (`prefilter.unscored_by_reason`), not failed.
  */
 export const RELAY_ERROR_RATE_MAX = 0.02;
 const ERROR_RE = /^(clef_error:|clef_timeout$|clef_bad_output$|clef_ai_unbound$|clef_gateway_unset$)/;
@@ -29,6 +36,27 @@ const ERROR_RE = /^(clef_error:|clef_timeout$|clef_bad_output$|clef_ai_unbound$|
 export const RELAY_CONFIG_ERRORS: ReadonlySet<string> = new Set(["clef_ai_unbound", "clef_gateway_unset"]);
 
 type Row = Record<string, unknown>;
+
+/** Clef override reasons that mean "must wake CoS"; a would_drop on such an event is a breach. */
+export const PREFILTER_MUST_WAKE: ReadonlySet<string> = new Set([
+  "john_authored",
+  "john_mention",
+  "submitted_changed",
+  "needs_john_changed",
+  "needs_john_or_sensitive",
+]);
+
+export type PrefilterGrade = {
+  events: number;
+  would_drop: number;
+  /** Drops actually applied (COS_PREFILTER_LIVE=1). */
+  dropped_live: number;
+  drops_by_reason: Record<string, number>;
+  scored_by_reason: Record<string, number>;
+  unscored_by_reason: Record<string, number>;
+  false_drops_by_reason: Record<string, number>;
+  override_breaches: number;
+};
 
 export type RelayDay = {
   day: string;
@@ -56,7 +84,57 @@ export type RelayGrade = {
   saved_wakes_by_item: Record<string, number>;
   /** Config-error rows (clef_ai_unbound / clef_gateway_unset), wake path or false-skip check. */
   ai_unbound: number;
+  /** CoS pre-filter shadow grading (cos_prefilter rows joined to Clef rows by event_key). */
+  prefilter: PrefilterGrade;
 };
+
+type ClefVerdict = { override: boolean; scored: boolean; wake: boolean };
+
+function gradePrefilter(rows: Row[]): PrefilterGrade {
+  const clef = new Map<string, ClefVerdict>();
+  for (const r of rows) {
+    if (r.stream !== undefined && r.stream !== "clef_wake_shadow") continue;
+    const key = str(r.event_key);
+    if (!key) continue;
+    const v = clef.get(key) ?? { override: false, scored: false, wake: false };
+    const reason = str(r.reason);
+    const base = reason.split(";")[0] ?? "";
+    if (PREFILTER_MUST_WAKE.has(base)) v.override = true;
+    if (r.decision === "rule_skip") {
+      if (r.scored === true || reason === "rule_skip:clef_ok") {
+        v.scored = true;
+        if (r.candidate_false_skip === true) v.wake = true;
+      }
+    } else if (base === "clef_ok") {
+      v.scored = true;
+      if (r.clef_decision === "would_wake") v.wake = true;
+    }
+    clef.set(key, v);
+  }
+  const g: PrefilterGrade = {
+    events: 0, would_drop: 0, dropped_live: 0, drops_by_reason: {}, scored_by_reason: {},
+    unscored_by_reason: {}, false_drops_by_reason: {}, override_breaches: 0,
+  };
+  const bump = (m: Record<string, number>, k: string) => { m[k] = (m[k] ?? 0) + 1; };
+  for (const r of rows) {
+    if (r.stream !== "cos_prefilter") continue;
+    g.events += 1;
+    if (r.decision !== "would_drop") continue;
+    const reason = str(r.reason) || "unknown";
+    g.would_drop += 1;
+    if (r.dropped === true) g.dropped_live += 1;
+    bump(g.drops_by_reason, reason);
+    const v = clef.get(str(r.event_key));
+    if (v?.override) g.override_breaches += 1;
+    if (v?.scored) {
+      bump(g.scored_by_reason, reason);
+      if (v.wake) bump(g.false_drops_by_reason, reason);
+    } else {
+      bump(g.unscored_by_reason, reason);
+    }
+  }
+  return g;
+}
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
@@ -123,6 +201,9 @@ export function gradeRelayWindow(rows: Row[], errorRateMax = RELAY_ERROR_RATE_MA
   if (dedupeUnscored - capUnscored > 0) fail.push("unscored_dedupe_repeat");
   if (dayList.some((d) => d.over_threshold)) fail.push("error_rate_over_threshold");
   if (aiUnbound > 0) fail.push("config_error");
+  const prefilter = gradePrefilter(rows);
+  if (prefilter.override_breaches > 0) fail.push("prefilter_dropped_override");
+  if (Object.keys(prefilter.false_drops_by_reason).length > 0) fail.push("prefilter_false_drop");
   return {
     pass: fail.length === 0,
     fail_reasons: fail,
@@ -137,5 +218,6 @@ export function gradeRelayWindow(rows: Row[], errorRateMax = RELAY_ERROR_RATE_MA
     false_skips: falseSkips,
     saved_wakes_by_item: saved,
     ai_unbound: aiUnbound,
+    prefilter,
   };
 }

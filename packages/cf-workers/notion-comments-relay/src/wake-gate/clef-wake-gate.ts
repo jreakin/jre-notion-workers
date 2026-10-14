@@ -212,6 +212,7 @@ function baseLogEntry(
     mode: modeLabel,
     actually_ran: "coalesce_enqueued",
     reason,
+    ...(ctx.eventKey ? { event_key: ctx.eventKey } : {}),
   };
 }
 

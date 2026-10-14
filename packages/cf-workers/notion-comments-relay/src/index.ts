@@ -12,6 +12,7 @@ import {
   gateLogBlocksForward,
 } from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
+import { cosPrefilterLive, decideCosPrefilter, logCosPrefilter } from "./wake-gate/cos-prefilter.js";
 import { kvTtl } from "./kv-ttl.js";
 import { flushGateLogRing } from "./gate-log-ring.js";
 import { withMeteredKv } from "./kv-write-meter.js";
@@ -621,9 +622,18 @@ export default {
         return new Response("ok", { status: 200 });
       }
 
+      let cosDrop: string | null = null;
       if (parseOk) {
         try {
           const gateCtx = buildGateContext(parsed, notionType, rawBody, env);
+          // CoS pre-filter: SHADOW by default (log would_drop, forward anyway); COS_PREFILTER_LIVE=1 drops.
+          try {
+            const verdict = decideCosPrefilter(gateCtx, parsed, env);
+            await logCosPrefilter(env, gateCtx, verdict);
+            if (verdict.decision === "would_drop" && cosPrefilterLive(env)) cosDrop = verdict.reason;
+          } catch {
+            // fail-open: forward
+          }
           if (gateLogBlocksForward(true, gateCtx, env)) {
             const dropped = {
               at: new Date().toISOString(),
@@ -671,6 +681,20 @@ export default {
             }),
           );
         }
+      }
+
+      if (cosDrop) {
+        // Shadow gates above still ran and logged; only the CoS wake is skipped.
+        const dropped = {
+          at: new Date().toISOString(),
+          event: "dropped_cos_prefilter",
+          notion_type: notionType,
+          reason: cosDrop,
+          sigOk,
+        };
+        await recordForward(env, dropped);
+        console.log(JSON.stringify(dropped));
+        return new Response("ok", { status: 200 });
       }
 
       await enqueueAndSchedule(env, ctx, {

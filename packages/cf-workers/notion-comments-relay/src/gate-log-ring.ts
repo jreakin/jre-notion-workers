@@ -30,7 +30,11 @@ export const GATE_LOG_COUNTER_PERSIST_EVERY = 8;
 export const GATE_LOG_NEAR_CAP_FRACTION = 0.8;
 export const GATE_LOG_NEAR_CAP_SAMPLE_PERCENT = 25;
 
-export type GateLogStream = "clef_wake_shadow" | "wake_gate_shadow" | "ad_docs_wake_gate_shadow";
+export type GateLogStream =
+  | "clef_wake_shadow"
+  | "cos_prefilter"
+  | "wake_gate_shadow"
+  | "ad_docs_wake_gate_shadow";
 
 export type GateLogRow = { stream: GateLogStream } & Record<string, unknown>;
 
@@ -41,7 +45,10 @@ let oldestAt = 0;
 let sampleTick = 0;
 
 export function streamEnabled(env: Env, stream: GateLogStream): boolean {
-  return stream === "clef_wake_shadow" ? env.CLEF_RING === "1" : env.WAKE_GATE_KV_RING === "1";
+  // cos_prefilter rows are graded with the Clef rows (gradeRelayWindow), so they ride CLEF_RING.
+  return stream === "clef_wake_shadow" || stream === "cos_prefilter"
+    ? env.CLEF_RING === "1"
+    : env.WAKE_GATE_KV_RING === "1";
 }
 
 export function readGateLogDailyWriteCap(env: Env): number {
@@ -52,6 +59,7 @@ export function readGateLogDailyWriteCap(env: Env): number {
 /** High-signal rows survive near-cap sampling. */
 export function isHighSignal(row: GateLogRow): boolean {
   if (row.candidate_false_skip === true) return true;
+  if (row.stream === "cos_prefilter") return row.decision === "would_drop";
   const reason = typeof row.reason === "string" ? row.reason : "";
   if (reason.includes("error")) return true;
   if (row.stream === "clef_wake_shadow") {

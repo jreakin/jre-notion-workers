@@ -320,6 +320,34 @@ hits the `properties_unavailable` override.
 
 **`NON_SUBMITTED_PROPERTY_IDS`:** When unset, Fleet Locks property ids from code defaults are used so Clef/Fleet gates can distinguish non-Submitted property updates. Set the env var to override that list.
 
+### CoS pre-filter (shadow first)
+
+`src/wake-gate/cos-prefilter.ts` decides, on the forward path, whether an event should wake Chief of Staff at all:
+
+| reason | drops |
+|---|---|
+| `ack_only` | `comment.created` / `comment.updated` whose whole text is an acknowledgement (thanks, ok, +1, done, got it, emoji-only, ...). Questions, mentions, text over 60 chars, and missing text never count. |
+| `self_echo_bot` | comments whose authors are all the GrokBot Fleet Comments integration bot (built-in id plus `FLEET_COMMENTS_BOT_NOTION_USER_IDS`) |
+| `self_echo_lane` | comments starting with a lane prefix (`CoS:`, `[BCH]`, `Chief of Staff —`, ...; extend with `COS_PREFILTER_LANE_PREFIXES`) |
+| `non_actionable_property` | `page.properties_updated` touching neither Submitted nor Needs John (the properties_updated rule above; **inert until `NEEDS_JOHN_PROPERTY_IDS` is set** next to `SUBMITTED_PROPERTY_IDS`) |
+
+**Hard overrides always pass:** John authored, any John @mention (mention node or plain `@John`), Needs John (set or
+changed), Submitted changed (including an opaque update with no ids listed).
+
+**Mode:** `COS_PREFILTER_LIVE=1` skips the CoS forward (`dropped_cos_prefilter` in forward history). Default is SHADOW:
+the row is logged and the event is forwarded as before. In both modes the Clef shadow gates still run.
+
+**Logging / grading:** every forwarded webhook logs one `stream:"cos_prefilter"` row (`decision` `would_drop`|`pass`,
+`reason`, `mode`, `dropped`, opaque `event_key`; never text or raw ids). It is ring-buffered with `CLEF_RING=1`. Clef rows
+carry the same `event_key`. `gradeRelayWindow(rows).prefilter` joins the two:
+- fails `prefilter_dropped_override` when a would_drop hit an event Clef marked as a hard override (John
+  authored/mention, Submitted, Needs John);
+- fails `prefilter_false_drop` when Clef scored a dropped event as would_wake;
+- reports `scored_by_reason` / `unscored_by_reason` coverage. Bot self-echoes are mostly unscored, because Clef
+  hard-overrides fleet-bot authors, so state the coverage with any pass.
+
+Go live only after a clean window: `wrangler.toml` `COS_PREFILTER_LIVE = "1"` (John's call).
+
 ### Deploy vars (`wrangler.toml` `[vars]`)
 
 Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these). Secrets stay in Wrangler secrets / dashboard.

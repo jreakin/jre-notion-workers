@@ -133,6 +133,19 @@ function readWebhookParent(data: Record<string, unknown> | null): ReturnType<typ
   return readWebhookParentFromBlock(parentBlock);
 }
 
+/** Opaque, deterministic key for one webhook delivery: the Notion event id when present, else the raw body. */
+export function opaqueEventKey(parsed: Record<string, unknown>, rawBody: string): string {
+  const src = typeof parsed.id === "string" && parsed.id ? `id:${parsed.id}` : `body:${rawBody}`;
+  let h1 = 0x811c9dc5;
+  let h2 = 0;
+  for (let i = 0; i < src.length; i += 1) {
+    const c = src.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = (h2 * 31 + c) >>> 0;
+  }
+  return `ev:${h1.toString(16)}${h2.toString(16)}`;
+}
+
 export function buildGateContext(
   parsed: Record<string, unknown>,
   notionType: string | null,
@@ -188,6 +201,7 @@ export function buildGateContext(
   const ctx: GateEventContext = {
     notionType,
     rawBody,
+    eventKey: opaqueEventKey(parsed, rawBody),
     pageId,
     authorId,
     webhookAuthorIds,

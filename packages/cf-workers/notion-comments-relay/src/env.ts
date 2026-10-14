@@ -60,6 +60,13 @@ export interface Env {
   CLEF_ITEM_DEDUPE_WINDOW_S?: string;
   /** Set to `1` to append truncated decisions to KV ring buffer (default off). */
   WAKE_GATE_KV_RING?: string;
+  /**
+   * CoS pre-filter (ack-only / self-echo / non-actionable property). `1` = LIVE: matching events are not
+   * forwarded to CoS. Anything else (default) = SHADOW: log `would_drop` to stream cos_prefilter, forward anyway.
+   */
+  COS_PREFILTER_LIVE?: string;
+  /** Extra comma-separated lane prefixes treated as agent self-echo ("CoS:", "[BCH]"...); added to built-ins. */
+  COS_PREFILTER_LANE_PREFIXES?: string;
   /** Set to `1` to persist page dedupe keys in KV (default off; each put counts toward RELAY_KV quota). */
   WAKE_GATE_DEDUPE?: string;
   /** Notion database id for AD Docs (2022-06-28 page parent); non-secret. Pair with data source id in gate logic. */
