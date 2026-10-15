@@ -12,6 +12,7 @@ import {
   gateLogBlocksForward,
 } from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
+import { cosPrefilterLive, decideCosPrefilterAfterFetch, logCosPrefilter } from "./wake-gate/cos-prefilter.js";
 import { kvTtl } from "./kv-ttl.js";
 import { flushGateLogRing } from "./gate-log-ring.js";
 import { withMeteredKv } from "./kv-write-meter.js";
@@ -621,9 +622,13 @@ export default {
         return new Response("ok", { status: 200 });
       }
 
+      let cosDrop: string | null = null;
+      // One Notion page GET per page per request, shared by the prefilter and the shadow gates.
+      const fetchScope = crypto.randomUUID();
       if (parseOk) {
         try {
           const gateCtx = buildGateContext(parsed, notionType, rawBody, env);
+          gateCtx.fetchScope = fetchScope;
           if (gateLogBlocksForward(true, gateCtx, env)) {
             const dropped = {
               at: new Date().toISOString(),
@@ -636,6 +641,15 @@ export default {
             console.log(JSON.stringify(dropped));
             return new Response("ok", { status: 200 });
           }
+          // CoS pre-filter, after the gate-log drop (so dropped gate_log events are not counted) and
+          // after the page fetch. SHADOW by default (log would_drop, forward anyway); LIVE drops.
+          try {
+            const verdict = await decideCosPrefilterAfterFetch(env, gateCtx, parsed);
+            await logCosPrefilter(env, gateCtx, verdict);
+            if (verdict.decision === "would_drop" && cosPrefilterLive(env)) cosDrop = verdict.reason;
+          } catch {
+            // fail-open: forward
+          }
         } catch (gateErr) {
           const gateErrorName = gateErr instanceof Error ? gateErr.name : "Error";
           console.log(
@@ -647,7 +661,7 @@ export default {
           );
         }
         try {
-          ctx.waitUntil(runShadowWakeGates(env, parsed, notionType, rawBody, true));
+          ctx.waitUntil(runShadowWakeGates(env, parsed, notionType, rawBody, true, fetchScope));
         } catch (shadowErr) {
           const shadowErrorName = shadowErr instanceof Error ? shadowErr.name : "Error";
           console.log(
@@ -671,6 +685,20 @@ export default {
             }),
           );
         }
+      }
+
+      if (cosDrop) {
+        // Shadow gates above still ran and logged; only the CoS wake is skipped.
+        const dropped = {
+          at: new Date().toISOString(),
+          event: "dropped_cos_prefilter",
+          notion_type: notionType,
+          reason: cosDrop,
+          sigOk,
+        };
+        await recordForward(env, dropped);
+        console.log(JSON.stringify(dropped));
+        return new Response("ok", { status: 200 });
       }
 
       await enqueueAndSchedule(env, ctx, {

@@ -160,6 +160,51 @@ function structuredIrreversible(ctx: GateEventContext): boolean {
   return IRREVERSIBLE_KEYWORD.test(joined);
 }
 
+/**
+ * Shared must-wake overrides: the event must reach CoS whatever any gate says. Used by the Clef gate
+ * (clefHardOverrideReason), the CoS pre-filter and gradeRelayWindow (a prefilter drop on an event
+ * whose Clef row carries one of these names is a breach). Order = reason label precedence.
+ */
+export const MUST_WAKE_OVERRIDE_NAMES = [
+  "john_mention",
+  "submitted_changed",
+  "needs_john_changed",
+  "needs_john_or_sensitive",
+  "bot_mention",
+  "notion_page_unreadable",
+  "irreversible_action_field",
+] as const;
+export type MustWakeOverride = (typeof MUST_WAKE_OVERRIDE_NAMES)[number];
+
+export function mustWakeOverrideReason(
+  ctx: GateEventContext,
+  parsed: Record<string, unknown>,
+): MustWakeOverride | null {
+  if (payloadHasJohnMention(parsed, ctx)) {
+    return "john_mention";
+  }
+  if (submittedPropertyChanged(ctx)) {
+    return "submitted_changed";
+  }
+  if (needsJohnPropertyChanged(ctx)) {
+    return "needs_john_changed";
+  }
+  const props = ctx.properties;
+  if (isTruthyFlag(ctx.needsJohnNow) || isTruthyFlag(props?.needsJohn) || isTruthyFlag(props?.sensitive)) {
+    return "needs_john_or_sensitive";
+  }
+  if (payloadHasBotMention(parsed, ctx)) {
+    return "bot_mention";
+  }
+  if (props?.adDocsParseOk === false) {
+    return "notion_page_unreadable";
+  }
+  if (structuredIrreversible(ctx)) {
+    return "irreversible_action_field";
+  }
+  return null;
+}
+
 export function clefHardOverrideReason(
   ctx: GateEventContext,
   parsed: Record<string, unknown>,
@@ -187,14 +232,9 @@ export function clefHardOverrideReason(
   if (ctx.isCommentEvent && !commentPayloadHasInspectableContent(parsed)) {
     return "comment_content_unavailable";
   }
-  if (payloadHasJohnMention(parsed, ctx)) {
-    return "john_mention";
-  }
-  if (submittedPropertyChanged(ctx)) {
-    return "submitted_changed";
-  }
-  if (needsJohnPropertyChanged(ctx)) {
-    return "needs_john_changed";
+  const mustWake = mustWakeOverrideReason(ctx, parsed);
+  if (mustWake) {
+    return mustWake;
   }
   const adopted = ruleDecisions.find((d) => d.gate_name === adoptedChangeGateName);
   if (adopted?.decision === "would_wake" && adopted.reason === "adopted_change") {
@@ -207,20 +247,8 @@ export function clefHardOverrideReason(
     return "properties_unavailable";
   }
   const props = ctx.properties;
-  if (isTruthyFlag(props?.needsJohn) || isTruthyFlag(props?.sensitive)) {
-    return "needs_john_or_sensitive";
-  }
   if (isTruthyFlag(props?.sourceRepo) && props?.sourceRepo !== "") {
     return "source_repo_set";
-  }
-  if (payloadHasBotMention(parsed, ctx)) {
-    return "bot_mention";
-  }
-  if (props?.adDocsParseOk === false) {
-    return "notion_page_unreadable";
-  }
-  if (structuredIrreversible(ctx)) {
-    return "irreversible_action_field";
   }
   for (const d of ruleDecisions) {
     if (d.decision === "would_wake" && d.reason.startsWith("error:")) {

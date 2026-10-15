@@ -56,6 +56,8 @@ export type ClefShadowLogEntry = {
   dedupe_repeat?: boolean;
   /** 1-based count of this item+event type inside the dedupe window (set on repeats). */
   item_event_count?: number;
+  /** Opaque per-webhook-event key; joins clef_wake_shadow rows with cos_prefilter rows. */
+  event_key?: string;
   /** Rule said wake, dedupe would drop it: one saved wake. Sum per unique item_id for grading. */
   saved_wake?: boolean;
   /** rule_skip rows: true when Clef actually scored this skip (false = cap / error / mode off / excluded). */
@@ -78,6 +80,13 @@ export type FleetLocksFieldSnapshot = {
 export type GateEventContext = {
   notionType: string | null;
   rawBody: string;
+  /** Opaque hash of the webhook event (event id, else raw body). Same for the forward path and shadow gates. */
+  eventKey?: string;
+  /**
+   * Per-request page-fetch memo scope (random, one per webhook request). The prefilter and the shadow
+   * gates of the same request share one Notion GET per page; a later delivery never reuses it.
+   */
+  fetchScope?: string;
   pageId?: string;
   authorId?: string;
   webhookAuthorIds?: string[];
