@@ -9,4 +9,8 @@ export interface Env {
   CLEF_EMAIL_DAILY_CALL_CAP?: string;
   /** Fallback mode when KV unset: off | shadow (default shadow). */
   CLEF_DEFAULT_MODE?: string;
+  /** Batches Clef email calls (one model call per ~20 emails). Unbound ⇒ one call per email (legacy). */
+  CLEF_BATCHER?: DurableObjectNamespace<import("./batcher-do.js").ClefEmailBatcher>;
+  /** Emails per batch call (default 20, max 25). */
+  CLEF_EMAIL_BATCH_SIZE?: string;
 }
