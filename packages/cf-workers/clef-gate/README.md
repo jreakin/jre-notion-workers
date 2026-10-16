@@ -47,8 +47,10 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   (last 8 hex of msg_id_hash mod 10 = 0). Gateway `clef-shadow-gate`.
 - **Retry + fallback, inside one total budget:** a transient Clef failure (`clef_error:*` such as `AiGatewayError`/`AiError`,
   or `clef_timeout`) is retried on the same model after 250 ms and 750 ms (3 calls), then `@cf/cloudflare/clef-flash` is
-  tried once. All Clef work for one email (retries, fallback, and the 10% flash side-by-side) shares a
-  **`CLEF_COMPLETION_BUDGET_MS` = 15 s** budget, well under the 30 s `waitUntil` limit. Each call's timeout is clipped to
+  tried once. A gateway **429** (the `clef-shadow-gate` rate limit) is logged as `clef_error:RateLimited` and retried
+  after **4 s and 9 s (±30 % jitter)** instead, with no flash fallback and no side-by-side (same gateway, same limit).
+  All Clef work for one email (retries, fallback, and the 10% flash side-by-side) shares a
+  **`CLEF_COMPLETION_BUDGET_MS` = 22 s** budget, under the 30 s `waitUntil` limit. Each call's timeout is clipped to
   the time left, and no call starts with < 500 ms left. When the budget or the cap stops a retry early, the row keeps the
   last real failure in `error_reason` and logs `clef_stopped` (`clef_budget_exhausted` / `clef_daily_cap`).
   The side-by-side flash is **one call, never retried**, and runs only if a full call's time (3 s) is left. It is
@@ -56,6 +58,10 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   **Cap:** every real model call (first try, each retry, the fallback, and the side-by-side) takes one unit of
   `CLEF_EMAIL_DAILY_CALL_CAP`, so the cap counts real calls. Rows log `clef_attempts` and `clef_fallback`.
   Bad output and config errors (`clef_gateway_unset`, `clef_ai_unbound`) are not retried.
+  The cap counter increment is best-effort: a failed KV write (per-key write limit during a burst) still admits the
+  call; only an unreadable counter is `clef_cap_unavailable`.
+- **Gateway rate limit vs. bursts:** the gateway allows 60 requests / 60 s. Morning inbox runs post 120+ emails in a
+  minute, so backoff alone cannot absorb a burst; raise the gateway limit (see the PR) or pace the sender.
 - **`shadow_label:"error"`:** no verdict (retries/fallback exhausted, bad output, gateway unset, AI unbound, cap store
   unreadable/invalid). It is its own category: `agree`/`false_skip`/`false_wake` stay `null`. A reached daily cap stays
   `escalate` (policy). Live guard in code: `liveActionLabel("error") === "escalate"`.

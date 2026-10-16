@@ -7,6 +7,7 @@ import {
   type ShadowLabel,
   type Sleep,
   CLEF_COMPLETION_BUDGET_MS,
+  CLEF_RATE_LIMITED_REASON,
 } from "./clef-email.js";
 import { CLEF_CALL_TIMEOUT_MS } from "../../../clef-core/src/index.js";
 import type { Env } from "./env.js";
@@ -212,6 +213,8 @@ export async function admitEmailShadow(env: Env, rawBody: string): Promise<Admis
 export type CompletionDeps = {
   sleep?: Sleep;
   backoffMs?: readonly number[];
+  rateLimitBackoffMs?: readonly number[];
+  random?: () => number;
   /** Clock + total budget (default Date.now / CLEF_COMPLETION_BUDGET_MS). */
   now?: () => number;
   budgetMs?: number;
@@ -280,6 +283,8 @@ async function completeInner(
         fallbackToFlash: true,
         sleep: deps.sleep,
         backoffMs: deps.backoffMs,
+        rateLimitBackoffMs: deps.rateLimitBackoffMs,
+        random: deps.random,
         now,
         deadline,
         consumeExtra,
@@ -306,13 +311,15 @@ async function completeInner(
       }
       // Side-by-side flash: single call, no retries, only with a full call's time left in the budget.
       // Skipped when the verdict already came from flash (it would compare flash with itself).
-      if (isFlashSample(item.msg_id_hash) && !full.fallback) {
+      // Also skipped after a gateway 429: the extra call would only add to the rate-limited burst.
+      if (isFlashSample(item.msg_id_hash) && !full.fallback && !(!full.ok && full.reason === CLEF_RATE_LIMITED_REASON)) {
         entry.flash_sample = true;
         if (deadline - now() >= CLEF_CALL_TIMEOUT_MS) {
           const flashCap = await tryConsumeDailyCall(env.CLEF_KV, capKey, cap);
           if (flashCap.ok) {
             const flash = await invokeEmailClef(env.AI, env.AI_GATEWAY_ID, "flash", state, {
               backoffMs: [],
+              rateLimitBackoffMs: [],
               now,
               deadline,
             });

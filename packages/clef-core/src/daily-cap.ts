@@ -36,24 +36,33 @@ export type ClefCapResult =
   | { ok: true; count: number }
   | { ok: false; reason: "clef_daily_cap" | "clef_cap_invalid" | "clef_cap_unavailable" };
 
-/** Best-effort KV counter (not atomic; KV is eventually consistent — soft cap). */
+/**
+ * Best-effort KV counter (not atomic; KV is eventually consistent — soft cap).
+ * Only an unreadable counter is `clef_cap_unavailable`. A failed increment (KV allows ~1 write/s per key,
+ * so a burst of calls on the one counter key gets 429s) still admits the call: the cap was read and is
+ * under its limit, and the count is soft anyway. Before this, a write 429 dropped the email to `error`.
+ */
 export async function tryConsumeDailyCall(
   kv: KvLike,
   key: string,
   cap: number,
 ): Promise<ClefCapResult> {
+  let current: number | null;
   try {
-    const raw = await kv.get(key);
-    const current = parseClefCounter(raw);
-    if (current === null) {
-      return { ok: false, reason: "clef_cap_invalid" };
-    }
-    if (current >= cap) {
-      return { ok: false, reason: "clef_daily_cap" };
-    }
-    await kv.put(key, String(current + 1), { expirationTtl: 60 * 60 * 48 });
-    return { ok: true, count: current + 1 };
+    current = parseClefCounter(await kv.get(key));
   } catch {
     return { ok: false, reason: "clef_cap_unavailable" };
   }
+  if (current === null) {
+    return { ok: false, reason: "clef_cap_invalid" };
+  }
+  if (current >= cap) {
+    return { ok: false, reason: "clef_daily_cap" };
+  }
+  try {
+    await kv.put(key, String(current + 1), { expirationTtl: 60 * 60 * 48 });
+  } catch {
+    // soft cap: see above
+  }
+  return { ok: true, count: current + 1 };
 }

@@ -146,13 +146,35 @@ export function isTransientClefReason(reason: string): boolean {
   return reason === "clef_timeout" || reason.startsWith("clef_error:");
 }
 
+/**
+ * The `clef-shadow-gate` AI Gateway's own rate limit (60 req / 60 s sliding) answers 429, surfaced by the
+ * binding as an AiGatewayError. Morning inbox bursts (120+ emails in one minute) hit it: every 429 was
+ * logged as `clef_error:AiGatewayError`. Logged as its own reason so the grader can tell it apart.
+ */
+export const CLEF_RATE_LIMITED_REASON = "clef_error:RateLimited";
+
+/** True when the error is a 429 / rate limit (checks status/code fields and the message; never logs it). */
+export function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { status?: unknown; code?: unknown; message?: unknown };
+  if (e.status === 429 || e.code === 429 || e.code === "429") return true;
+  const msg = typeof e.message === "string" ? e.message : "";
+  return /\b429\b|rate[ _-]?limit|too many requests/i.test(msg);
+}
+
 /** Backoff before retry n (1-based) of the same model. Small: this runs in waitUntil after the 202. */
 export const CLEF_RETRY_BACKOFF_MS = [250, 750] as const;
 /**
- * Total wall-clock budget for ALL Clef work of one email (retries, fallback, flash side-by-side),
- * well under the 30 s waitUntil limit. Each call's timeout is clipped to what is left.
+ * Backoff after a gateway 429. Sub-second retries land in the same 60 s sliding window and only burn more of
+ * the limit (and cap units), so wait seconds, with ±30 % jitter so a burst of emails does not retry in lockstep.
  */
-export const CLEF_COMPLETION_BUDGET_MS = 15_000;
+export const CLEF_RATE_LIMIT_BACKOFF_MS = [4_000, 9_000] as const;
+export const CLEF_RATE_LIMIT_JITTER = 0.3;
+/**
+ * Total wall-clock budget for ALL Clef work of one email (retries, fallback, flash side-by-side),
+ * under the 30 s waitUntil limit (headroom for the KV row rewrite). Each call's timeout is clipped to what is left.
+ */
+export const CLEF_COMPLETION_BUDGET_MS = 22_000;
 /** Don't start a call with less than this left (it would just time out). */
 export const CLEF_MIN_CALL_MS = 500;
 
@@ -164,6 +186,10 @@ export type InvokeOpts = {
   fallbackToFlash?: boolean;
   sleep?: Sleep;
   backoffMs?: readonly number[];
+  /** Backoff used after a rate-limit failure; default CLEF_RATE_LIMIT_BACKOFF_MS. */
+  rateLimitBackoffMs?: readonly number[];
+  /** Random source in [0, 1) for the rate-limit jitter; default Math.random. */
+  random?: () => number;
   /** Clock (ms) for the budget; default Date.now. */
   now?: () => number;
   /** Absolute deadline (same clock as `now`); default now + CLEF_COMPLETION_BUDGET_MS. */
@@ -191,7 +217,7 @@ async function invokeOnce(
     const parsed = parseEmailClefResponse(raw);
     return parsed ? { ok: true, parsed } : { ok: false, reason: "clef_bad_output" };
   } catch (err) {
-    return { ok: false, reason: clefErrorReason(err) };
+    return { ok: false, reason: isRateLimitError(err) ? CLEF_RATE_LIMITED_REASON : clefErrorReason(err) };
   }
 }
 
@@ -261,11 +287,37 @@ export async function invokeEmailClef(
     const r = last as { ok: boolean; reason?: string };
     return !r.ok && isTransientClefReason(r.reason ?? "");
   };
-  for (let i = 0; i <= backoff.length; i++) {
-    if (!(await tryCall(variant, i > 0 ? (backoff[i - 1] ?? 0) : 0))) break;
+  const rlBackoff = opts.rateLimitBackoffMs ?? CLEF_RATE_LIMIT_BACKOFF_MS;
+  const random = opts.random ?? Math.random;
+  const rateLimited = () => {
+    const r = last as { ok: boolean; reason?: string };
+    return !r.ok && r.reason === CLEF_RATE_LIMITED_REASON;
+  };
+  const retries = Math.max(backoff.length, rlBackoff.length);
+  for (let i = 0; i <= retries; i++) {
+    let waitMs = 0;
+    if (i > 0) {
+      if (rateLimited()) {
+        const base = rlBackoff[i - 1];
+        if (base === undefined) break;
+        waitMs = Math.round(base * (1 - CLEF_RATE_LIMIT_JITTER + 2 * CLEF_RATE_LIMIT_JITTER * random()));
+      } else {
+        const base = backoff[i - 1];
+        if (base === undefined) break;
+        waitMs = base;
+      }
+    }
+    if (!(await tryCall(variant, waitMs))) break;
     if (!failedTransient()) break;
   }
-  if (failedTransient() && variant === "full" && opts.fallbackToFlash && isTransientClefReason(last.reason)) {
+  // clef-flash goes through the same gateway and the same rate limit: no fallback on a 429.
+  if (
+    failedTransient() &&
+    !rateLimited() &&
+    variant === "full" &&
+    opts.fallbackToFlash &&
+    isTransientClefReason(last.reason)
+  ) {
     fallback = await tryCall("flash", 0);
   }
   const latency_ms = now() - started;
