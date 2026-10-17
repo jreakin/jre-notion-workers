@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { CLEF_COMPLETION_BUDGET_MS } from "../src/clef-email.js";
+import { CLEF_COMPLETION_BUDGET_MS, CLEF_RATE_LIMITED_REASON, isRateLimitError } from "../src/clef-email.js";
 import { processEmailShadow } from "../src/shadow.js";
 import { answers, captureLogs, HASH_FLASH, makeEnv, payload } from "./helpers.js";
 
@@ -42,7 +42,7 @@ describe("total time budget + cap per real call", () => {
     const c = clocked(env, () => gwErr());
     const e = await processEmailShadow(env, JSON.stringify(payload({ msg_id_hash: HASH_FLASH })), c.deps);
     expect(c.elapsed()).toBeLessThanOrEqual(CLEF_COMPLETION_BUDGET_MS);
-    expect(CLEF_COMPLETION_BUDGET_MS).toBeLessThanOrEqual(15_000);
+    expect(CLEF_COMPLETION_BUDGET_MS).toBeLessThanOrEqual(25_000); // < 30 s waitUntil, with headroom
     expect(c.slugs).toEqual(["@cf/cloudflare/clef", "@cf/cloudflare/clef", "@cf/cloudflare/clef", "@cf/cloudflare/clef-flash"]);
     expect(e?.flash_shadow_label).toBeNull();
     expect(e?.shadow_label).toBe("error");
@@ -96,5 +96,67 @@ describe("total time budget + cap per real call", () => {
     const e = await processEmailShadow(env, JSON.stringify(payload()), c.deps);
     expect(e?.clef_attempts).toBe(2);
     expect(e?.clef_stopped).toBe("clef_daily_cap");
+  });
+});
+
+function rateLimited(): Error {
+  const e = new Error("AiGateway: 429 Too Many Requests (rate limit)");
+  e.name = "AiGatewayError";
+  return e;
+}
+
+describe("gateway rate limit (429)", () => {
+  test("isRateLimitError: status/code fields and 429 / rate-limit messages only", () => {
+    expect(isRateLimitError(rateLimited())).toBe(true);
+    expect(isRateLimitError(Object.assign(new Error("x"), { status: 429 }))).toBe(true);
+    expect(isRateLimitError(new Error("Rate limited by gateway"))).toBe(true);
+    expect(isRateLimitError(gwErr())).toBe(false);
+    expect(isRateLimitError(new Error("clef_timeout"))).toBe(false);
+    expect(isRateLimitError("429")).toBe(false);
+  });
+
+  test("429 then success: waits seconds (jittered), not 250 ms, and no flash fallback", async () => {
+    cap = captureLogs();
+    const { env } = makeEnv();
+    const sleeps: number[] = [];
+    const c = clocked(env, (_slug, n) => (n === 1 ? rateLimited() : answers()));
+    const deps = { ...c.deps, random: () => 0.5, sleep: async (ms: number) => { sleeps.push(ms); await c.deps.sleep(ms); } };
+    const e = await processEmailShadow(env, JSON.stringify(payload()), deps);
+    expect(sleeps).toEqual([4_000]);
+    expect(c.slugs).toEqual(["@cf/cloudflare/clef", "@cf/cloudflare/clef"]);
+    expect(e?.shadow_label).not.toBe("error");
+    expect(e?.clef_attempts).toBe(2);
+  });
+
+  test("429 on every try: logged as RateLimited, never falls back to flash (same gateway limit), no side-by-side", async () => {
+    cap = captureLogs();
+    const { env, kv } = makeEnv();
+    const c = clocked(env, () => rateLimited());
+    const deps = { ...c.deps, random: () => 0 };
+    const e = await processEmailShadow(env, JSON.stringify(payload({ msg_id_hash: HASH_FLASH })), deps);
+    expect(c.slugs.every((s) => s === "@cf/cloudflare/clef")).toBe(true);
+    expect(c.slugs.length).toBe(3);
+    expect(e?.error_reason).toBe(CLEF_RATE_LIMITED_REASON);
+    expect(e?.clef_fallback).toBe(false);
+    expect(e?.flash_sample).toBe(false);
+    expect(c.elapsed()).toBeLessThanOrEqual(CLEF_COMPLETION_BUDGET_MS);
+    expect(capCount(kv)).toBe(3);
+  });
+
+  test("jitter stays within ±30 % of the base backoff", async () => {
+    for (const r of [0, 0.999]) {
+      cap?.restore();
+      cap = captureLogs();
+      const { env } = makeEnv();
+      const sleeps: number[] = [];
+      const c = clocked(env, (_s, n) => (n === 1 ? rateLimited() : answers()));
+      await processEmailShadow(env, JSON.stringify(payload()), {
+        ...c.deps,
+        random: () => r,
+        sleep: async (ms: number) => { sleeps.push(ms); await c.deps.sleep(ms); },
+      });
+      expect(sleeps[0]).toBeGreaterThanOrEqual(2_800);
+      expect(sleeps[0]).toBeLessThanOrEqual(5_200);
+    }
   });
 });

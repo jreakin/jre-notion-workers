@@ -64,3 +64,15 @@ describe("clef-core", () => {
     ).toEqual({ gateway: { id: "gw", collectLog: false, skipCache: true } });
   });
 });
+
+describe("daily cap soft increment", () => {
+  test("a failed counter write (KV 429) still admits the call; an unreadable counter does not", async () => {
+    const { tryConsumeDailyCall } = await import("../src/daily-cap.js");
+    const putFails = { get: async () => "3", put: async () => { throw new Error("KV PUT failed: 429"); } };
+    expect(await tryConsumeDailyCall(putFails as never, "k", 10)).toEqual({ ok: true, count: 4 });
+    const getFails = { get: async () => { throw new Error("down"); }, put: async () => {} };
+    expect(await tryConsumeDailyCall(getFails as never, "k", 10)).toEqual({ ok: false, reason: "clef_cap_unavailable" });
+    const atCap = { get: async () => "10", put: async () => {} };
+    expect(await tryConsumeDailyCall(atCap as never, "k", 10)).toEqual({ ok: false, reason: "clef_daily_cap" });
+  });
+});

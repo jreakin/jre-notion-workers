@@ -14,6 +14,7 @@ import {
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 import { cosPrefilterLive, decideCosPrefilterAfterFetch, logCosPrefilter } from "./wake-gate/cos-prefilter.js";
 import { kvTtl } from "./kv-ttl.js";
+import { COALESCE_MAX_ATTEMPTS, coalesceBackingOff, coalesceRetryDelayMs } from "./coalesce-backoff.js";
 import { flushGateLogRing } from "./gate-log-ring.js";
 import { withMeteredKv } from "./kv-write-meter.js";
 import { claimDebugCaptureSlot } from "./debug-capture-throttle.js";
@@ -39,6 +40,10 @@ type CoalesceItem = {
   notion_type: string | null;
   body: string;
   signature: string | null;
+  /** Failed forward attempts so far (absent = never tried). */
+  attempts?: number;
+  /** Epoch ms before which the cron / scheduled flush must not retry this buffer. */
+  next_at?: number;
 };
 
 function json(data: unknown, status = 200): Response {
@@ -131,10 +136,8 @@ function cosAuthHeader(env: Env): string {
   return bearerHeader(env.COS_WEBHOOK_AUTHORIZATION);
 }
 
+/** One KV write per attempt: `forward_history[0]` is the last forward (`/setup/last-forward` reads it). */
 async function recordForward(env: Env, result: Record<string, unknown>): Promise<void> {
-  try {
-    await env.RELAY_KV.put(LAST_FORWARD_KEY, JSON.stringify(result));
-  } catch {}
   try {
     const raw = await env.RELAY_KV.get(FORWARD_HISTORY_KEY);
     const hist: unknown[] = raw ? (JSON.parse(raw) as unknown[]) : [];
@@ -235,12 +238,29 @@ async function releaseFlushLock(env: Env, token: string | null): Promise<void> {
   } catch {}
 }
 
-async function restoreToBuffer(env: Env, items: CoalesceItem[]): Promise<void> {
+async function restoreToBuffer(env: Env, items: CoalesceItem[], failed = false): Promise<void> {
   if (items.length === 0) {
     return;
   }
+  let keep = items;
+  if (failed) {
+    const now = Date.now();
+    keep = [];
+    let dropped = 0;
+    for (const it of items) {
+      const attempts = (it.attempts ?? 0) + 1;
+      if (attempts >= COALESCE_MAX_ATTEMPTS) {
+        dropped += 1;
+        continue;
+      }
+      keep.push({ ...it, attempts, next_at: now + coalesceRetryDelayMs(attempts) });
+    }
+    if (dropped > 0) {
+      console.log(JSON.stringify({ event: "coalesce_dropped", count: dropped, attempts: COALESCE_MAX_ATTEMPTS }));
+    }
+  }
   const current = await readBuffer(env);
-  await writeBuffer(env, [...items, ...current]);
+  await writeBuffer(env, [...keep, ...current]);
 }
 
 /** Atomically claim the current buffer snapshot for forwarding (clears KV buffer). */
@@ -253,7 +273,14 @@ async function claimBatch(env: Env): Promise<CoalesceItem[]> {
   return items;
 }
 
+
 async function flushCoalesce(env: Env): Promise<boolean> {
+  // Reads are cheap; skip the lock writes when a failed batch is still backing off.
+  const pending = await readBuffer(env);
+  if (pending.length > 0 && coalesceBackingOff(pending)) {
+    console.log(JSON.stringify({ event: "coalesce_backoff", count: pending.length, next_at: pending[0]?.next_at }));
+    return true;
+  }
   const flushToken = await tryAcquireFlushLock(env);
   if (!flushToken) {
     console.log(JSON.stringify({ event: "coalesce_flush_skipped_busy" }));
@@ -312,7 +339,7 @@ async function flushCoalesce(env: Env): Promise<boolean> {
         });
       }
     } catch (err) {
-      await restoreToBuffer(env, claimed);
+      await restoreToBuffer(env, claimed, true);
       await recordForward(env, {
         at: new Date().toISOString(),
         event: "coalesce_forward_failed",
@@ -330,14 +357,8 @@ async function flushCoalesce(env: Env): Promise<boolean> {
       return true;
     }
 
-    await restoreToBuffer(env, claimed);
-    await recordForward(env, {
-      at: new Date().toISOString(),
-      event: "coalesce_forward_non_2xx",
-      coalesce: true,
-      count: claimed.length,
-      status,
-    });
+    // forwardRaw already recorded this attempt (status + upstream preview): no second history write.
+    await restoreToBuffer(env, claimed, true);
     console.log(JSON.stringify({ event: "coalesce_forward_non_2xx", status, count: claimed.length }));
     await clearCoalesceLock(env);
     return false;
@@ -453,9 +474,13 @@ export default {
         if (!authorizeSetup(request, env)) {
           return json({ error: "unauthorized" }, 401);
         }
-        const raw = await env.RELAY_KV.get(LAST_FORWARD_KEY);
-        if (!raw) return json({ ok: false, message: "No forward attempt recorded yet." });
-        return json({ ok: true, last: JSON.parse(raw) });
+        const hist = await env.RELAY_KV.get(FORWARD_HISTORY_KEY);
+        const first = hist ? (JSON.parse(hist) as unknown[])[0] : undefined;
+        // Legacy key, written before forward_history became the single record.
+        const raw = first === undefined ? await env.RELAY_KV.get(LAST_FORWARD_KEY) : null;
+        const last = first ?? (raw ? JSON.parse(raw) : undefined);
+        if (last === undefined) return json({ ok: false, message: "No forward attempt recorded yet." });
+        return json({ ok: true, last });
       }
 
       if (request.method === "GET" && url.pathname === "/setup/forward-history") {
@@ -721,7 +746,8 @@ export default {
     try {
       // KV budget: the 1/min cron used to PUT the flush lock every tick (~1,440 writes/day)
       // even with nothing buffered. Reads are cheap; only lock + flush when there is work.
-      if ((await readBuffer(env)).length === 0) {
+      const buf = await readBuffer(env);
+      if (buf.length === 0 || coalesceBackingOff(buf)) {
         return;
       }
       const flushed = await flushCoalesce(env);

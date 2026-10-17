@@ -110,8 +110,8 @@ KV keys used by the Worker (see `src/index.ts` constants):
 | --- | --- |
 | `notion_verification_token` | Notion webhook verification token (one-time handshake store; rotate via setup route) |
 | `last_notion_post` | Debug snapshot of most recent POST to `/` |
-| `last_forward` | Most recent forward attempt metadata |
-| `forward_history` | Ring buffer of recent forward attempts (max 10) |
+| `last_forward` | Legacy (no longer written): `/setup/last-forward` now returns `forward_history[0]` |
+| `forward_history` | Ring buffer of recent forward attempts (max 10); the one KV write per forward attempt. Failed coalesce batches carry `attempts`/`next_at` and back off 1→2→4→8→15 min (dropped after 12) |
 | `coalesce_buffer` | Pending coalesced webhook payloads (JSON array) |
 | `coalesce_flush_scheduled` | Lock indicating a flush timer is active (TTL 180s) |
 
