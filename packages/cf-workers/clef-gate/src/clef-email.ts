@@ -147,8 +147,9 @@ export function isTransientClefReason(reason: string): boolean {
 }
 
 /**
- * The `clef-shadow-gate` AI Gateway's own rate limit (60 req / 60 s sliding) answers 429, surfaced by the
- * binding as an AiGatewayError. Morning inbox bursts (120+ emails in one minute) hit it: every 429 was
+ * The `clef-shadow-gate` AI Gateway's own rate limit (300 req / 60 s sliding; 60 before LOCK-69) answers 429,
+ * surfaced by the binding as an AiGatewayError. Morning inbox bursts (120+ emails in one minute) hit the old
+ * 60/min limit: every 429 was
  * logged as `clef_error:AiGatewayError`. Logged as its own reason so the grader can tell it apart.
  */
 export const CLEF_RATE_LIMITED_REASON = "clef_error:RateLimited";

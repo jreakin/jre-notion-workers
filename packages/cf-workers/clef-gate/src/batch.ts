@@ -1,8 +1,9 @@
 /**
  * Clef email batching: one Workers AI call scores up to CLEF_EMAIL_BATCH_SIZE (default 20) emails.
  *
- * Why: the clef-shadow-gate AI Gateway allows 60 req / 60 s and the morning inbox run posts 120+
- * emails in a minute (Oct 14/15 7:12 AM CT bursts → 429 → fail-open). One call per ~20 emails fits.
+ * Why: the clef-shadow-gate AI Gateway allows 300 req / 60 s (was 60 during the Oct 14/15 7:12 AM CT
+ * bursts → 429 → fail-open) and the morning inbox run posts 120+ emails in a minute. One call per ~20
+ * emails keeps a burst far under the limit (300 calls/min ≈ 6,000 emails/min at batch size 20).
  *
  * Privacy: the batch state carries only each email's masked + clipped state (buildEmailState: masked
  * subject/snippet + non-PII metadata). It lives in Durable Object memory only for the batch window, is

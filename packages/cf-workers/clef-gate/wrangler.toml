@@ -4,10 +4,9 @@ main = "src/index.ts"
 compatibility_date = "2026-09-11"
 workers_dev = true
 
-# DO NOT deploy with the placeholder KV id — create a namespace and replace it first.
 [[kv_namespaces]]
 binding = "CLEF_KV"
-id = "REPLACE_WITH_CLEF_GATE_KV_NAMESPACE_ID"
+id = "67bb2436719d4e39840b470fcf11ce64"
 
 [ai]
 binding = "AI"
