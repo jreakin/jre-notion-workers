@@ -60,11 +60,12 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   Bad output and config errors (`clef_gateway_unset`, `clef_ai_unbound`) are not retried.
   The cap counter increment is best-effort: a failed KV write (per-key write limit during a burst) still admits the
   call; only an unreadable counter is `clef_cap_unavailable`.
-- **Gateway rate limit vs. bursts:** the gateway allows 60 requests / 60 s. Morning inbox runs post 120+ emails in a
-  minute, so backoff alone cannot absorb a burst; raise the gateway limit (see the PR) or pace the sender.
+- **Gateway rate limit vs. bursts:** the gateway allows 300 requests / 60 s (raised from 60). Morning inbox runs post
+  120+ emails in a minute; with batching that is ~6 calls, and even unbatched it now fits under 300. Backoff alone cannot
+  absorb a burst above the limit, so keep batching on (or pace the sender) for bursts past ~300 calls/min.
 - **Batching (`src/batch.ts`, Durable Object `ClefEmailBatcher`, binding `CLEF_BATCHER`):** emails are scored in
   batches of `CLEF_EMAIL_BATCH_SIZE` (default 20, max 25). One DO instance collects them for ≤ 2 s or until full and makes
-  **one** Clef call, so a 120-email burst is 6 calls (fits the gateway's 60/min) and 6 cap units. The batch state is each
+  **one** Clef call, so a 120-email burst is 6 calls (well under the gateway's 300/min, which fits ~6,000 emails/min at 20 per call) and 6 cap units. The batch state is each
   email's masked state only, kept in DO memory (never DO storage, never logged); questions are `e<i>__q_*`. Per-email
   rows, cap and Gate Log accounting are unchanged (`clef_batch_size`, `clef_batch_fallback` added to the row).
   Failures: a whole-call failure is retried once (4 s after a 429, else 0.5 s) and then every item in that batch is an

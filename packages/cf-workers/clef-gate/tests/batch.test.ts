@@ -82,7 +82,7 @@ describe("batch request / response", () => {
 });
 
 describe("ClefBatchCore", () => {
-  test("120-email burst → 6 calls of 20 (fits the 60/min gateway limit), one cap unit per call", async () => {
+  test("120-email burst → 6 calls of 20 (fits the 300/min gateway limit), one cap unit per call", async () => {
     const { c, calls, capUnits } = core(async (s) => batchAnswers(s.length));
     const res = await Promise.all(states(120).map((s) => c.submit(s)));
     expect(calls).toEqual([20, 20, 20, 20, 20, 20]);
