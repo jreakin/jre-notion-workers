@@ -8,8 +8,10 @@ import {
   type Sleep,
   CLEF_COMPLETION_BUDGET_MS,
   CLEF_RATE_LIMITED_REASON,
+  type EmailClefCall,
 } from "./clef-email.js";
-import { CLEF_CALL_TIMEOUT_MS } from "../../../clef-core/src/index.js";
+import type { BatchItemResult } from "./batch.js";
+import { CLEF_CALL_TIMEOUT_MS, CLEF_FULL_MODEL_NAME } from "../../../clef-core/src/index.js";
 import type { Env } from "./env.js";
 import { computeJoinFlags } from "./join.js";
 import { resolveOverride } from "./overrides.js";
@@ -60,6 +62,10 @@ export type EmailShadowLogEntry = {
   clef_fallback: boolean;
   /** Why retries/fallback stopped early (clef_budget_exhausted / clef_daily_cap / …); null otherwise. */
   clef_stopped: string | null;
+  /** Emails in the batch call that scored this one; null when scored alone (no batcher). */
+  clef_batch_size: number | null;
+  /** True when this email was missing/malformed in its batch answer and was scored alone. */
+  clef_batch_fallback: boolean;
   error_reason: string | null;
   triage_disposition: Disposition | null;
   triage_lane: string | null;
@@ -77,7 +83,7 @@ function blankEntry(event: EmailShadowLogEntry["event"], mode: string): EmailSha
     run_id: null, mailbox: null, msg_id_hash: null, thread_id_hash: null, override: null, clef_called: false,
     model: null, flash_sample: false, p_person: null, p_money_sec: null, lane: null, p_bulk: null,
     p_calendar: null, urgency: null, confidence: null, shadow_label: null, flash_shadow_label: null,
-    flash_agree: null, latency_ms: null, clef_attempts: null, clef_fallback: false, clef_stopped: null, error_reason: null, triage_disposition: null, triage_lane: null,
+    flash_agree: null, latency_ms: null, clef_attempts: null, clef_fallback: false, clef_stopped: null, clef_batch_size: null, clef_batch_fallback: false, error_reason: null, triage_disposition: null, triage_lane: null,
     triage_labels: [], triage_escalated: null, triage_rescued: false, agree: null, false_skip: null, false_wake: null,
   };
 }
@@ -210,7 +216,41 @@ export async function admitEmailShadow(env: Env, rawBody: string): Promise<Admis
 
 /** Async half: Clef call(s), then overwrite the pending row. Preserves a racing outcome's triage truth. */
 /** Test seams for the retry path (defaults: real setTimeout, CLEF_RETRY_BACKOFF_MS). */
+/** Anything with the batcher's classify (the DO stub, or a fake in tests). */
+export type EmailBatcher = { classify(state: string): Promise<BatchItemResult> };
+
+function defaultBatcher(env: Env): EmailBatcher | null {
+  // No batching without the gateway / AI binding: the single-call path reports those config errors.
+  if (!env.CLEF_BATCHER || !env.AI || !env.AI_GATEWAY_ID?.trim()) return null;
+  return env.CLEF_BATCHER.get(env.CLEF_BATCHER.idFromName(GATE)) as unknown as EmailBatcher;
+}
+
+export const BATCH_WAIT_TIMEOUT = "clef_batch_timeout";
+
+/** Wait for the batch verdict, at most `ms`. A lost/slow batch is an error row, never a per-email fan-out. */
+async function classifyWithDeadline(b: EmailBatcher, state: string, ms: number): Promise<BatchItemResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<BatchItemResult>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ ok: false, reason: BATCH_WAIT_TIMEOUT, fallback: false, batch_size: 0, attempts: 0 }),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([
+      b.classify(state).catch(
+        (): BatchItemResult => ({ ok: false, reason: "clef_batch_unavailable", fallback: false, batch_size: 0, attempts: 0 }),
+      ),
+      timeout,
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export type CompletionDeps = {
+  /** Test hook / override for the batcher (default: the CLEF_BATCHER Durable Object when bound). */
+  batcher?: EmailBatcher | null;
   sleep?: Sleep;
   backoffMs?: readonly number[];
   rateLimitBackoffMs?: readonly number[];
@@ -264,31 +304,57 @@ async function completeInner(
   } else {
     const cap = parseDailyCap(env.CLEF_EMAIL_DAILY_CALL_CAP, EMAIL_CAP_DEFAULT);
     const capKey = clefDailyCapKey(GATE);
-    const capRes = await tryConsumeDailyCall(env.CLEF_KV, capKey, cap);
-    if (!capRes.ok) {
-      entry.error_reason = capRes.reason;
-      // Cap reached is policy (escalate); an unreadable/invalid cap store is an infra error.
-      entry.shadow_label = capRes.reason === "clef_daily_cap" ? "escalate" : "error";
-    } else {
-      const state = buildEmailState(item);
+    const state = buildEmailState(item);
+    const now = deps.now ?? Date.now;
+    const started = now();
+    const deadline = started + (deps.budgetMs ?? CLEF_COMPLETION_BUDGET_MS);
+    let full: EmailClefCall | null = null;
+    let capOk = true;
+
+    // Batched path: one Clef call per ~20 emails (the batch takes its own cap unit per call).
+    const batcher = deps.batcher ?? defaultBatcher(env);
+    if (batcher) {
       entry.clef_called = true;
-      const now = deps.now ?? Date.now;
-      const deadline = now() + (deps.budgetMs ?? CLEF_COMPLETION_BUDGET_MS);
-      // Each retry / fallback call takes one more daily-cap unit (the cap counts real model calls).
-      const consumeExtra = async (): Promise<string | null> => {
-        const r = await tryConsumeDailyCall(env.CLEF_KV, capKey, cap);
-        return r.ok ? null : r.reason;
-      };
-      const full = await invokeEmailClef(env.AI, env.AI_GATEWAY_ID, "full", state, {
-        fallbackToFlash: true,
-        sleep: deps.sleep,
-        backoffMs: deps.backoffMs,
-        rateLimitBackoffMs: deps.rateLimitBackoffMs,
-        random: deps.random,
-        now,
-        deadline,
-        consumeExtra,
-      });
+      const r = await classifyWithDeadline(batcher, state, Math.max(0, deadline - now() - CLEF_CALL_TIMEOUT_MS));
+      entry.clef_batch_size = r.batch_size;
+      if (r.ok) {
+        full = { ok: true, parsed: r.parsed, latency_ms: now() - started, model: CLEF_FULL_MODEL_NAME, attempts: r.attempts, fallback: false, stopped: null };
+      } else if (!r.fallback) {
+        full = { ok: false, reason: r.reason, latency_ms: now() - started, model: CLEF_FULL_MODEL_NAME, attempts: r.attempts, fallback: false, stopped: null };
+      } else {
+        // This email's answers were missing/malformed in the batch: score it alone below.
+        entry.clef_batch_fallback = true;
+      }
+    }
+
+    if (!full) {
+      const capRes = await tryConsumeDailyCall(env.CLEF_KV, capKey, cap);
+      if (!capRes.ok) {
+        capOk = false;
+        entry.error_reason = capRes.reason;
+        // Cap reached is policy (escalate); an unreadable/invalid cap store is an infra error.
+        entry.shadow_label = capRes.reason === "clef_daily_cap" ? "escalate" : "error";
+      } else {
+        entry.clef_called = true;
+        // Each retry / fallback call takes one more daily-cap unit (the cap counts real model calls).
+        const consumeExtra = async (): Promise<string | null> => {
+          const r = await tryConsumeDailyCall(env.CLEF_KV, capKey, cap);
+          return r.ok ? null : r.reason;
+        };
+        full = await invokeEmailClef(env.AI, env.AI_GATEWAY_ID, "full", state, {
+          fallbackToFlash: true,
+          sleep: deps.sleep,
+          backoffMs: deps.backoffMs,
+          rateLimitBackoffMs: deps.rateLimitBackoffMs,
+          random: deps.random,
+          now,
+          deadline,
+          consumeExtra,
+        });
+      }
+    }
+
+    if (full && capOk) {
       entry.model = full.model;
       entry.latency_ms = full.latency_ms;
       entry.clef_attempts = full.attempts;

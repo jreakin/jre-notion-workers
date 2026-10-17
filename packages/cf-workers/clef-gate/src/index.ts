@@ -1,4 +1,5 @@
 import { bearerOk } from "./auth.js";
+export { ClefEmailBatcher } from "./batcher-do.js";
 import type { Env } from "./env.js";
 import { admitEmailShadow, completeEmailShadow, emitFailure, handleOutcome } from "./shadow.js";
 

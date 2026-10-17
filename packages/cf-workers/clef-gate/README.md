@@ -62,6 +62,15 @@ No mailbox access, no labels written, nothing returned to the caller beyond a st
   call; only an unreadable counter is `clef_cap_unavailable`.
 - **Gateway rate limit vs. bursts:** the gateway allows 60 requests / 60 s. Morning inbox runs post 120+ emails in a
   minute, so backoff alone cannot absorb a burst; raise the gateway limit (see the PR) or pace the sender.
+- **Batching (`src/batch.ts`, Durable Object `ClefEmailBatcher`, binding `CLEF_BATCHER`):** emails are scored in
+  batches of `CLEF_EMAIL_BATCH_SIZE` (default 20, max 25). One DO instance collects them for ≤ 2 s or until full and makes
+  **one** Clef call, so a 120-email burst is 6 calls (fits the gateway's 60/min) and 6 cap units. The batch state is each
+  email's masked state only, kept in DO memory (never DO storage, never logged); questions are `e<i>__q_*`. Per-email
+  rows, cap and Gate Log accounting are unchanged (`clef_batch_size`, `clef_batch_fallback` added to the row).
+  Failures: a whole-call failure is retried once (4 s after a 429, else 0.5 s) and then every item in that batch is an
+  `error` row (no per-email fan-out); missing/malformed items are re-batched once, then up to 5 are scored alone
+  (`clef_batch_fallback:true`), the rest are `clef_batch_bad_output`. All batch work ends within 15 s. Unbound DO, or no
+  gateway/AI, ⇒ the single-call path. Side-by-side flash stays one call per sampled email.
 - **`shadow_label:"error"`:** no verdict (retries/fallback exhausted, bad output, gateway unset, AI unbound, cap store
   unreadable/invalid). It is its own category: `agree`/`false_skip`/`false_wake` stay `null`. A reached daily cap stays
   `escalate` (policy). Live guard in code: `liveActionLabel("error") === "escalate"`.
