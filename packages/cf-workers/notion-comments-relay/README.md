@@ -39,7 +39,7 @@ packages/cf-workers/notion-comments-relay/
 ├── src/day-log/      # Day Log serializer helper
 ├── tests/            # bun test
 ├── fixtures/         # webhook payload fixtures
-├── wrangler.toml     # Worker name, pinned account_id, KV binding (placeholder namespace id)
+├── wrangler.toml     # Worker name, pinned account_id, KV binding (live namespace id)
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -102,7 +102,7 @@ Set via Wrangler (see cutover). **Do not rotate** during repo migration — reus
 | --- | --- |
 | `RELAY_KV` | `108f8eb2447e4f41aa5ab76de3cfcad0` |
 
-Committed `wrangler.toml` uses placeholder `REPLACE_WITH_RELAY_KV_NAMESPACE_ID` so the live id is not required for CI. Replace locally before deploy.
+Committed `wrangler.toml` carries the live `RELAY_KV` id above (a resource id, not a secret), so `main` deploys as-is with no local edit.
 
 KV keys used by the Worker (see `src/index.ts` constants):
 
@@ -171,7 +171,7 @@ Perform **after** this PR is merged. Do **not** deploy from the PR branch to pro
 
 1. **Merge PR** into `main`.
 2. **Checkout** `main` and `cd packages/cf-workers/notion-comments-relay`.
-3. **Set KV id** in `wrangler.toml`: replace `REPLACE_WITH_RELAY_KV_NAMESPACE_ID` with `108f8eb2447e4f41aa5ab76de3cfcad0` (binding name stays `RELAY_KV`).
+3. **Check KV id** in `wrangler.toml`: `RELAY_KV` is already committed as `108f8eb2447e4f41aa5ab76de3cfcad0`, so no edit is needed.
 4. **Secrets** — reuse existing live values (do not create a new Worker):
    ```bash
    wrangler secret put COS_WEBHOOK_URL
