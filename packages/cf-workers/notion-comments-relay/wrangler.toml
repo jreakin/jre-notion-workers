@@ -24,6 +24,8 @@ CLEF_DAILY_CALL_CAP = "2000"
 WAKE_GATE_KV_RING = "1"
 CLEF_RING = "1"
 GATE_LOG_DAILY_WRITE_CAP = "60"
+# Echo filter (LOCK-69): TRACKED_PARENT_IDS unset ⇒ untracked-property rule fails open. Set to a
+# comma-separated list of tracked database / data source ids to enable it (Fleet Locks + AD Docs auto-added).
 
 # Durable gate_log buffer (SQLite-backed DO, Workers Free compatible). See README "Gate log KV ring".
 [[durable_objects.bindings]]

@@ -34,7 +34,8 @@ export type GateLogStream =
   | "clef_wake_shadow"
   | "cos_prefilter"
   | "wake_gate_shadow"
-  | "ad_docs_wake_gate_shadow";
+  | "ad_docs_wake_gate_shadow"
+  | "echo_filter";
 
 export type GateLogRow = { stream: GateLogStream } & Record<string, unknown>;
 
@@ -60,6 +61,7 @@ export function readGateLogDailyWriteCap(env: Env): number {
 export function isHighSignal(row: GateLogRow): boolean {
   if (row.candidate_false_skip === true) return true;
   if (row.stream === "cos_prefilter") return row.decision === "would_drop";
+  if (row.stream === "echo_filter") return row.decision === "drop";
   const reason = typeof row.reason === "string" ? row.reason : "";
   if (reason.includes("error")) return true;
   if (row.stream === "clef_wake_shadow") {

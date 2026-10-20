@@ -30,9 +30,15 @@ import { explicitPropertyRuleActive, isJohn } from "./gate-context-safety.js";
 import type { GateEventContext } from "./gate-event-types.js";
 import { idInNotionIdSet } from "./notion-ids.js";
 import { enqueueGateLogRow } from "../gate-log-ring.js";
+import {
+  COS_LANE_PREFIX_NAMES,
+  GROKBOT_FLEET_COMMENTS_BOT_ID,
+  buildLanePrefixRe,
+  splitCsv,
+} from "./echo-filter-config.js";
 
 /** GrokBot Fleet Comments integration bot user (posts CoS's replies). Always treated as self. */
-export const GROKBOT_FLEET_COMMENTS_BOT_ID = "3d87d7f5-6298-8165-8af9-0027a153ccbd";
+export { GROKBOT_FLEET_COMMENTS_BOT_ID };
 
 export const COS_PREFILTER_STREAM = "cos_prefilter" as const;
 
@@ -60,8 +66,8 @@ const ACK_PHRASES = new Set([
   "great thanks", "perfect thanks", "cool thanks", "nice thanks", "got it thanks", "noted thanks",
 ]);
 
-/** CoS's own lane prefixes (only checked on bot-authored comments). Case-insensitive. */
-const DEFAULT_LANE_PREFIXES = ["CoS", "Chief of Staff"];
+/** CoS's own lane prefixes (only checked on bot-authored comments). Case-insensitive. Lives in echo-filter-config. */
+const DEFAULT_LANE_PREFIXES = COS_LANE_PREFIX_NAMES;
 
 /** Positive / acknowledging emoji. Emoji-only comments drop only when every emoji is in this set. */
 const ACK_EMOJI = new Set([
@@ -69,18 +75,9 @@ const ACK_EMOJI = new Set([
   "😊", "🙂", "😀", "😃", "😄", "😁", "🤝", "✨", "🚀", "🔥", "💪", "⭐", "🌟", "😍", "🥰", "🫡", "🆗", "👋",
 ]);
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 export function lanePrefixRe(env: Pick<Env, "COS_PREFILTER_LANE_PREFIXES">): RegExp {
-  const extra = (env.COS_PREFILTER_LANE_PREFIXES ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const alts = [...DEFAULT_LANE_PREFIXES, ...extra].map(escapeRe).join("|");
-  // "CoS:" / "CoS —" / "[CoS]" / "**CoS:**" at the very start.
-  return new RegExp(`^[\\s*_]*(?:\\[(?:${alts})\\]|(?:${alts})[\\s*_]*(?::|—|–|-\\s))`, "i");
+  // "CoS:" / "CoS —" / "[CoS]" / "**CoS:**" at the very start (shared matcher, case-insensitive here).
+  return buildLanePrefixRe([...DEFAULT_LANE_PREFIXES, ...splitCsv(env.COS_PREFILTER_LANE_PREFIXES)], "i");
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
