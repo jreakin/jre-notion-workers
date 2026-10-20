@@ -14,8 +14,9 @@
  *                GET /v1/comments/{id} (~3 s, fail open: no text ⇒ pass). Short tags ("CoS:", "AS:") never
  *                drop a human author.
  *  untracked_property_edit  page.properties_updated whose parent (data.parent id / data_source_id /
- *                database_id, dashless) is not tracked, or whose parent is a page. Checked FIRST; the
- *                Submitted check only labels passes on Fleet: Artifacts. Allowlist empty ⇒ fail open.
+ *                database_id, dashless) is not tracked, or whose parent is a page. Edits touching
+ *                SUBMITTED_PROPERTY_IDS / NEEDS_JOHN_PROPERTY_IDS pass FIRST, whatever the parent (Day Logs);
+ *                the submitted_changed label applies on Fleet: Artifacts. Allowlist empty ⇒ fail open.
  *
  * John-authored comments otherwise pass (incl. @mentions — the only mention keep). John-authored
  * comment.deleted is kept (conservative). page.created and everything else pass.
@@ -55,6 +56,8 @@ export type EchoFilterPassReason =
   | "parent_unknown"
   | "tracked_parent"
   | "submitted_changed"
+  | "must_wake_property"
+  | "property_ids_unknown"
   | "not_filtered_type"
   | `error:${string}`;
 
@@ -156,6 +159,12 @@ function submittedTouched(ctx: GateEventContext, cfg: EchoFilterConfig): boolean
   return ctx.updatedPropertyIds.some((id) => cfg.submittedPropertyIds.has(decodePropertyId(id)));
 }
 
+/** NEEDS_JOHN_PROPERTY_IDS touched, or the payload says Needs John is set. */
+function needsJohnTouched(ctx: GateEventContext, cfg: EchoFilterConfig): boolean {
+  if (ctx.properties?.needsJohn === true) return true;
+  return ctx.updatedPropertyIds.some((id) => cfg.needsJohnPropertyIds.has(decodePropertyId(id)));
+}
+
 /**
  * @param commentText text fetched for this comment (null = fetch failed / unavailable ⇒ fail open);
  *   undefined = not fetched, use the payload text.
@@ -193,11 +202,25 @@ export function decideEchoFilter(
     if (isIn(PROPERTY_ONLY_EVENT_TYPES, type)) {
       if (cfg.trackedParentIds.size === 0) return { decision: "pass", reason: "allowlist_unset" };
       const parent = readParent(parsed, ctx);
+      const tracked = parent.ids.filter((id) => cfg.trackedParentIds.has(normalizeNotionUuid(id)));
+      const artifacts = normalizeNotionUuid(FLEET_ARTIFACTS_DATA_SOURCE_ID);
+      const submitted = submittedTouched(ctx, cfg);
+      // (c) label: Submitted on a tracked Fleet: Artifacts parent.
+      if (submitted && tracked.some((id) => normalizeNotionUuid(id) === artifacts)) {
+        return { decision: "pass", reason: "submitted_changed" };
+      }
+      // (a) Submitted / Needs John edits pass whatever the parent (Day Logs are untracked on purpose).
+      if (submitted || needsJohnTouched(ctx, cfg)) return { decision: "pass", reason: "must_wake_property" };
+      // No updated property ids in the payload: the exemption can't be checked. Fail toward waking only
+      // when Needs John ids are configured (otherwise a Needs John edit is undetectable anyway).
+      if (ctx.updatedPropertyIds.length === 0 && cfg.needsJohnPropertyIds.size > 0) {
+        return { decision: "pass", reason: "property_ids_unknown" };
+      }
+      // (b) untracked or page parent ⇒ drop.
       if (parent.ids.length === 0) {
         if (parent.isPage) return { decision: "drop", reason: "untracked_property_edit", rule: "page_parent" };
         return { decision: "pass", reason: "parent_unknown" };
       }
-      const tracked = parent.ids.filter((id) => cfg.trackedParentIds.has(normalizeNotionUuid(id)));
       if (tracked.length === 0) {
         return {
           decision: "drop",
@@ -205,10 +228,6 @@ export function decideEchoFilter(
           rule: "untracked_parent",
           parentDataSourceId: parent.dataSourceId,
         };
-      }
-      const artifacts = normalizeNotionUuid(FLEET_ARTIFACTS_DATA_SOURCE_ID);
-      if (tracked.some((id) => normalizeNotionUuid(id) === artifacts) && submittedTouched(ctx, cfg)) {
-        return { decision: "pass", reason: "submitted_changed" };
       }
       return { decision: "pass", reason: "tracked_parent" };
     }

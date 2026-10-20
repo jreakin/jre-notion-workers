@@ -86,6 +86,8 @@ export type EchoFilterConfig = {
   trackedParentIds: Set<string>;
   /** Normalized Submitted property ids (SUBMITTED_PROPERTY_IDS, URL-decoded). */
   submittedPropertyIds: Set<string>;
+  /** Normalized Needs John property ids (NEEDS_JOHN_PROPERTY_IDS, URL-decoded). */
+  needsJohnPropertyIds: Set<string>;
 };
 
 function escapeRe(s: string): string {
@@ -131,9 +133,12 @@ export function buildLock39Re(lanes: readonly string[]): RegExp {
   return new RegExp(`^(?:${alts}) Agent for (?:John Eakin|Shadow Seeker)\\s*[—–:-]`, "i");
 }
 
-/** Strip leading whitespace and `**` before the LOCK-39 match. */
+/**
+ * Strip `**` anywhere (so "**X Agent for John Eakin** —" and "**X Agent for John Eakin —**" match) and
+ * leading whitespace before the start-anchored LOCK-39 match.
+ */
 export function stripLeadForPrefix(text: string): string {
-  return text.replace(/^(?:\s|\*\*)+/, "");
+  return text.replace(/\*\*/g, "").replace(/^\s+/, "");
 }
 
 export function echoFilterConfigFromEnv(env: Partial<Env>): EchoFilterConfig {
@@ -165,5 +170,6 @@ export function echoFilterConfigFromEnv(env: Partial<Env>): EchoFilterConfig {
     lock39Re: buildLock39Re(laneOverride.length > 0 ? laneOverride : DEFAULT_LOCK39_LANE_NAMES),
     trackedParentIds,
     submittedPropertyIds: new Set(splitCsv(env.SUBMITTED_PROPERTY_IDS).map(decodePropertyId)),
+    needsJohnPropertyIds: new Set(splitCsv(env.NEEDS_JOHN_PROPERTY_IDS).map(decodePropertyId)),
   };
 }

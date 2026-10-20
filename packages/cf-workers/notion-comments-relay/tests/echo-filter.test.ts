@@ -154,6 +154,8 @@ describe("agent_prefix (LOCK-39 full form beats the John keep)", () => {
     "   dr eggbot agent for shadow seeker - review attached",
     "Bot Computer Harness Agent for John Eakin – PR #63 opened",
     "QUORUM REPORT PM AGENT FOR JOHN EAKIN —",
+    "**Chief of Staff Agent for John Eakin** — closing bold before the dash",
+    "**Chief of Staff Agent for John Eakin —** bold wraps the dash",
   ])("John-authored %p → agent_prefix", (text) => {
     expect(decide(comment([{ id: JOHN, type: "person" }]), baseEnv, text)).toEqual({
       decision: "drop",
@@ -240,8 +242,32 @@ describe("untracked_property_edit (TRACKED_DATA_SOURCE_IDS)", () => {
     );
   });
 
-  test("order: untracked drop wins over a Submitted edit", () => {
-    expect(decide(propsUpdated({ type: "data_source", id: UNTRACKED_DS }, { updated: [";Xo<"] }), tracked).decision).toBe("drop");
+  test("order (a): Submitted edit on an untracked parent passes (must_wake_property)", () => {
+    expect(decide(propsUpdated({ type: "data_source", id: UNTRACKED_DS }, { updated: [";Xo<"] }), tracked)).toEqual({
+      decision: "pass",
+      reason: "must_wake_property",
+    });
+  });
+
+  test("order (a): Needs John edit on an untracked or page parent passes (Day Logs)", () => {
+    const env = { ...tracked, NEEDS_JOHN_PROPERTY_IDS: "NJ%3A1" };
+    expect(decide(propsUpdated({ type: "data_source", id: UNTRACKED_DS }, { updated: ["NJ:1"] }), env).reason).toBe(
+      "must_wake_property",
+    );
+    expect(decide(propsUpdated({ type: "page_id", page_id: "p-1" }, { updated: ["NJ:1"] }), env).reason).toBe(
+      "must_wake_property",
+    );
+    // A non-Needs-John edit on the same untracked parent still drops (b).
+    expect(decide(propsUpdated({ type: "data_source", id: UNTRACKED_DS }, { updated: ["other"] }), env).decision).toBe("drop");
+  });
+
+  test("no updated property ids: pass only when NEEDS_JOHN_PROPERTY_IDS is configured", () => {
+    const parent = { type: "data_source", id: UNTRACKED_DS };
+    expect(decide(propsUpdated(parent, { updated: [] }), { ...tracked, NEEDS_JOHN_PROPERTY_IDS: "NJ1" })).toEqual({
+      decision: "pass",
+      reason: "property_ids_unknown",
+    });
+    expect(decide(propsUpdated(parent, { updated: [] }), tracked).decision).toBe("drop");
   });
 
   test("Submitted edit on Fleet: Artifacts → pass submitted_changed (URL-encoded id too)", () => {
@@ -553,6 +579,30 @@ describe("PROOF: echo_filter drops land as rule_skip in gate_log", () => {
   test("NEGATIVE 2: Submitted-property edit (Fleet: Artifacts) still reaches the gate", async () => {
     const p = propsUpdated({ type: "data_source", id: FLEET_ARTIFACTS_DATA_SOURCE_ID }, { updated: [";Xo<"] });
     await expectReachesGate(p, "submitted_changed");
+  });
+
+  test("NEGATIVE 3: Needs John edit on an untracked parent (Day Logs stand-in) still reaches the gate", async () => {
+    const store = new Map([[TOKEN_KEY, "secret_test_token"]]);
+    const env = makeEnv(store, { NEEDS_JOHN_PROPERTY_IDS: "NJ1" });
+    const res = await post(env, propsUpdated({ type: "data_source", id: UNTRACKED_DS }, { updated: ["NJ1"] }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(store.get(COALESCE_BUF_KEY) ?? "[]")).toHaveLength(1);
+    const rows = await gateLogRows(env, store);
+    expect(echoRuleSkips(rows)).toHaveLength(0);
+    const pass = rows.find((r) => r.stream === "echo_filter");
+    expect(pass).toMatchObject({ decision: "pass", reason: "must_wake_property" });
+    origLog(`[proof] reaches gate: ${JSON.stringify(pass)}`);
+  });
+
+  test("PROOF 2b: LOCK-39 prefix with closing ** before the dash (John) → rule_skip agent_prefix in gate_log", async () => {
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      if (String(url).startsWith("https://api.notion.com/v1/comments/")) {
+        return Response.json({ object: "comment", rich_text: [{ plain_text: "**Chief of Staff Agent for John Eakin** — done" }] });
+      }
+      return new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+    const c = comment([{ id: JOHN, type: "person" }]);
+    await expectDropProof(c, { reason: "rule_skip:agent_prefix", rule: "lock39_full_prefix", comment_id: (c.entity as { id: string }).id });
   });
 
   test("fail open: comment body fetch error on a John comment → reaches the gate", async () => {
