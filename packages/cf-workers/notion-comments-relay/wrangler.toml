@@ -24,8 +24,9 @@ CLEF_DAILY_CALL_CAP = "2000"
 WAKE_GATE_KV_RING = "1"
 CLEF_RING = "1"
 GATE_LOG_DAILY_WRITE_CAP = "60"
-# Echo filter (LOCK-69): TRACKED_PARENT_IDS unset ⇒ untracked-property rule fails open. Set to a
-# comma-separated list of tracked database / data source ids to enable it (Fleet Locks + AD Docs auto-added).
+# Echo filter (LOCK-69): tracked data sources for the untracked-property rule (Notion Steward's list):
+# Fleet Locks, AD Docs, Fleet: Artifacts, The Enterprise: Artifacts. Unset/empty ⇒ rule fails open.
+TRACKED_DATA_SOURCE_IDS = "6e0a45b3-eb3f-448f-b215-49e002bfeff3,2e97d7f5-6298-804c-b8a5-000b18b72684,fb951b3e-3033-41b8-9214-a66619e1776a,74fc2205-005a-43b7-b563-0cb658d906d3"
 
 # Durable gate_log buffer (SQLite-backed DO, Workers Free compatible). See README "Gate log KV ring".
 [[durable_objects.bindings]]
