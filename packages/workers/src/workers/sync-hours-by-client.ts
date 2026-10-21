@@ -356,7 +356,7 @@ function buildPageMarkdown(snapshotDate: string, lookbackDays: number, totalHour
     lines.push("");
     lines.push(`### ⚠️ Unlinked (no client) — ${unlinkedHours.toFixed(1)}h across ${unlinkedCount} entries`);
     lines.push("");
-    lines.push("- These Time Log entries have no Client relation. Link them in the Time Log DB or ensure GitHub Items inherit Client from their parent Repo (sync\\-time\\-log inherit\\_relations: true).");
+    lines.push("- These Time Log entries have no Client relation. Link them in the Time Log DB or set Client from the linked Task or Project.");
   }
   return lines.join("\n");
 }
