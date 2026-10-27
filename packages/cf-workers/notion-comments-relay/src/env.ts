@@ -67,6 +67,19 @@ export interface Env {
   COS_PREFILTER_LIVE?: string;
   /** Extra comma-separated lane prefixes treated as agent self-echo ("CoS:", "[BCH]"...); added to built-ins. */
   COS_PREFILTER_LANE_PREFIXES?: string;
+  /**
+   * Deterministic echo + untracked-property filter (LOCK-69). LIVE by default; `off` = pass everything
+   * (verdicts still logged with reason filter_disabled).
+   */
+  ECHO_FILTER?: string;
+  /** Extra comma-separated agent lane names for the echo filter's agent_prefix rule (added to built-ins). */
+  ECHO_FILTER_LANE_PREFIXES?: string;
+  /**
+   * Comma-separated tracked parent database / data source ids. page.properties_updated on any other
+   * parent is dropped (untracked_property_edit). Unset / empty ⇒ fail open (no property drops). When set,
+   * Fleet Locks and AD Docs ids are always added.
+   */
+  TRACKED_PARENT_IDS?: string;
   /** Set to `1` to persist page dedupe keys in KV (default off; each put counts toward RELAY_KV quota). */
   WAKE_GATE_DEDUPE?: string;
   /** Notion database id for AD Docs (2022-06-28 page parent); non-secret. Pair with data source id in gate logic. */

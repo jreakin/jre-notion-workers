@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Env } from "../src/env.js";
+import { resetSoftDailyCountersForTests } from "../src/soft-daily-counter.js";
 import {
   AS_WAKE_TIMEOUT_MS,
   AUTOMATION_SECRET_HEADER,
@@ -14,6 +15,10 @@ import {
 
 const SECRET = "automation-secret-value";
 const realFetch = globalThis.fetch;
+// The KV write meter counter is module-level; reset it so other files cannot shift its persist write into these tests.
+beforeEach(() => {
+  resetSoftDailyCountersForTests();
+});
 afterEach(() => {
   globalThis.fetch = realFetch;
 });

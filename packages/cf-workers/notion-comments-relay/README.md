@@ -361,6 +361,30 @@ carry the same `event_key`. `gradeRelayWindow(rows).prefilter` joins the two:
 
 Go live only after a clean window: `wrangler.toml` `COS_PREFILTER_LIVE = "1"` (John's call).
 
+### Deterministic echo + untracked-property filter (LOCK-69, live)
+
+`src/wake-gate/echo-filter.ts` (pure decision) + `src/wake-gate/echo-filter-config.ts` (prefix list, allowlist). Runs on the
+forward path right after the Gate Log drop and **before** the CoS pre-filter, the shadow wake gates (incl. Clef) and
+coalesce/forward. No AI. A drop returns `200` (Notion doesn't retry) and wakes nobody.
+
+| reason | drops |
+|---|---|
+| `own_echo` | `comment.*` whose authors are all own-fleet: webhook author `type: "bot"` (any integration, incl. this relay's) or an id in `FLEET_COMMENTS_BOT_NOTION_USER_IDS` / the GrokBot Fleet Comments bot. Enforces the shadow rule `notion_comments_echo_drop` / `fleet_comments_bot_echo` (rows carry `legacy_gate` / `legacy_reason`). |
+| `agent_prefix` | `comment.*` whose text starts with an agent lane prefix: `AGENT_LANE_PREFIX_NAMES` (CoS, Chief of Staff, BCH, AS, Abstract Secretary, Steward, Notion Steward, EC) as `Name:`, `Name —`, `Name →`, `[Name]`, `**Name:**`. Case-sensitive. Extend with `ECHO_FILTER_LANE_PREFIXES`. |
+| `untracked_property_edit` | `page.properties_updated` whose parent database / data source is not in `TRACKED_PARENT_IDS` (+ Fleet Locks + AD Docs, always added). |
+
+Never dropped: John-authored comments (checked first, so John @mentioning an agent always passes), mixed bot+human
+authors, `page.created`, comments on any page, property edits touching `SUBMITTED_PROPERTY_IDS` /
+`NEEDS_JOHN_PROPERTY_IDS` or with Needs John set. **Fail open:** `TRACKED_PARENT_IDS` unset/empty ⇒ no property drops
+(`allowlist_unset`); unknown parent ⇒ pass; `JOHN_NOTION_USER_IDS` unset ⇒ no `agent_prefix` drops; any error ⇒ pass.
+Kill switch: `ECHO_FILTER=off`.
+
+Every verdict, drop **and** pass, is one JSON line + one gate_log row on stream `echo_filter` (rides `WAKE_GATE_KV_RING`):
+`{stream, ts, gate, event, event_key, decision: drop|pass, reason, mode, dropped}`; `parent_id` only on
+`untracked_property_edit`. Pass reasons: `john_authored`, `comment_passed`, `author_unknown`, `john_ids_unset`,
+`allowlist_unset`, `must_wake_property`, `parent_unknown`, `tracked_parent`, `not_filtered_type`, `filter_disabled`.
+Never logs comment text, titles, page ids or author ids. Drops do not write `forward_history` (KV budget).
+
 ### Deploy vars (`wrangler.toml` `[vars]`)
 
 Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these). Secrets stay in Wrangler secrets / dashboard.
@@ -378,6 +402,9 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `JOHN_NOTION_USER_IDS`, `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | recommended | Clef shadow overrides `john_ids_unset` / `bot_ids_unset` (wake, no model) |
 | `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP` | Clef shadow | Clef mode/cap from defaults |
 | `CLEF_RING` | optional | Default off; `1` enables `clef_shadow_log` KV ring |
+| `TRACKED_PARENT_IDS` | optional | Echo filter property rule fails open (no `untracked_property_edit` drops) |
+| `ECHO_FILTER_LANE_PREFIXES` | optional | Built-in agent lane prefixes only |
+| `ECHO_FILTER` | optional | Live; `off` disables the echo filter (verdicts still logged) |
 
 KV: `wake_gate_adopted_at:<pageId>` (**90-day** TTL) for adopted-change dedupe after a shadow `adopted_change` wake.
 

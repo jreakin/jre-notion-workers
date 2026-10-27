@@ -2,6 +2,7 @@ import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
 import { clefDailyCapKey } from "../src/wake-gate/clef-daily-cap.js";
 import { runClefShadowWakeGate, resetClefPageEventCountsForTests } from "../src/wake-gate/clef-wake-gate.js";
 import type { Env } from "../src/env.js";
+import { resetSoftDailyCountersForTests } from "../src/soft-daily-counter.js";
 import type { GateEventContext, WakeGateDecision } from "../src/wake-gate/gate-event-types.js";
 
 const JOHN = "2e7d872b-594c-8161-92a2-00024b29e816";
@@ -47,6 +48,8 @@ describe("runClefShadowWakeGate flow", () => {
       logs.push(String(line));
     }) as typeof console.log;
     resetClefPageEventCountsForTests();
+    // The Clef daily counter is module-level; another file can leave it at the cap (order-dependent in CI).
+    resetSoftDailyCountersForTests();
   });
 
   afterEach(() => {
