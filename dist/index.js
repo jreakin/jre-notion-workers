@@ -13,7 +13,6 @@ import { executeCalculateCreditForecast } from "./workers/calculate-credit-forec
 import { executeLintAgentsFile } from "./workers/lint-agents-file.js";
 import { executeReadRepoFile } from "./workers/read-repo-file.js";
 import { executeCheckUrlStatus } from "./workers/check-url-status.js";
-import { executeSyncGitHubItems } from "./workers/sync-github-items.js";
 import { executeCheckAgentStaleness } from "./workers/check-agent-staleness.js";
 import { executeValidateDigestQuality } from "./workers/validate-digest-quality.js";
 import { executeArchiveOldDigests } from "./workers/archive-old-digests.js";
@@ -23,12 +22,10 @@ import { executeValidateProjectCompleteness } from "./workers/validate-project-c
 import { executeResolveStaleDeadLetters } from "./workers/resolve-stale-dead-letters.js";
 import { executeValidateDatabaseReferences } from "./workers/validate-database-references.js";
 import { executeEstimateGitHubHours } from "./workers/estimate-github-hours.js";
-import { executeSyncTimeLog } from "./workers/sync-time-log.js";
 import { executeSyncCrmAccounts, } from "./workers/sync-crm-accounts.js";
 import { executeSyncHoursByClient } from "./workers/sync-hours-by-client.js";
 import { executeLabelGitHubPrs } from "./workers/label-github-prs.js";
 import { executeSyncZohoProjects, } from "./workers/sync-zoho-projects.js";
-import { githubItemsSchema, executeSyncGitHubRepos, } from "./workers/sync-github-repos.js";
 import { executeScheduler, workerRunsSchema, } from "./workers/scheduler.js";
 // Plan tools (create-plan, read-plan-feedback, reply-to-plan-comment,
 // update-plan-block, confirm-implementation) migrated to abstract-data serve
@@ -202,38 +199,6 @@ worker.tool("check-url-status", {
     }),
     execute: (input) => executeCheckUrlStatus(input),
 });
-// ── sync-github-items ─────────────────────────────────────────────
-worker.tool("sync-github-items", {
-    title: "Sync GitHub Items",
-    description: "Syncs GitHub repos, issues, and PRs from configured sources (orgs/users) into the Notion GitHub Items database. Creates new rows for items not yet tracked, updates existing rows when GitHub data is newer. Uses GitHub URL as the unique idempotent key. Optional update_github_pr_titles: PATCHes each PR on GitHub so the title reflects linked Notion Project, Client, and Task names (in that order).",
-    schema: j.object({
-        sources: j
-            .array(j.object({
-            name: j.string(),
-            type: j.enum("org", "user"),
-            token_env: j.string().nullable(),
-        }))
-            .nullable(),
-        org_name: j.string().nullable(),
-        include_forks: j.boolean().nullable(),
-        include_archived: j.boolean().nullable(),
-        include_issues: j.boolean().nullable(),
-        include_prs: j.boolean().nullable(),
-        dry_run: j.boolean().nullable(),
-        updated_since_days: j.number().nullable(),
-        max_writes_per_run: j.number().nullable(),
-        open_only: j.boolean().nullable(),
-        max_repos_per_run: j.number().nullable(),
-        max_items_per_run: j.number().nullable(),
-        max_seconds: j.number().nullable(),
-        resume_cursor: j.object({
-            repo_index: j.number(),
-            phase: j.enum("issues", "prs"),
-        }).nullable(),
-        update_github_pr_titles: j.boolean().nullable(),
-    }),
-    execute: (input, context) => executeSyncGitHubItems(input, getNotionClient()),
-});
 // ── check-agent-staleness ──────────────────────────────────────────
 worker.tool("check-agent-staleness", {
     title: "Check Agent Staleness",
@@ -347,20 +312,6 @@ worker.tool("estimate-github-hours", {
     }),
     execute: (input) => executeEstimateGitHubHours(input),
 });
-// ── sync-time-log ──────────────────────────────────────────────────────
-worker.tool("sync-time-log", {
-    title: "Sync Time Log",
-    description: "Scans GitHub Items for recent PRs/issues and auto-creates Time Log entries with hour estimates. Uses estimate-github-hours logic internally. Deduplicates against existing entries. Respects [EST*] prefix conventions. Pass inherit_relations: true to also backfill Client, Project, and Task relations on existing Time Log entries from their linked GitHub Items — this replaces Database Agent automations that do the same linking.",
-    schema: j.object({
-        lookback_days: j.number().nullable(),
-        repo_filter: j.array(j.string()).nullable(),
-        item_types: j.array(j.enum("Issue", "PR")).nullable(),
-        dry_run: j.boolean().nullable(),
-        inherit_relations: j.boolean().nullable(),
-        full_scan: j.boolean().nullable(),
-    }),
-    execute: (input, context) => executeSyncTimeLog(input, getNotionClient()),
-});
 // ── sync-hours-by-client ────────────────────────────────────────────
 worker.tool("sync-hours-by-client", {
     title: "Sync Hours by Client",
@@ -444,22 +395,6 @@ worker.webhook("plan-events", {
 // Syncs manage their own databases. They run on a schedule and
 // Notion handles row matching, pagination state, and stale cleanup.
 // ══════════════════════════════════════════════════════════════════
-// ── sync-github-repos ─────────────────────────────────────────────
-// Parallel deployment alongside sync-github-items (tool). Creates a
-// separate "GitHub Items (Sync)" database to validate the sync pattern
-// before migrating the primary GitHub Items DB.
-const githubItemsDb = worker.database("github-items-db", {
-    type: "managed",
-    initialTitle: githubItemsSchema.defaultName,
-    primaryKeyProperty: "GitHub URL",
-    schema: { properties: githubItemsSchema.properties },
-});
-worker.sync("github-items-sync", {
-    database: githubItemsDb,
-    mode: "incremental",
-    schedule: "30m",
-    execute: executeSyncGitHubRepos,
-});
 // ── scheduler ──────────────────────────────────────────────────────
 // Wraps the 9 net-new tool capabilities (autofills + audits + briefing)
 // in a single Worker.sync() with built-in 5-minute scheduling. Each tick

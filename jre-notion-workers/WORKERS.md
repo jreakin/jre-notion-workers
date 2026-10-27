@@ -53,7 +53,6 @@ This project uses the **tool-based** API: `Worker` + `.tool()` in `src/index.ts`
 | `lint-agents-file`          | Fetches AGENTS.md from a GitHub repo and validates against CI Linter Spec |
 | `read-repo-file`            | Fetches raw text content of any file from a GitHub repository |
 | `check-url-status`          | Checks upstream URL reachability and optionally validates expected content |
-| `sync-github-items`           | Syncs GitHub repos, issues, and PRs from configured sources into Notion GitHub Items database |
 | `check-agent-staleness`     | Checks each agent's last digest against cadence-based staleness thresholds |
 | `validate-digest-quality`   | Inspects a digest page for governance compliance (status lines, structure, task linking) |
 | `archive-old-digests`       | Enforces retention policy by setting Status to Archived on old digest pages |
@@ -75,7 +74,7 @@ Types live in `src/shared/types.ts`. Each worker has an `*Input` and `*Output` t
 
 ## Authentication pattern
 
-Secrets come from `process.env`: `NTN_API_TOKEN` (not `NOTION_TOKEN` — that's a reserved prefix in the Workers SDK), `DOCS_DATABASE_ID`, `HOME_DOCS_DATABASE_ID`, `TASKS_DATABASE_ID`, `DEAD_LETTERS_DATABASE_ID`, `GITHUB_ITEMS_DATABASE_ID`, `GITHUB_TOKEN`, `AI_MEETINGS_DATABASE_ID`, `CLIENTS_DATABASE_ID`, `CONTACTS_DATABASE_ID`, `PROJECTS_DATABASE_ID`, `FOLLOW_UP_TRACKER_DATABASE_ID`, `DECISION_LOG_DATABASE_ID`, `LABEL_REGISTRY_DATABASE_ID`, `SYSTEM_CONTROL_PLANE_PAGE_ID`. Use `src/shared/notion-client.ts` (`getNotionClient()`, `getDocsDatabaseId()`, etc.) — never hardcode.
+Secrets come from `process.env`: `NTN_API_TOKEN` (not `NOTION_TOKEN` — that's a reserved prefix in the Workers SDK), `DOCS_DATABASE_ID`, `HOME_DOCS_DATABASE_ID`, `TASKS_DATABASE_ID`, `DEAD_LETTERS_DATABASE_ID`, `GITHUB_TOKEN`, `AI_MEETINGS_DATABASE_ID`, `CLIENTS_DATABASE_ID`, `CONTACTS_DATABASE_ID`, `PROJECTS_DATABASE_ID`, `FOLLOW_UP_TRACKER_DATABASE_ID`, `DECISION_LOG_DATABASE_ID`, `LABEL_REGISTRY_DATABASE_ID`, `SYSTEM_CONTROL_PLANE_PAGE_ID`. Use `src/shared/notion-client.ts` (`getNotionClient()`, `getDocsDatabaseId()`, etc.) — never hardcode.
 
 Deployment secrets (use `ntn workers env` — `ntn workers secrets` is legacy):
 

@@ -241,7 +241,6 @@ type ReconcileGitHubItemsOutput =
 **Implementation notes:**
 - Use the GitHub REST API via `fetch()` (Node 22 has native fetch). Endpoint: `GET https://api.github.com/orgs/{org}/repos?per_page=100&type=all`. Paginate if needed.
 - Authenticate with `process.env.GITHUB_TOKEN` (add a helper `getGitHubToken()` to `notion-client.ts`).
-- Query the Notion GitHub Items database. You'll need a new env var: `GITHUB_ITEMS_DATABASE_ID`. Add `getGitHubItemsDatabaseId()` to `notion-client.ts`.
 - Filter Notion rows to `Type = "Repo"` (there are also Issue and PR rows).
 - Match on repo full name (e.g., `Abstract-Data/repo-name`) or URL.
 - For `dry_run=false`: mark orphan Notion rows with a `Reconciliation Status` property (if it exists) or add a note. Do NOT delete rows — only flag them.
@@ -427,8 +426,6 @@ type ArchiveOldDigestsOutput =
 ### `src/shared/notion-client.ts` — Add:
 
 ```typescript
-export function getGitHubItemsDatabaseId(): string {
-  const id = process.env.GITHUB_ITEMS_DATABASE_ID;
   if (!id) throw new Error("GITHUB_ITEMS_DATABASE_ID is not set");
   return id;
 }
@@ -517,5 +514,4 @@ Existing:
 - `DEAD_LETTERS_DATABASE_ID` — Dead Letters database
 
 New (add to `.env.local` and `.env.1p`):
-- `GITHUB_ITEMS_DATABASE_ID` — GitHub Items database
 - `GITHUB_TOKEN` — GitHub personal access token (read-only scope: `repo` or `public_repo`)

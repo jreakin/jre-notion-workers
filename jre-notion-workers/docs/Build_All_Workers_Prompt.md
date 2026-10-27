@@ -124,7 +124,6 @@ Available DB ID getters — use these, never hardcode IDs:
 - `getDeadLettersDatabaseId()` → `DEAD_LETTERS_DATABASE_ID`
 
 New getters to add for this batch (see Shared Module Updates section):
-- `getGitHubItemsDatabaseId()` → `GITHUB_ITEMS_DATABASE_ID`
 - `getFollowUpTrackerDatabaseId()` → `FOLLOW_UP_TRACKER_DATABASE_ID`
 - `getAiMeetingsDatabaseId()` → `AI_MEETINGS_DATABASE_ID`
 - `getClientsDatabaseId()` → `CLIENTS_DATABASE_ID`
@@ -685,8 +684,6 @@ export type ValidateProjectCompletenessOutput =
 ### `src/shared/notion-client.ts` — Add these getters:
 
 ```typescript
-export function getGitHubItemsDatabaseId(): string {
-  const id = process.env.GITHUB_ITEMS_DATABASE_ID;
   if (!id) throw new Error("GITHUB_ITEMS_DATABASE_ID is not set");
   return id;
 }
@@ -949,7 +946,6 @@ worker.tool("validate-project-completeness", {
 - `DEAD_LETTERS_DATABASE_ID` — Dead Letters database
 
 **New (add to `.env.local` and `.env.1p`):**
-- `GITHUB_ITEMS_DATABASE_ID` — GitHub Items database
 - `GITHUB_TOKEN` — GitHub personal access token (read-only scope: `public_repo`)
 - `FOLLOW_UP_TRACKER_DATABASE_ID` — Follow-Up Tracker database (create database first, then set this)
 - `AI_MEETINGS_DATABASE_ID` — AI Meeting Notes database (ID: `f1c3bddf-5f76-454d-b739-7451483099b4` based on known data source)

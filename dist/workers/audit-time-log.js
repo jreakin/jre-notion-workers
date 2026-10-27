@@ -238,7 +238,7 @@ export async function executeAuditTimeLog(input, notion) {
             }
         }
         const backfillNote = backfill
-            ? ` Relations filled — Client ${backfill.filled.client}, Project ${backfill.filled.project}, Task ${backfill.filled.task}, GitHub Item ${backfill.filled.githubItem}; still unlinked ${backfill.stillUnlinkedIds.length}${backfill.remaining > 0 ? `; ${backfill.remaining} deferred to next run` : ""}.`
+            ? ` Relations filled — Client ${backfill.filled.client}, Project ${backfill.filled.project}, Task ${backfill.filled.task}; still unlinked ${backfill.stillUnlinkedIds.length}${backfill.remaining > 0 ? `; ${backfill.remaining} deferred to next run` : ""}.`
             : "";
         const summary = `Missed logging: ${missedLogging.length}; Retainer overruns: ${overruns.length}; Unbilled: ${unbilledTasks.length}.${backfillNote}`;
         console.log("[audit-time-log]", summary);
