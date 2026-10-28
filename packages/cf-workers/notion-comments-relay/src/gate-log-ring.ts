@@ -61,7 +61,8 @@ export function readGateLogDailyWriteCap(env: Env): number {
 export function isHighSignal(row: GateLogRow): boolean {
   if (row.candidate_false_skip === true) return true;
   if (row.stream === "cos_prefilter") return row.decision === "would_drop";
-  if (row.stream === "echo_filter") return row.decision === "drop";
+  if (row.stream === "echo_filter") return false; // pass rows; drops are rule_skip rows below
+  if (row.source === "echo_filter" && row.decision === "rule_skip") return true;
   const reason = typeof row.reason === "string" ? row.reason : "";
   if (reason.includes("error")) return true;
   if (row.stream === "clef_wake_shadow") {

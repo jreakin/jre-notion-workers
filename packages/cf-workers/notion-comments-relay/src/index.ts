@@ -13,7 +13,7 @@ import {
 } from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 import { cosPrefilterLive, decideCosPrefilterAfterFetch, logCosPrefilter } from "./wake-gate/cos-prefilter.js";
-import { decideEchoFilter, logEchoFilter } from "./wake-gate/echo-filter.js";
+import { decideEchoFilter, logEchoFilter, resolveEchoCommentText } from "./wake-gate/echo-filter.js";
 import { echoFilterConfigFromEnv } from "./wake-gate/echo-filter-config.js";
 import { kvTtl } from "./kv-ttl.js";
 import { COALESCE_MAX_ATTEMPTS, coalesceBackingOff, coalesceRetryDelayMs } from "./coalesce-backoff.js";
@@ -669,15 +669,18 @@ export default {
             return new Response("ok", { status: 200 });
           }
           // Deterministic echo + untracked-property filter (LOCK-69, LIVE): before the CoS pre-filter,
-          // the shadow wake gates (Clef) and coalesce/forward. A drop is 200 and wakes nobody.
-          // No recordForward KV write on drops (KV budget); the verdict row goes to stdout + gate_log.
+          // the shadow wake gates (Clef) and coalesce/enqueue. A drop is 200, wakes nobody, and writes ONE
+          // deterministic rule_skip row to gate_log (no Workers AI, no clef:mode:* access).
+          // The LOCK-39 check may GET the comment body (~3 s, fail open). No recordForward KV write on drops.
           const echoCfg = echoFilterConfigFromEnv(env);
-          const echoVerdict = decideEchoFilter(parsed, gateCtx, echoCfg);
-          await logEchoFilter(env, gateCtx, echoVerdict, echoCfg);
+          const echoText = await resolveEchoCommentText(env, parsed, gateCtx, echoCfg);
+          const echoVerdict = decideEchoFilter(parsed, gateCtx, echoCfg, echoText.text);
+          await logEchoFilter(env, gateCtx, echoVerdict, echoCfg, echoText.outcome);
           if (echoVerdict.decision === "drop") {
-            // Shadow gates (which normally ship pending gate_log rows) don't run on a drop.
+            // Shadow gates (which normally ship pending gate_log rows) don't run on a drop: ship the
+            // rule_skip row now, before returning (fail-open; DO RPC has its own 2 s timeout).
             try {
-              ctx.waitUntil(flushGateLogRing(env));
+              await flushGateLogRing(env);
             } catch {
               // fail-open
             }

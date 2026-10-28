@@ -72,13 +72,18 @@ export interface Env {
    * (verdicts still logged with reason filter_disabled).
    */
   ECHO_FILTER?: string;
-  /** Extra comma-separated agent lane names for the echo filter's agent_prefix rule (added to built-ins). */
-  ECHO_FILTER_LANE_PREFIXES?: string;
   /**
-   * Comma-separated tracked parent database / data source ids. page.properties_updated on any other
-   * parent is dropped (untracked_property_edit). Unset / empty ⇒ fail open (no property drops). When set,
-   * Fleet Locks and AD Docs ids are always added.
+   * Comma-separated LOCK-39 lane names ("<Lane> Agent for John Eakin —"). Set ⇒ replaces the built-in
+   * list (DEFAULT_LOCK39_LANE_NAMES in echo-filter-config.ts).
    */
+  ECHO_FILTER_LANE_NAMES?: string;
+  /**
+   * Comma-separated tracked data source / database ids. page.properties_updated on any other parent (or
+   * on a page parent) is dropped (untracked_property_edit). Unset / empty ⇒ fail open (no property drops).
+   * When set, Fleet Locks and AD Docs ids are always added.
+   */
+  TRACKED_DATA_SOURCE_IDS?: string;
+  /** Deprecated alias of TRACKED_DATA_SOURCE_IDS (merged into it). */
   TRACKED_PARENT_IDS?: string;
   /** Set to `1` to persist page dedupe keys in KV (default off; each put counts toward RELAY_KV quota). */
   WAKE_GATE_DEDUPE?: string;
