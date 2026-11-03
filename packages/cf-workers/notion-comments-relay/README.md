@@ -263,6 +263,21 @@ Shadow rule gates (console + optional KV ring): comments echo, Fleet Locks adopt
 
 **Clef property fetch:** Clef hard overrides that need page fields (`needs_john`, `sensitive`, etc.) run only when webhook enrichment set `propertiesAvailable`. Otherwise shadow logs `properties_unavailable` (wake, no model call).
 
+**`page.properties_updated` on tracked parents (shadow only):** when the webhook parent is a configured tracked parent
+(Fleet Locks, AD Docs, tracked Fleet: Artifacts, `TRACKED_DATA_SOURCE_IDS` / `TRACKED_PARENT_IDS`) or the fetched page
+is Fleet Locks, the shadow gates parse Needs John / Sensitive / Kind from the page fetch exactly like `page.created`, so
+Clef is consulted instead of the blanket `properties_unavailable` override. The fetch is the shared
+`enrichContextFromNotionPage` call with the per-request memo, so a page the prefilter already fetched is not fetched
+again; the forward-path prefilter itself does not opt in, so it adds no fetch or latency. A failed fetch still forces a
+wake (`notion_fetch_failed` / `notion_fetch_timeout`), and an unreadable property shape forces `notion_page_unreadable`.
+Submitted / Needs John edits keep their overrides. Untracked edits are dropped earlier by the LOCK-69 echo filter and
+never fetch.
+
+**Clef state `parent_db` / `target_lane`:** `parent_db` is the config name of the parent (`Fleet: Locks`, `AD Docs`,
+`Fleet: Artifacts`, or `tracked` for other tracked ids, from the webhook parent or the fetched page parent), then the
+webhook's `parent_database_title` if any, else `unknown`. No event or page field names a receiving lane, so
+`target_lane` is always `unknown` (it no longer copies `author_lane`).
+
 **Clef KV write budget (confirm plan before deploy):** Live coalesce uses `RELAY_KV` for every accepted webhook. Shadow Clef adds at most **one KV write per Clef model attempt** via `clef:calls:` (daily cap). Optional `CLEF_RING=1` adds read-modify-write on `clef_shadow_log` (avoid on KV **free** tier — 1,000 writes/day). `wake_gate_adopted_at:` writes only after a shadow adopted-change wake. Per-page 60s event counts are **in-isolate memory** (not KV). John must confirm paid KV quota before enabling `CLEF_RING=1` in production.
 
 **Gate Log roll-up:** This Worker does not write Gate Log database rows. A separate future Worker job is expected to roll up shadow lines into the Gate Log data source.
