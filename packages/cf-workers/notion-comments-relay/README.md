@@ -472,6 +472,42 @@ Every row has `stream`:
 The ring is best effort: rows still in an isolate's buffer when it is evicted are lost from KV. Workers Logs (console) keeps the complete stream.
 
 
+## Offline Clef replay harness (local only)
+
+Measures what the Clef wake gate *would* do, offline. It never deploys, calls Cloudflare, Notion or Workers AI, and
+prints labels, counts and `opaque:` hashes only (any non-`opaque:` id prints as `[unmasked]`; titles/content are never read).
+
+**Mode A, real rows, no AI:** re-decides exported `clef_wake_shadow` rows with today's `decideClefOutcome` and two
+candidate rules, `variant1` (also skip when `p_action <= 0.05 && q_when = ignore`) and `variant2` (same at `<= 0.3`).
+
+```bash
+bun run replay -- --rows /path/outside/repo/masked-rows.jsonl
+```
+
+Output: a table per event type × reason bucket (rows, scored, logged skips, would-skip count and rate per variant; rate
+= would-skips / scored rows), a baseline-mismatch count (logged Clef decision vs today's rule), and a suspicious list:
+would-skips with `needs_john` / `sensitive` / `author_kind:"john"` annotations, a John or Needs John label in `reason`,
+or a `sampled_full` that said wake. Shadow rows carry no author or Needs John field, so those three flags only fire
+when the exporter adds them as booleans / `"john"` (joined by `event_key`); `page.created` by John is scored by Clef
+(the John override is comments-only).
+
+**Exporting rows (Steward/BCH, never committed):** list `gate_log:v1:<YYYY-MM-DD>:` in `RELAY_KV`, fetch each value,
+and write one JSON value per line. Whole KV values (`{"v":1,"rows":[…]}`) and single rows are both accepted; other
+streams are ignored. Rows already use opaque `item_id` / `event_key` hashes; keep it that way, do not add titles, and
+store the file outside the repo (`fixtures/` holds fake data only). Remember the UTC day boundary.
+
+**Mode B, masked fixtures, full path:** runs `fixtures/replay/*.json` (fake ids, `[masked]` titles) through the real
+Worker `fetch` with a stub `env.AI`, a fake Notion API and in-memory KV. The 20 s coalesce flush is pre-locked, so
+forwarded events are only counted as `buffered`; CoS is never called.
+
+```bash
+bun run replay -- --fixtures fixtures/replay
+bun test tests/replay/            # pins Mode A logic and each fixture's current behavior (also part of bun run test)
+```
+
+Fixture shape: `{name, description?, env?, ai?: {p_action, p_dup, q_when}, notion_pages?: {"<id>"|"*": page|"fail"},
+events: [payload | {"repeat": N, "event": payload-with-{i}}]}`.
+
 ## Troubleshooting
 
 ### `notion_fetch_failed` on `page.created` (Fleet Locks / AD Docs shadow gates)

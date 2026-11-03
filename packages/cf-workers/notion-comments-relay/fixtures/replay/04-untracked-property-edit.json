@@ -1,0 +1,68 @@
+{
+  "name": "04-untracked-property-edit",
+  "description": "properties_updated editing a property on an untracked parent (echo filter drops)",
+  "notion_pages": {
+    "*": {
+      "object": "page",
+      "id": "{i}",
+      "parent": {
+        "type": "data_source_id",
+        "data_source_id": "0dd00000-0000-4000-8000-000000000002"
+      },
+      "created_by": {
+        "object": "user",
+        "id": "33333333-3333-4333-8333-333333333333"
+      },
+      "last_edited_by": {
+        "object": "user",
+        "id": "33333333-3333-4333-8333-333333333333"
+      },
+      "properties": {
+        "Name": {
+          "id": "title",
+          "type": "title",
+          "title": [
+            {
+              "plain_text": "[masked]"
+            }
+          ]
+        },
+        "Needs John": {
+          "id": "fakeNJ",
+          "type": "checkbox",
+          "checkbox": false
+        },
+        "Sensitive": {
+          "id": "fakeSens",
+          "type": "checkbox",
+          "checkbox": false
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "id": "ev-fake-0401",
+      "type": "page.properties_updated",
+      "authors": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "type": "person"
+        }
+      ],
+      "entity": {
+        "id": "fa4e0000-0000-4000-8000-000000000401",
+        "type": "page"
+      },
+      "data": {
+        "parent": {
+          "type": "data_source_id",
+          "data_source_id": "0dd00000-0000-4000-8000-000000000002"
+        },
+        "updated_properties": [
+          "fakeOther"
+        ]
+      }
+    }
+  ]
+}

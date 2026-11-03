@@ -9,7 +9,8 @@
     "dev": "wrangler dev",
     "types": "wrangler types",
     "check": "tsc --noEmit",
-    "test": "bun test tests/"
+    "test": "bun test tests/",
+    "replay": "bun --preload ./tests/replay/cli-preload.ts tests/replay/score-replay.cli.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250910.0",

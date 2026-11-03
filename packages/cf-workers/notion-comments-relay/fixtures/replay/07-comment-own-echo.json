@@ -1,0 +1,30 @@
+{
+  "name": "07-comment-own-echo",
+  "description": "comment.created by the fleet comments bot (own_echo drop), echo scoring sampled at 100%",
+  "env": {
+    "CLEF_ECHO_SKIP_SAMPLE_PERCENT": "100"
+  },
+  "events": [
+    {
+      "id": "ev-fake-0701",
+      "type": "comment.created",
+      "authors": [
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "type": "bot"
+        }
+      ],
+      "entity": {
+        "id": "c0aa0000-0000-4000-8000-000000000701",
+        "type": "comment"
+      },
+      "data": {
+        "page_id": "fa4e0000-0000-4000-8000-000000000701",
+        "parent": {
+          "type": "page",
+          "id": "fa4e0000-0000-4000-8000-000000000701"
+        }
+      }
+    }
+  ]
+}

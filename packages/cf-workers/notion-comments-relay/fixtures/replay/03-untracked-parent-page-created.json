@@ -1,0 +1,65 @@
+{
+  "name": "03-untracked-parent-page-created",
+  "description": "page.created under an untracked parent",
+  "notion_pages": {
+    "*": {
+      "object": "page",
+      "id": "{i}",
+      "parent": {
+        "type": "data_source_id",
+        "data_source_id": "0dd00000-0000-4000-8000-000000000002"
+      },
+      "created_by": {
+        "object": "user",
+        "id": "33333333-3333-4333-8333-333333333333"
+      },
+      "last_edited_by": {
+        "object": "user",
+        "id": "33333333-3333-4333-8333-333333333333"
+      },
+      "properties": {
+        "Name": {
+          "id": "title",
+          "type": "title",
+          "title": [
+            {
+              "plain_text": "[masked]"
+            }
+          ]
+        },
+        "Needs John": {
+          "id": "fakeNJ",
+          "type": "checkbox",
+          "checkbox": false
+        },
+        "Sensitive": {
+          "id": "fakeSens",
+          "type": "checkbox",
+          "checkbox": false
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "id": "ev-fake-0301",
+      "type": "page.created",
+      "authors": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "type": "person"
+        }
+      ],
+      "entity": {
+        "id": "fa4e0000-0000-4000-8000-000000000301",
+        "type": "page"
+      },
+      "data": {
+        "parent": {
+          "type": "data_source_id",
+          "data_source_id": "0dd00000-0000-4000-8000-000000000002"
+        }
+      }
+    }
+  ]
+}

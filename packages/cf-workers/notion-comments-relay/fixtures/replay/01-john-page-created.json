@@ -1,0 +1,65 @@
+{
+  "name": "01-john-page-created",
+  "description": "page.created by John under a tracked parent (fake ids)",
+  "notion_pages": {
+    "*": {
+      "object": "page",
+      "id": "{i}",
+      "parent": {
+        "type": "data_source_id",
+        "data_source_id": "7aac0000-0000-4000-8000-000000000001"
+      },
+      "created_by": {
+        "object": "user",
+        "id": "11111111-1111-4111-8111-111111111111"
+      },
+      "last_edited_by": {
+        "object": "user",
+        "id": "11111111-1111-4111-8111-111111111111"
+      },
+      "properties": {
+        "Name": {
+          "id": "title",
+          "type": "title",
+          "title": [
+            {
+              "plain_text": "[masked]"
+            }
+          ]
+        },
+        "Needs John": {
+          "id": "fakeNJ",
+          "type": "checkbox",
+          "checkbox": false
+        },
+        "Sensitive": {
+          "id": "fakeSens",
+          "type": "checkbox",
+          "checkbox": false
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "id": "ev-fake-0101",
+      "type": "page.created",
+      "authors": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "type": "person"
+        }
+      ],
+      "entity": {
+        "id": "fa4e0000-0000-4000-8000-000000000101",
+        "type": "page"
+      },
+      "data": {
+        "parent": {
+          "type": "data_source_id",
+          "data_source_id": "7aac0000-0000-4000-8000-000000000001"
+        }
+      }
+    }
+  ]
+}
