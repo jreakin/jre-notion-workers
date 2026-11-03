@@ -27,6 +27,10 @@ export interface Env {
   CLEF_RULE_SKIP_SAMPLE_PERCENT?: string;
   /** Daily cap for false-skip checks of dedupe repeats (separate from rule-skip checks; default 100). */
   CLEF_DEDUPE_REPEAT_DAILY_CAP?: string;
+  /** Percent of LOCK-69 echo-filter drops sampled into shadow Clef scoring (default 5; 0 disables). */
+  CLEF_ECHO_SKIP_SAMPLE_PERCENT?: string;
+  /** Max shadow Clef calls/day for echo-filter drops (own counter; default 100; 0 disables). Also uses CLEF_DAILY_CALL_CAP. */
+  CLEF_ECHO_SKIP_DAILY_CAP?: string;
   /** Fallback Clef mode when KV unset: off | shadow only. */
   CLEF_DEFAULT_MODE?: string;
   /** Comma-separated Gate Log data source / database ids — drop before rule gates. */

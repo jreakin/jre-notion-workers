@@ -2,7 +2,9 @@
  * Deterministic (no-AI) echo + untracked-property filter (LOCK-69). LIVE: runs in the forward path
  * after the gate_log drop and BEFORE the CoS pre-filter, the shadow wake gates (incl. Clef) and the
  * coalesce/enqueue. A dropped event gets 200, wakes nobody, and writes ONE deterministic `rule_skip`
- * shadow row to gate_log (stream clef_wake_shadow, scored:false; no Workers AI call, no clef:mode:* read).
+ * shadow row to gate_log (stream clef_wake_shadow, scored:false; no Workers AI call, no clef:mode:* read on
+ * the request path). A sample of drops is scored shadow-only afterwards in waitUntil by
+ * clef-echo-skip-shadow.ts (reads clef:mode:*, own cap + clef-daily-cap); that never changes the drop.
  *
  * Rules (config in echo-filter-config.ts):
  *  own_echo      comment.* / page.moved whose authors are ALL fleet bots (explicit id list +

@@ -399,9 +399,20 @@ Fleet Locks and AD Docs are always added. Kill switch: `ECHO_FILTER=off`.
 `rule_skip` entry (stream `clef_wake_shadow`, rides `CLEF_RING`): `source:"echo_filter"`, `decision:"rule_skip"`,
 `reason:"rule_skip:<own_echo|agent_prefix|untracked_property_edit>"`, `rule`, `notion_type`, `parent_data_source_id`,
 `comment_id` or `page_id`, `scored:false`, `model:null`, `mode:"deterministic"`, opaque `item_id`; `own_echo` rows also carry
-`legacy_gate:"notion_comments_echo_drop"` / `legacy_reason:"fleet_comments_bot_echo"`. No Workers AI call, and `clef:mode:*`
-is never read or written. Rows are high-signal (they survive near-cap sampling). Passes write one `echo_filter` row
+`legacy_gate:"notion_comments_echo_drop"` / `legacy_reason:"fleet_comments_bot_echo"`. No Workers AI call and no
+`clef:mode:*` access on the request path. Rows are high-signal (they survive near-cap sampling). Passes write one `echo_filter` row
 (`decision:"pass"`, `reason`, optional `body_fetch` outcome; rides `WAKE_GATE_KV_RING`). Never logged: comment bodies, titles.
+
+**Shadow Clef scoring of drops (`clef-echo-skip-shadow.ts`).** After the drop's `200` is decided, `ctx.waitUntil` runs
+`runRuleSkipClefShadow` on a sample of drops so false drops can be measured. It never changes the drop or its latency.
+Sample: `CLEF_ECHO_SKIP_SAMPLE_PERCENT` (default `5`, deterministic per item + UTC hour). Budget: its own soft counter
+`clef:echo_skip_calls` capped by `CLEF_ECHO_SKIP_DAILY_CAP` (default `100`, so it cannot starve rule-skip checks), then the
+global `CLEF_DAILY_CALL_CAP`. Clef mode `off` ⇒ no call; `jre@mail.grokbot.com` ⇒ excluded. A sampled drop adds one more
+`clef_wake_shadow` row: `decision:"rule_skip"`, `source:"echo_filter"`, `echo_reason`, `scored:true` with Clef fields and
+`candidate_false_skip`, or `scored:false` with `reason` `echo_skip_daily_cap` / `rule_skip:clef_daily_cap` /
+`rule_skip:<flash failure>`. Unsampled drops add nothing. Note: `gradeRelayWindow` counts scored rule_skip rows, so a
+scored echo drop with `candidate_false_skip:true` counts toward `false_skips` (the echo filter is live, so that is a real
+missed wake if Clef is right).
 
 ### Deploy vars (`wrangler.toml` `[vars]`)
 
@@ -416,6 +427,8 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `NON_SUBMITTED_PROPERTY_IDS` | optional | Falls back to built-in Fleet Locks non-Submitted property id list |
 | `NEEDS_JOHN_PROPERTY_IDS` | optional | Needs John property ids. With `SUBMITTED_PROPERTY_IDS` also set, enables the properties_updated change rule below; unset ⇒ inert |
 | `CLEF_DEDUPE_REPEAT_DAILY_CAP` | optional | Daily cap for false-skip checks of dedupe repeats (default `100`), separate from `CLEF_RULE_SKIP_DAILY_CAP` |
+| `CLEF_ECHO_SKIP_SAMPLE_PERCENT` | optional | Percent of LOCK-69 echo-filter drops scored by Clef shadow-only (default `5`; `0` disables) |
+| `CLEF_ECHO_SKIP_DAILY_CAP` | optional | Daily cap for those calls (default `100`, counter `clef:echo_skip_calls`); also counts against `CLEF_DAILY_CALL_CAP` |
 | `CLEF_ITEM_DEDUPE_WINDOW_S` | optional | Pre-Clef dedupe window in seconds (default `600`; `0` disables). Comments key on comment id; page events dedupe only once both id sets are set |
 | `JOHN_NOTION_USER_IDS`, `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | recommended | Clef shadow overrides `john_ids_unset` / `bot_ids_unset` (wake, no model) |
 | `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP` | Clef shadow | Clef mode/cap from defaults |

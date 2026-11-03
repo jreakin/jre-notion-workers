@@ -66,6 +66,8 @@ export type ClefShadowLogEntry = {
   excluded?: boolean;
   /** rule_skip rows for dedupe repeats: unscored because the dedupe-repeat daily cap was exhausted. */
   cap_exhausted?: boolean;
+  /** Echo-filter skip rows (LOCK-69): the drop reason (own_echo / agent_prefix / untracked_property_edit). */
+  echo_reason?: string;
 };
 
 export type FleetLocksFieldSnapshot = {

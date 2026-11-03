@@ -97,6 +97,21 @@ export type RuleSkipShadowDeps = {
    * `scored` true/false, so the grader can fail the window on an unscored repeat.
    */
   scoreAll?: boolean;
+  /**
+   * Overrides the sampler + soft cap (echo-filter skips: their own percent and counter so they never
+   * starve rule-skip checks). `consumeGlobal` is called after the soft cap and before the model call
+   * (the clef-daily-cap budget); a failure logs an unscored row with `rule_skip:<reason>`.
+   * Unset = the rule-skip defaults above (behavior unchanged).
+   */
+  budget?: RuleSkipBudget;
+};
+
+export type RuleSkipBudget = {
+  samplePercent: number;
+  counterName: string;
+  dailyCap: number;
+  capReason: string;
+  consumeGlobal?: () => Promise<{ ok: true } | { ok: false; reason: string }>;
 };
 
 /**
@@ -134,22 +149,33 @@ export async function runRuleSkipClefShadow(
       }
       return; // bot's own inbox: never sent to Clef
     }
-    if (!deps.scoreAll && !ruleSkipSampled(itemId, readRuleSkipSamplePercent(env))) {
+    const budget = deps.budget;
+    const samplePercent = budget ? budget.samplePercent : readRuleSkipSamplePercent(env);
+    if (!deps.scoreAll && !ruleSkipSampled(itemId, samplePercent)) {
       return; // unsampled: no extra row keeps log + KV volume flat
     }
     const cap = await trySoftDailyConsume(
       env.RELAY_KV,
-      deps.scoreAll ? DEDUPE_REPEAT_COUNTER_NAME : RULE_SKIP_COUNTER_NAME,
-      deps.scoreAll ? readDedupeRepeatDailyCap(env) : readRuleSkipDailyCap(env),
+      budget ? budget.counterName : deps.scoreAll ? DEDUPE_REPEAT_COUNTER_NAME : RULE_SKIP_COUNTER_NAME,
+      budget ? budget.dailyCap : deps.scoreAll ? readDedupeRepeatDailyCap(env) : readRuleSkipDailyCap(env),
       RULE_SKIP_COUNTER_PERSIST_EVERY,
     );
     if (!cap.ok) {
       await deps.log(
-        deps.scoreAll
-          ? { ...row, scored: false, cap_exhausted: true, reason: "dedupe_repeat_daily_cap" }
-          : { ...row, scored: false, reason: "rule_skip_daily_cap" },
+        budget
+          ? { ...row, scored: false, reason: budget.capReason }
+          : deps.scoreAll
+            ? { ...row, scored: false, cap_exhausted: true, reason: "dedupe_repeat_daily_cap" }
+            : { ...row, scored: false, reason: "rule_skip_daily_cap" },
       );
       return;
+    }
+    if (budget?.consumeGlobal) {
+      const global = await budget.consumeGlobal();
+      if (!global.ok) {
+        await deps.log({ ...row, scored: false, reason: `rule_skip:${global.reason}` });
+        return;
+      }
     }
 
     const isEcho = Boolean(
