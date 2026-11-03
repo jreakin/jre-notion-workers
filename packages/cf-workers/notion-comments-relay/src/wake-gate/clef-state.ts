@@ -141,13 +141,15 @@ export function buildClefStateString(
   const props = ctx.properties ?? {};
   // Mask BEFORE truncation so clipping can never split (and leak half of) an email/phone.
   const mask = opts.maskText ?? ((t: string) => t);
+  // Config name of a tracked parent first (tracked-parent-names.ts), then a webhook-supplied title.
   const parentDb = truncateCodePoints(
-    ctx.parentDatabaseTitle ?? "unknown",
+    ctx.parentDbConfigName ?? ctx.parentDatabaseTitle ?? "unknown",
     CLEF_FIELD_SHORT_MAX_CHARS,
   );
   const kind = truncateCodePoints(props.kind ?? "", CLEF_FIELD_SHORT_MAX_CHARS);
   const authorLane = truncateCodePoints(props.authorLane ?? "", CLEF_FIELD_SHORT_MAX_CHARS);
-  const targetLane = truncateCodePoints(props.authorLane ?? "", CLEF_FIELD_SHORT_MAX_CHARS);
+  // No event or page field names the receiving lane today, so say so instead of echoing author_lane.
+  const targetLane = "unknown";
   const status = truncateCodePoints(
     ctx.fleetLocksFields?.statusName ?? "",
     CLEF_FIELD_SHORT_MAX_CHARS,

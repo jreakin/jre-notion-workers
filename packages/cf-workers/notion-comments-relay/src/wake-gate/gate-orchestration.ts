@@ -27,6 +27,7 @@ import type {
   NotionPageProperties,
   WakeGateDecision,
 } from "./gate-event-types.js";
+import { trackedParentName, trackedParentNameMap } from "./tracked-parent-names.js";
 import { kvTtl } from "../kv-ttl.js";
 import { enqueueGateLogRow } from "../gate-log-ring.js";
 
@@ -192,6 +193,7 @@ export function buildGateContext(
   const properties: NotionPageProperties = enriched ?? {};
 
   const webhookParent = readWebhookParent(data);
+  const rawParentId = asRecord(data?.parent)?.id;
   const webhookParentKnown = webhookParentIsFleetLocks(
     webhookParent,
     trimOptionalEnvId(env.FLEET_LOCKS_DATA_SOURCE_ID),
@@ -211,6 +213,14 @@ export function buildGateContext(
     propertiesAvailable,
     parentDatabaseTitle:
       typeof data?.parent_database_title === "string" ? data.parent_database_title : undefined,
+    parentDbConfigName: trackedParentName(
+      [
+        webhookParent.dataSourceId,
+        webhookParent.databaseId,
+        typeof rawParentId === "string" ? rawParentId : undefined,
+      ],
+      trackedParentNameMap(env),
+    ),
     webhookParentDataSourceId: webhookParent.dataSourceId,
     webhookParentDatabaseId: webhookParent.databaseId,
     needsJohnNow: properties.needsJohn === true,
@@ -329,6 +339,12 @@ export async function enrichContextFromNotionPage(
 
   const page = fetched.page;
   const parent = readPageParentIds(page);
+  if (!ctx.parentDbConfigName) {
+    ctx.parentDbConfigName = trackedParentName(
+      [parent.dataSourceId ?? undefined, parent.databaseId ?? undefined],
+      trackedParentNameMap(env),
+    );
+  }
   const fleetDs = ctx.fleetLocksDataSourceId;
   const fleetDb = ctx.fleetLocksDatabaseId;
   if (fleetDs || fleetDb) {
