@@ -505,6 +505,8 @@ bun run replay -- --fixtures fixtures/replay
 bun test tests/replay/            # pins Mode A logic and each fixture's current behavior (also part of bun run test)
 ```
 
+Grading plan (ground truth, joins, RunReceipt v2 proposal, coalescing caveat): [`docs/clef-scoring-plan.md`](docs/clef-scoring-plan.md).
+
 Fixture shape: `{name, description?, env?, ai?: {p_action, p_dup, q_when}, notion_pages?: {"<id>"|"*": page|"fail"},
 events: [payload | {"repeat": N, "event": payload-with-{i}}]}`.
 
