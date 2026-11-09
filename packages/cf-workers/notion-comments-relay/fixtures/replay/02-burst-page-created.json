@@ -1,0 +1,73 @@
+{
+  "name": "02-burst-page-created",
+  "description": "burst of 6 non-John page.created under one tracked parent; Clef stub says low action, ignore",
+  "ai": {
+    "p_action": 0.02,
+    "p_dup": 0.1,
+    "q_when": "ignore"
+  },
+  "notion_pages": {
+    "*": {
+      "object": "page",
+      "id": "{i}",
+      "parent": {
+        "type": "data_source_id",
+        "data_source_id": "7aac0000-0000-4000-8000-000000000001"
+      },
+      "created_by": {
+        "object": "user",
+        "id": "33333333-3333-4333-8333-333333333333"
+      },
+      "last_edited_by": {
+        "object": "user",
+        "id": "33333333-3333-4333-8333-333333333333"
+      },
+      "properties": {
+        "Name": {
+          "id": "title",
+          "type": "title",
+          "title": [
+            {
+              "plain_text": "[masked]"
+            }
+          ]
+        },
+        "Needs John": {
+          "id": "fakeNJ",
+          "type": "checkbox",
+          "checkbox": false
+        },
+        "Sensitive": {
+          "id": "fakeSens",
+          "type": "checkbox",
+          "checkbox": false
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "repeat": 6,
+      "event": {
+        "id": "ev-fake-02-{i}",
+        "type": "page.created",
+        "authors": [
+          {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "type": "person"
+          }
+        ],
+        "entity": {
+          "id": "fa4e0000-0000-4000-8000-{i}",
+          "type": "page"
+        },
+        "data": {
+          "parent": {
+            "type": "data_source_id",
+            "data_source_id": "7aac0000-0000-4000-8000-000000000001"
+          }
+        }
+      }
+    }
+  ]
+}

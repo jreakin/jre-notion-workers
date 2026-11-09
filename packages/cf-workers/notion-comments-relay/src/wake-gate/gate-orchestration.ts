@@ -27,6 +27,7 @@ import type {
   NotionPageProperties,
   WakeGateDecision,
 } from "./gate-event-types.js";
+import { trackedParentName, trackedParentNameMap } from "./tracked-parent-names.js";
 import { kvTtl } from "../kv-ttl.js";
 import { enqueueGateLogRow } from "../gate-log-ring.js";
 
@@ -192,6 +193,7 @@ export function buildGateContext(
   const properties: NotionPageProperties = enriched ?? {};
 
   const webhookParent = readWebhookParent(data);
+  const rawParentId = asRecord(data?.parent)?.id;
   const webhookParentKnown = webhookParentIsFleetLocks(
     webhookParent,
     trimOptionalEnvId(env.FLEET_LOCKS_DATA_SOURCE_ID),
@@ -211,6 +213,14 @@ export function buildGateContext(
     propertiesAvailable,
     parentDatabaseTitle:
       typeof data?.parent_database_title === "string" ? data.parent_database_title : undefined,
+    parentDbConfigName: trackedParentName(
+      [
+        webhookParent.dataSourceId,
+        webhookParent.databaseId,
+        typeof rawParentId === "string" ? rawParentId : undefined,
+      ],
+      trackedParentNameMap(env),
+    ),
     webhookParentDataSourceId: webhookParent.dataSourceId,
     webhookParentDatabaseId: webhookParent.databaseId,
     needsJohnNow: properties.needsJohn === true,
@@ -231,10 +241,35 @@ export function buildGateContext(
   return ctx;
 }
 
-function pageEventNeedsNotionFetch(ctx: GateEventContext, notionType: string | null): boolean {
+/** Options for enrichContextFromNotionPage beyond the fetch itself. */
+export type EnrichOpts = {
+  /**
+   * Parse AD Docs-style properties (Needs John / Sensitive / Kind ...) for `page.properties_updated` on a
+   * tracked parent, like page.created. Only the shadow-gate caller sets this, so the forward-path
+   * prefilter does no new fetch; the per-request memo (fetchScope) keeps it to one page GET per event.
+   */
+  parsePropertyEdits?: boolean;
+};
+
+/**
+ * properties_updated whose webhook parent is a configured tracked parent (tracked-parent-names.ts: Fleet
+ * Locks, AD Docs, tracked Fleet: Artifacts, TRACKED_* ids) or is known Fleet Locks. Evaluated before the
+ * fetch, so parentDbConfigName here is the webhook's parent only.
+ */
+function isTrackedPropertyEdit(ctx: GateEventContext, notionType: string | null): boolean {
+  if (notionType !== "page.properties_updated") return false;
+  return ctx.parentDbConfigName !== undefined || ctx.fleetLocksParentKnown === true;
+}
+
+function pageEventNeedsNotionFetch(
+  ctx: GateEventContext,
+  notionType: string | null,
+  enrich: EnrichOpts = {},
+): boolean {
   const adDocsTypes = new Set(["page.created", "page.added", "page_created"]);
   const needsAdDocs = Boolean(
-    notionType && adDocsTypes.has(notionType) && !ctx.propertiesAvailable,
+    (notionType && adDocsTypes.has(notionType) && !ctx.propertiesAvailable) ||
+      (enrich.parsePropertyEdits && !ctx.propertiesAvailable && isTrackedPropertyEdit(ctx, notionType)),
   );
   const fleetPage =
     notionType === "page.properties_updated" ||
@@ -309,13 +344,15 @@ export async function enrichContextFromNotionPage(
   ctx: GateEventContext,
   notionType: string | null,
   opts: PageFetchOpts = {},
+  enrich: EnrichOpts = {},
 ): Promise<void> {
   if (!ctx.pageId) {
     return;
   }
-  if (!pageEventNeedsNotionFetch(ctx, notionType)) {
+  if (!pageEventNeedsNotionFetch(ctx, notionType, enrich)) {
     return;
   }
+  const trackedEditBeforeFetch = Boolean(enrich.parsePropertyEdits) && isTrackedPropertyEdit(ctx, notionType);
 
   const fetched = await fetchNotionPageOutcome(ctx.pageId, env, {
     scope: ctx.fetchScope,
@@ -329,6 +366,12 @@ export async function enrichContextFromNotionPage(
 
   const page = fetched.page;
   const parent = readPageParentIds(page);
+  if (!ctx.parentDbConfigName) {
+    ctx.parentDbConfigName = trackedParentName(
+      [parent.dataSourceId ?? undefined, parent.databaseId ?? undefined],
+      trackedParentNameMap(env),
+    );
+  }
   const fleetDs = ctx.fleetLocksDataSourceId;
   const fleetDb = ctx.fleetLocksDatabaseId;
   if (fleetDs || fleetDb) {
@@ -361,7 +404,17 @@ export async function enrichContextFromNotionPage(
   }
 
   const adDocsTypes = new Set(["page.created", "page.added", "page_created"]);
-  if (notionType && adDocsTypes.has(notionType) && !ctx.propertiesAvailable) {
+  // Tracked properties_updated: same parse as page.created, on the page this event already fetched (a
+  // Fleet Locks parent confirmed by the fetch counts too). A parse failure sets adDocsParseOk=false ⇒ the
+  // notion_page_unreadable must-wake override; a fetch failure returned above ⇒ notionFetchFailReason.
+  const parsePropertyEdit =
+    enrich.parsePropertyEdits === true &&
+    notionType === "page.properties_updated" &&
+    (trackedEditBeforeFetch || ctx.fleetLocksParentKnown === true);
+  if (
+    ((notionType && adDocsTypes.has(notionType)) || parsePropertyEdit) &&
+    !ctx.propertiesAvailable
+  ) {
     const parsed = parseAdDocsPropertiesFromNotionPage(page);
     if (!parsed.ok) {
       ctx.properties = { ...(ctx.properties ?? {}), adDocsParseOk: false };
@@ -512,7 +565,7 @@ export async function runHarnessRuleShadowGates(
       // fail-open
     }
     try {
-      await enrichContextFromNotionPage(env, ctx, notionType);
+      await enrichContextFromNotionPage(env, ctx, notionType, {}, { parsePropertyEdits: true });
     } catch (err) {
       ctx.notionFetchFailReason = `error:${err instanceof Error ? err.name : "Error"}`;
     }

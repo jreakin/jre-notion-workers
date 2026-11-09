@@ -263,6 +263,21 @@ Shadow rule gates (console + optional KV ring): comments echo, Fleet Locks adopt
 
 **Clef property fetch:** Clef hard overrides that need page fields (`needs_john`, `sensitive`, etc.) run only when webhook enrichment set `propertiesAvailable`. Otherwise shadow logs `properties_unavailable` (wake, no model call).
 
+**`page.properties_updated` on tracked parents (shadow only):** when the webhook parent is a configured tracked parent
+(Fleet Locks, AD Docs, tracked Fleet: Artifacts, `TRACKED_DATA_SOURCE_IDS` / `TRACKED_PARENT_IDS`) or the fetched page
+is Fleet Locks, the shadow gates parse Needs John / Sensitive / Kind from the page fetch exactly like `page.created`, so
+Clef is consulted instead of the blanket `properties_unavailable` override. The fetch is the shared
+`enrichContextFromNotionPage` call with the per-request memo, so a page the prefilter already fetched is not fetched
+again; the forward-path prefilter itself does not opt in, so it adds no fetch or latency. A failed fetch still forces a
+wake (`notion_fetch_failed` / `notion_fetch_timeout`), and an unreadable property shape forces `notion_page_unreadable`.
+Submitted / Needs John edits keep their overrides. Untracked edits are dropped earlier by the LOCK-69 echo filter and
+never fetch.
+
+**Clef state `parent_db` / `target_lane`:** `parent_db` is the config name of the parent (`Fleet: Locks`, `AD Docs`,
+`Fleet: Artifacts`, or `tracked` for other tracked ids, from the webhook parent or the fetched page parent), then the
+webhook's `parent_database_title` if any, else `unknown`. No event or page field names a receiving lane, so
+`target_lane` is always `unknown` (it no longer copies `author_lane`).
+
 **Clef KV write budget (confirm plan before deploy):** Live coalesce uses `RELAY_KV` for every accepted webhook. Shadow Clef adds at most **one KV write per Clef model attempt** via `clef:calls:` (daily cap). Optional `CLEF_RING=1` adds read-modify-write on `clef_shadow_log` (avoid on KV **free** tier — 1,000 writes/day). `wake_gate_adopted_at:` writes only after a shadow adopted-change wake. Per-page 60s event counts are **in-isolate memory** (not KV). John must confirm paid KV quota before enabling `CLEF_RING=1` in production.
 
 **Gate Log roll-up:** This Worker does not write Gate Log database rows. A separate future Worker job is expected to roll up shadow lines into the Gate Log data source.
@@ -384,9 +399,20 @@ Fleet Locks and AD Docs are always added. Kill switch: `ECHO_FILTER=off`.
 `rule_skip` entry (stream `clef_wake_shadow`, rides `CLEF_RING`): `source:"echo_filter"`, `decision:"rule_skip"`,
 `reason:"rule_skip:<own_echo|agent_prefix|untracked_property_edit>"`, `rule`, `notion_type`, `parent_data_source_id`,
 `comment_id` or `page_id`, `scored:false`, `model:null`, `mode:"deterministic"`, opaque `item_id`; `own_echo` rows also carry
-`legacy_gate:"notion_comments_echo_drop"` / `legacy_reason:"fleet_comments_bot_echo"`. No Workers AI call, and `clef:mode:*`
-is never read or written. Rows are high-signal (they survive near-cap sampling). Passes write one `echo_filter` row
+`legacy_gate:"notion_comments_echo_drop"` / `legacy_reason:"fleet_comments_bot_echo"`. No Workers AI call and no
+`clef:mode:*` access on the request path. Rows are high-signal (they survive near-cap sampling). Passes write one `echo_filter` row
 (`decision:"pass"`, `reason`, optional `body_fetch` outcome; rides `WAKE_GATE_KV_RING`). Never logged: comment bodies, titles.
+
+**Shadow Clef scoring of drops (`clef-echo-skip-shadow.ts`).** After the drop's `200` is decided, `ctx.waitUntil` runs
+`runRuleSkipClefShadow` on a sample of drops so false drops can be measured. It never changes the drop or its latency.
+Sample: `CLEF_ECHO_SKIP_SAMPLE_PERCENT` (default `5`, deterministic per item + UTC hour). Budget: its own soft counter
+`clef:echo_skip_calls` capped by `CLEF_ECHO_SKIP_DAILY_CAP` (default `100`, so it cannot starve rule-skip checks), then the
+global `CLEF_DAILY_CALL_CAP`. Clef mode `off` ⇒ no call; `jre@mail.grokbot.com` ⇒ excluded. A sampled drop adds one more
+`clef_wake_shadow` row: `decision:"rule_skip"`, `source:"echo_filter"`, `echo_reason`, `scored:true` with Clef fields and
+`candidate_false_skip`, or `scored:false` with `reason` `echo_skip_daily_cap` / `rule_skip:clef_daily_cap` /
+`rule_skip:<flash failure>`. Unsampled drops add nothing. Note: `gradeRelayWindow` counts scored rule_skip rows, so a
+scored echo drop with `candidate_false_skip:true` counts toward `false_skips` (the echo filter is live, so that is a real
+missed wake if Clef is right).
 
 ### Deploy vars (`wrangler.toml` `[vars]`)
 
@@ -401,6 +427,8 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `NON_SUBMITTED_PROPERTY_IDS` | optional | Falls back to built-in Fleet Locks non-Submitted property id list |
 | `NEEDS_JOHN_PROPERTY_IDS` | optional | Needs John property ids. With `SUBMITTED_PROPERTY_IDS` also set, enables the properties_updated change rule below; unset ⇒ inert |
 | `CLEF_DEDUPE_REPEAT_DAILY_CAP` | optional | Daily cap for false-skip checks of dedupe repeats (default `100`), separate from `CLEF_RULE_SKIP_DAILY_CAP` |
+| `CLEF_ECHO_SKIP_SAMPLE_PERCENT` | optional | Percent of LOCK-69 echo-filter drops scored by Clef shadow-only (default `5`; `0` disables) |
+| `CLEF_ECHO_SKIP_DAILY_CAP` | optional | Daily cap for those calls (default `100`, counter `clef:echo_skip_calls`); also counts against `CLEF_DAILY_CALL_CAP` |
 | `CLEF_ITEM_DEDUPE_WINDOW_S` | optional | Pre-Clef dedupe window in seconds (default `600`; `0` disables). Comments key on comment id; page events dedupe only once both id sets are set |
 | `JOHN_NOTION_USER_IDS`, `FLEET_COMMENTS_BOT_NOTION_USER_IDS` | recommended | Clef shadow overrides `john_ids_unset` / `bot_ids_unset` (wake, no model) |
 | `AI_GATEWAY_ID`, `CLEF_DAILY_CALL_CAP` | Clef shadow | Clef mode/cap from defaults |
@@ -443,6 +471,44 @@ Every row has `stream`:
 
 The ring is best effort: rows still in an isolate's buffer when it is evicted are lost from KV. Workers Logs (console) keeps the complete stream.
 
+
+## Offline Clef replay harness (local only)
+
+Measures what the Clef wake gate *would* do, offline. It never deploys, calls Cloudflare, Notion or Workers AI, and
+prints labels, counts and `opaque:` hashes only (any non-`opaque:` id prints as `[unmasked]`; titles/content are never read).
+
+**Mode A, real rows, no AI:** re-decides exported `clef_wake_shadow` rows with today's `decideClefOutcome` and two
+candidate rules, `variant1` (also skip when `p_action <= 0.05 && q_when = ignore`) and `variant2` (same at `<= 0.3`).
+
+```bash
+bun run replay -- --rows /path/outside/repo/masked-rows.jsonl
+```
+
+Output: a table per event type × reason bucket (rows, scored, logged skips, would-skip count and rate per variant; rate
+= would-skips / scored rows), a baseline-mismatch count (logged Clef decision vs today's rule), and a suspicious list:
+would-skips with `needs_john` / `sensitive` / `author_kind:"john"` annotations, a John or Needs John label in `reason`,
+or a `sampled_full` that said wake. Shadow rows carry no author or Needs John field, so those three flags only fire
+when the exporter adds them as booleans / `"john"` (joined by `event_key`); `page.created` by John is scored by Clef
+(the John override is comments-only).
+
+**Exporting rows (Steward/BCH, never committed):** list `gate_log:v1:<YYYY-MM-DD>:` in `RELAY_KV`, fetch each value,
+and write one JSON value per line. Whole KV values (`{"v":1,"rows":[…]}`) and single rows are both accepted; other
+streams are ignored. Rows already use opaque `item_id` / `event_key` hashes; keep it that way, do not add titles, and
+store the file outside the repo (`fixtures/` holds fake data only). Remember the UTC day boundary.
+
+**Mode B, masked fixtures, full path:** runs `fixtures/replay/*.json` (fake ids, `[masked]` titles) through the real
+Worker `fetch` with a stub `env.AI`, a fake Notion API and in-memory KV. The 20 s coalesce flush is pre-locked, so
+forwarded events are only counted as `buffered`; CoS is never called.
+
+```bash
+bun run replay -- --fixtures fixtures/replay
+bun test tests/replay/            # pins Mode A logic and each fixture's current behavior (also part of bun run test)
+```
+
+Grading plan (ground truth, joins, RunReceipt v2 proposal, coalescing caveat): [`docs/clef-scoring-plan.md`](docs/clef-scoring-plan.md).
+
+Fixture shape: `{name, description?, env?, ai?: {p_action, p_dup, q_when}, notion_pages?: {"<id>"|"*": page|"fail"},
+events: [payload | {"repeat": N, "event": payload-with-{i}}]}`.
 
 ## Troubleshooting
 

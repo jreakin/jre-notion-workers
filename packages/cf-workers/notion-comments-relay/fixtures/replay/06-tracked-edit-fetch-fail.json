@@ -1,0 +1,35 @@
+{
+  "name": "06-tracked-edit-fetch-fail",
+  "description": "same tracked edit, page fetch fails (HTTP 500)",
+  "env": {
+    "NON_SUBMITTED_PROPERTY_IDS": "fakeOther"
+  },
+  "notion_pages": {
+    "*": "fail"
+  },
+  "events": [
+    {
+      "id": "ev-fake-0601",
+      "type": "page.properties_updated",
+      "authors": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "type": "person"
+        }
+      ],
+      "entity": {
+        "id": "fa4e0000-0000-4000-8000-000000000601",
+        "type": "page"
+      },
+      "data": {
+        "parent": {
+          "type": "data_source_id",
+          "data_source_id": "7aac0000-0000-4000-8000-000000000001"
+        },
+        "updated_properties": [
+          "fakeOther"
+        ]
+      }
+    }
+  ]
+}

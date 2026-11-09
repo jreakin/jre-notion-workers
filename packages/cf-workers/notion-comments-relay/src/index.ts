@@ -14,6 +14,7 @@ import {
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
 import { cosPrefilterLive, decideCosPrefilterAfterFetch, logCosPrefilter } from "./wake-gate/cos-prefilter.js";
 import { decideEchoFilter, logEchoFilter, resolveEchoCommentText } from "./wake-gate/echo-filter.js";
+import { runEchoSkipClefShadow } from "./wake-gate/clef-echo-skip-shadow.js";
 import { echoFilterConfigFromEnv } from "./wake-gate/echo-filter-config.js";
 import { kvTtl } from "./kv-ttl.js";
 import { COALESCE_MAX_ATTEMPTS, coalesceBackingOff, coalesceRetryDelayMs } from "./coalesce-backoff.js";
@@ -670,7 +671,8 @@ export default {
           }
           // Deterministic echo + untracked-property filter (LOCK-69, LIVE): before the CoS pre-filter,
           // the shadow wake gates (Clef) and coalesce/enqueue. A drop is 200, wakes nobody, and writes ONE
-          // deterministic rule_skip row to gate_log (no Workers AI, no clef:mode:* access).
+          // deterministic rule_skip row to gate_log synchronously (no Workers AI on the request path). A
+          // sample of drops is then scored by Clef shadow-only in waitUntil (clef-echo-skip-shadow.ts).
           // The LOCK-39 check may GET the comment body (~3 s, fail open). No recordForward KV write on drops.
           const echoCfg = echoFilterConfigFromEnv(env);
           const echoText = await resolveEchoCommentText(env, parsed, gateCtx, echoCfg);
@@ -681,6 +683,12 @@ export default {
             // rule_skip row now, before returning (fail-open; DO RPC has its own 2 s timeout).
             try {
               await flushGateLogRing(env);
+            } catch {
+              // fail-open
+            }
+            // Shadow-only Clef score of a sample of drops; after the response, never changes it.
+            try {
+              ctx.waitUntil(runEchoSkipClefShadow(env, gateCtx, parsed, echoVerdict));
             } catch {
               // fail-open
             }
