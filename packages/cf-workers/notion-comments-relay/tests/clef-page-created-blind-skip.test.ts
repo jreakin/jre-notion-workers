@@ -11,7 +11,12 @@ import { noteClefConstantScore, resetClefConstantScoreForTests } from "../src/wa
 import { clefPageCreatedHonorJohnAuthored } from "../src/wake-gate/clef-page-created-env.js";
 import { buildClefStateString } from "../src/wake-gate/clef-state.js";
 import { findFirstTitleProperty, parseAdDocsPropertiesFromNotionPage } from "../src/wake-gate/fleet-locks-properties.js";
-import { isLaunchScopeTaskPageCreated } from "../src/wake-gate/launch-scope-task.js";
+import {
+  isLaunchScopeTaskPageCreated,
+  pageCreatedNeedsTasksLaunchScopeFetch,
+  tasksLaunchScopeLabelsPresent,
+} from "../src/wake-gate/launch-scope-task.js";
+import { isJohnForPageCreatedHonor } from "../src/wake-gate/gate-context-safety.js";
 import { PARENT_NAME_TASKS } from "../src/wake-gate/tracked-parent-names.js";
 import {
   clefSkipPageCreatedLive,
@@ -145,6 +150,18 @@ describe("john_authored vs Clef gate (one test per rule)", () => {
     expect(String(logs.at(-1)?.reason)).toMatch(/john_authored/);
   });
 
+  test("switch at 1: authorless webhook with fetched pageCreatedById=John wakes on skip score", async () => {
+    const c = johnEligiblePage({
+      authorId: undefined,
+      webhookAuthorIds: [],
+      pageCreatedById: JOHN,
+    });
+    const e = env({ AI: ai(LOW_IGNORE), CLEF_PAGE_CREATED_HONOR_JOHN_AUTHORED: "1", CLEF_SKIP_PAGE_CREATED_LIVE: "1" });
+    const r = await runClefShadowWakeGate(e, c, "page.created", {}, true, RULES);
+    expect(r.pageCreatedSkip).toBe(false);
+    expect(String(logs.at(-1)?.reason)).toMatch(/john_authored/);
+  });
+
   test("Tasks Launch Scope=Launch wakes even with switch unset and Clef skip score", async () => {
     const c = johnEligiblePage({
       parentDbConfigName: PARENT_NAME_TASKS,
@@ -180,6 +197,40 @@ describe("supporting guards", () => {
       properties: { launchScopeLabel: "Post-launch", title: "x", needsJohn: false, sensitive: false },
     });
     expect(isLaunchScopeTaskPageCreated(post, env())).toBe(false);
+  });
+
+  test("Tasks page.created without Launch Scope on webhook needs fetch and blocks live skip until scope known", () => {
+    const partial = ctx({
+      parentDbConfigName: PARENT_NAME_TASKS,
+      webhookParentDataSourceId: TASKS_DS,
+      propertiesAvailable: true,
+      properties: { title: "Synthetic partial", needsJohn: false, sensitive: false, adDocsParseOk: true },
+    });
+    expect(tasksLaunchScopeLabelsPresent(partial)).toBe(false);
+    expect(pageCreatedNeedsTasksLaunchScopeFetch(partial, env(), "page.created")).toBe(true);
+    const base = buildClefBaselineStateString(partial, "page.created", {}, 0, false);
+    const state = buildClefStateString(partial, "page.created", {}, 0, false);
+    const gate = pageCreatedLiveSkipGate(
+      partial,
+      "page.created",
+      {},
+      null,
+      state,
+      base,
+      env({ CLEF_SKIP_PAGE_CREATED_LIVE: "1" }),
+      true,
+    );
+    expect(gate.allowed).toBe(false);
+    expect(gate.forceReason).toBe("launch_scope_unverified");
+  });
+
+  test("honor switch at 1 treats fetched page creator as John when webhook authors empty", () => {
+    const c = johnEligiblePage({
+      authorId: undefined,
+      webhookAuthorIds: [],
+      pageCreatedById: JOHN,
+    });
+    expect(isJohnForPageCreatedHonor(c)).toBe(true);
   });
 
   test("title by type and blind input", () => {

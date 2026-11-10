@@ -16,11 +16,45 @@ function scopeValueFromLabel(label: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
-function ctxInTasksDb(ctx: GateEventContext, env: Pick<Env, "TASKS_DATA_SOURCE_ID" | "TASKS_DATABASE_ID">): boolean {
+export function ctxInTasksDb(
+  ctx: GateEventContext,
+  env: Pick<Env, "TASKS_DATA_SOURCE_ID" | "TASKS_DATABASE_ID">,
+): boolean {
   if (ctx.parentDbConfigName === PARENT_NAME_TASKS) return true;
   const ids = tasksParentIdsFromEnv(env);
   const parentIds = [ctx.webhookParentDataSourceId, ctx.webhookParentDatabaseId].filter(Boolean) as string[];
   return parentIds.some((id) => ids.has(normalizeNotionUuid(id)));
+}
+
+function isPageCreatedType(type: string | null | undefined): boolean {
+  return type === "page.created" || type === "page.added" || type === "page_created";
+}
+
+/** Tasks parent on a page-created event (scope may still be unknown). */
+export function isTasksPageCreatedEvent(
+  ctx: GateEventContext,
+  env: Pick<Env, "TASKS_DATA_SOURCE_ID" | "TASKS_DATABASE_ID">,
+  notionType: string | null,
+): boolean {
+  if (!isPageCreatedType(ctx.notionType ?? notionType ?? "")) return false;
+  return ctxInTasksDb(ctx, env);
+}
+
+/** Launch Scope / Scope-like labels present in ctx (from webhook enrich or Notion fetch). */
+export function tasksLaunchScopeLabelsPresent(ctx: GateEventContext): boolean {
+  const launch = ctx.properties?.launchScopeLabel;
+  const scope = ctx.properties?.scopeLabel;
+  return (typeof launch === "string" && launch.trim().length > 0) || (typeof scope === "string" && scope.trim().length > 0);
+}
+
+/** Fetch Notion page when Tasks page.created lacks Launch Scope on the webhook payload. */
+export function pageCreatedNeedsTasksLaunchScopeFetch(
+  ctx: GateEventContext,
+  env: Pick<Env, "TASKS_DATA_SOURCE_ID" | "TASKS_DATABASE_ID">,
+  notionType: string | null,
+): boolean {
+  if (!isTasksPageCreatedEvent(ctx, env, notionType)) return false;
+  return !tasksLaunchScopeLabelsPresent(ctx);
 }
 
 function isLaunchScopeValue(value: string | undefined): boolean {
@@ -35,8 +69,7 @@ export function isLaunchScopeTaskPageCreated(
   ctx: GateEventContext,
   env: Pick<Env, "TASKS_DATA_SOURCE_ID" | "TASKS_DATABASE_ID">,
 ): boolean {
-  const type = ctx.notionType ?? "";
-  if (type !== "page.created" && type !== "page.added" && type !== "page_created") return false;
+  if (!isPageCreatedType(ctx.notionType ?? "")) return false;
   if (!ctxInTasksDb(ctx, env)) return false;
   const scope = scopeValueFromLabel(ctx.properties?.launchScopeLabel ?? ctx.properties?.scopeLabel);
   return isLaunchScopeValue(scope);

@@ -413,7 +413,7 @@ export async function runClefShadowWakeGate(
   }
 
   entry = applyClefRun(entry, flash.parsed);
-  entry.state_hash = hashClefStateString(state);
+  entry.state_hash = hashClefStateString(state, env.SETUP_SECRET?.trim() || undefined);
   const constScore = noteClefConstantScore(flash.parsed.pAction, flash.parsed.confidence);
   if (constScore.logReason) {
     entry.reason = `${entry.reason};${constScore.logReason}`;

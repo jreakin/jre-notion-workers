@@ -2,9 +2,13 @@ import type { GateEventContext } from "./gate-event-types.js";
 import { isClefPageCreatedEvent } from "./clef-decision-logic.js";
 import { buildClefStateString } from "./clef-state.js";
 import { clefPageCreatedHonorJohnAuthored } from "./clef-page-created-env.js";
-import { isJohn } from "./gate-context-safety.js";
+import { isJohnForPageCreatedHonor } from "./gate-context-safety.js";
 import type { Env } from "../env.js";
-import { isLaunchScopeTaskPageCreated } from "./launch-scope-task.js";
+import {
+  isLaunchScopeTaskPageCreated,
+  isTasksPageCreatedEvent,
+  tasksLaunchScopeLabelsPresent,
+} from "./launch-scope-task.js";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -85,7 +89,13 @@ export function pageCreatedLiveSkipGate(
   if (isLaunchScopeTaskPageCreated(ctx, env)) {
     return { allowed: false, forceReason: "launch_scope_task" };
   }
-  if (clefPageCreatedHonorJohnAuthored(env) && isJohn(ctx)) {
+  if (
+    isTasksPageCreatedEvent(ctx, env, notionType) &&
+    !tasksLaunchScopeLabelsPresent(ctx)
+  ) {
+    return { allowed: false, forceReason: "launch_scope_unverified" };
+  }
+  if (clefPageCreatedHonorJohnAuthored(env) && isJohnForPageCreatedHonor(ctx)) {
     return { allowed: false, forceReason: "john_authored" };
   }
   const missing = clefBlindInputMissingFields(ctx, state, baselineState);

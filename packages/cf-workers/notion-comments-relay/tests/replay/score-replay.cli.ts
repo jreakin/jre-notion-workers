@@ -7,10 +7,12 @@
  *
  * Output is labels, counts and opaque hashes only.
  */
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { formatReport, parseReplayInput, replay } from "./replay-lib.js";
 import { formatFixtureResult, runFixture, type ReplayFixture } from "./replay-pipeline.js";
+
+const BUCKET_NAMES = ["page_created", "properties_updated", "comments", "other"] as const;
 
 function usage(): never {
   console.error(
@@ -19,14 +21,27 @@ function usage(): never {
   process.exit(2);
 }
 
+function nextOperand(argv: string[], i: number): string {
+  const v = argv[i + 1];
+  if (v === undefined || v.startsWith("-")) usage();
+  return v;
+}
+
 function parseArgv(argv: string[]): { rows?: string; fixtures?: string; live: boolean; outDir?: string } {
   const out: { rows?: string; fixtures?: string; live: boolean; outDir?: string } = { live: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--live") out.live = true;
-    else if (a === "--rows") out.rows = argv[++i];
-    else if (a === "--fixtures") out.fixtures = argv[++i];
-    else if (a === "--out-by-event-type") out.outDir = argv[++i];
+    else if (a === "--rows") {
+      out.rows = nextOperand(argv, i);
+      i += 1;
+    } else if (a === "--fixtures") {
+      out.fixtures = nextOperand(argv, i);
+      i += 1;
+    } else if (a === "--out-by-event-type") {
+      out.outDir = nextOperand(argv, i);
+      i += 1;
+    }
   }
   return out;
 }
@@ -48,8 +63,20 @@ function replayEventTypeBuckets(rows: Record<string, unknown>[]): Record<string,
   return buckets;
 }
 
-function writeEventTypeOutput(outDir: string, rows: Record<string, unknown>[]): void {
+const clearedOutDirs = new Set<string>();
+
+function clearEventTypeBucketFiles(outDir: string): void {
   mkdirSync(outDir, { recursive: true });
+  for (const name of BUCKET_NAMES) {
+    writeFileSync(`${outDir}/${name}.jsonl`, "", "utf8");
+  }
+}
+
+function writeEventTypeOutput(outDir: string, rows: Record<string, unknown>[]): void {
+  if (!clearedOutDirs.has(outDir)) {
+    clearEventTypeBucketFiles(outDir);
+    clearedOutDirs.add(outDir);
+  }
   const buckets = replayEventTypeBuckets(rows);
   for (const [name, list] of Object.entries(buckets)) {
     if (list.length === 0) continue;
