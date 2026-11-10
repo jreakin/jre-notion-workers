@@ -51,6 +51,8 @@ export type RowSummary = {
   p_action: number | null;
   q_when: string | null;
   echo_reason: string | null;
+  actually_ran: string | null;
+  live_skip: boolean;
   item_id: string;
 };
 
@@ -165,6 +167,8 @@ function summarize(row: Record<string, unknown>): RowSummary {
     p_action: typeof row.p_action === "number" ? row.p_action : null,
     q_when: s(row.q_when),
     echo_reason: s(row.echo_reason),
+    actually_ran: s(row.actually_ran),
+    live_skip: row.live_skip === true,
     item_id: maskedId(row.item_id),
   };
 }
@@ -178,11 +182,15 @@ export function resetReplayState(): void {
   resetGateLogRingForTests();
 }
 
-export async function runFixture(fixture: ReplayFixture): Promise<FixtureResult> {
+/** `envOver` is applied on top of the fixture's own env (e.g. CLEF_SKIP_PAGE_CREATED_LIVE=1). */
+export async function runFixture(fixture: ReplayFixture, envOver: Record<string, string> = {}): Promise<FixtureResult> {
   resetReplayState();
   const store = new Map<string, string>([["coalesce_flush_scheduled", "replay-prelocked"]]);
   const aiCounter = { n: 0 };
-  const env = baseEnv(store, stubAi(fixture.ai ?? { p_action: 0.9, p_dup: 0.05, q_when: "now" }, aiCounter), fixture.env ?? {});
+  const env = baseEnv(store, stubAi(fixture.ai ?? { p_action: 0.9, p_dup: 0.05, q_when: "now" }, aiCounter), {
+    ...(fixture.env ?? {}),
+    ...envOver,
+  });
   const result: FixtureResult = {
     name: fixture.name,
     statuses: [],
@@ -254,7 +262,7 @@ export function formatFixtureResult(r: FixtureResult): string {
   ];
   for (const row of r.rows) {
     out.push(
-      `  ${row.event ?? "-"} src=${row.source ?? "-"} rule=${row.rule_decision ?? "-"} clef=${row.clef_decision ?? "-"}${row.decision ? ` decision=${row.decision}` : ""} reason=${row.reason ?? "-"}${row.scored === null ? "" : ` scored=${row.scored}`}${row.p_action === null ? "" : ` p_action=${row.p_action}`}${row.echo_reason ? ` echo=${row.echo_reason}` : ""}`,
+      `  ${row.event ?? "-"} src=${row.source ?? "-"} rule=${row.rule_decision ?? "-"} clef=${row.clef_decision ?? "-"}${row.decision ? ` decision=${row.decision}` : ""} reason=${row.reason ?? "-"}${row.scored === null ? "" : ` scored=${row.scored}`}${row.p_action === null ? "" : ` p_action=${row.p_action}`}${row.echo_reason ? ` echo=${row.echo_reason}` : ""}${row.live_skip ? " live_skip" : ""}`,
     );
   }
   return out.join("\n");
