@@ -6,7 +6,11 @@
  * Input rows are masked exports (Steward/BCH, from gate_log:v1 KV values). Only the fields below are
  * read; everything else (and any free text) is ignored, so titles or content can never reach output.
  */
-import { decideClefOutcome, decideClefOutcomeForEvent } from "../../src/wake-gate/clef-decision-logic.js";
+import {
+  decideClefOutcome,
+  decideClefOutcomeForEvent,
+  pageCreatedOption1Skip,
+} from "../../src/wake-gate/clef-decision-logic.js";
 
 export type QWhen = "now" | "batch" | "ignore";
 
@@ -221,12 +225,15 @@ export type ReplayReport = {
 
 const VARIANTS: VariantName[] = ["current", "variant1", "variant2", "option1"];
 
+/**
+ * Live needs the full model to meet the Option 1 predicate itself (as clef-wake-gate.ts). A logged row
+ * cannot show "sampled but the full call failed" (sampled_full is null either way; ids are hashed), so
+ * a null sampled_full counts as unsampled here: live_skip may overstate by those rows.
+ */
 function fullAgreesWithSkip(r: ReplayRow): boolean {
   if (r.sampled_full_decision === null) return true;
-  if (r.sampled_full_p_action !== null && r.sampled_full_q_when !== null) {
-    return decideClefOutcomeForEvent(r.sampled_full_p_action, 0, r.sampled_full_q_when, r.event) === "would_skip";
-  }
-  return r.sampled_full_decision === "would_skip";
+  if (r.sampled_full_p_action === null || r.sampled_full_q_when === null) return false;
+  return pageCreatedOption1Skip(r.sampled_full_p_action, r.sampled_full_q_when);
 }
 const SUSPICIOUS_REASON = /needs_john|sensitive|john_authored|john_mention|john_comment/;
 
@@ -266,7 +273,7 @@ export function replay(rows: ReplayRow[]): ReplayReport {
       o1.page_created_rows += 1;
       if (isScored(r)) o1.page_created_scored += 1;
       if (isScored(r) && option1Eligible(r)) o1.eligible += 1;
-      if (variantOutcome(r, "option1") === "would_skip" && option1Eligible(r)) {
+      if (isScored(r) && option1Eligible(r) && pageCreatedOption1Skip(r.p_action, r.q_when)) {
         o1.would_skip += 1;
         if (r.sampled_full_decision !== null) o1.full_sampled_among_skips += 1;
         if (r.sampled_full_decision === "would_wake") o1.full_model_wakes_among_skips += 1;

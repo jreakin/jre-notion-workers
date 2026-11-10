@@ -179,6 +179,62 @@ describe("runClefShadowWakeGate with Option 1", () => {
     expect(r.pageCreatedSkip).toBe(true);
   });
 
+  test("high p_dup with q_when now / batch never makes a page.created skip live (Option 1 predicate only)", async () => {
+    for (const q_when of ["now", "batch"] as const) {
+      const r = await runClefShadowWakeGate(
+        env({ AI: ai({ p_action: 0.01, p_dup: 0.95, q_when }) }),
+        ctx({ pageId: pageId(false) }),
+        "page.created",
+        {},
+        true,
+        RULES,
+      );
+      expect(r.pageCreatedSkip).toBe(false);
+      expect(logs.at(-1)?.page_created_rule).toBeUndefined();
+    }
+  });
+
+  test("sampled full model returns a p_dup skip with q_when now ⇒ not Option 1 agreement ⇒ no skip", async () => {
+    const r = await runClefShadowWakeGate(
+      env({ AI: ai(LOW_IGNORE, { p_action: 0.01, p_dup: 0.95, q_when: "now" }) }),
+      ctx({ pageId: pageId(true) }),
+      "page.created",
+      {},
+      true,
+      RULES,
+    );
+    expect(r.pageCreatedSkip).toBe(false);
+  });
+
+  test("sampled page whose full-model call fails or hits the cap ⇒ no skip", async () => {
+    let n = 0;
+    const failSecond = {
+      run: async () => {
+        n += 1;
+        if (n > 1) throw new Error("fake full-model failure");
+        return (await ai(LOW_IGNORE).run("x" as never, {} as never)) as unknown;
+      },
+    } as unknown as Ai;
+    const failed = await runClefShadowWakeGate(env({ AI: failSecond }), ctx({ pageId: pageId(true) }), "page.created", {}, true, RULES);
+    expect(failed.pageCreatedSkip).toBe(false);
+    expect(logs.at(-1)?.sampled_full).toBeNull();
+    expect(logs.at(-1)?.reason).toBe("clef_ok");
+
+    resetSoftDailyCountersForTests();
+    const capped = await runClefShadowWakeGate(
+      env({ AI: ai(LOW_IGNORE), CLEF_DAILY_CALL_CAP: "1" }),
+      ctx({ pageId: pageId(true) }),
+      "page.created",
+      {},
+      true,
+      RULES,
+    );
+    expect(capped.pageCreatedSkip).toBe(false);
+    expect(logs.at(-1)?.sampled_full).toBeNull();
+    expect(logs.at(-1)?.reason).toBe("clef_ok");
+    expect(logs.at(-1)?.clef_decision).toBe("would_skip");
+  });
+
   test("Needs John / Sensitive / fetch failure ⇒ hard override, no Clef call, no skip", async () => {
     for (const c of [
       ctx({ properties: { needsJohn: true } }),

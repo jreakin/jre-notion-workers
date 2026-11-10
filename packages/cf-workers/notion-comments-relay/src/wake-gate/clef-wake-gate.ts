@@ -2,7 +2,7 @@ import { invokeClefFlash, invokeClefFull, type ParsedClefRun } from "./clef-ai.j
 import { tryConsumeClefCall } from "./clef-daily-cap.js";
 import { resolveClefMode } from "./clef-mode.js";
 import { clefHardOverrideReason, mustWakeOverrideReason } from "./clef-overrides.js";
-import { decideClefOutcomeForEvent, isClefPageCreatedEvent } from "./clef-decision-logic.js";
+import { decideClefOutcomeForEvent, isClefPageCreatedEvent, pageCreatedOption1Skip } from "./clef-decision-logic.js";
 import { isTruthyFlag } from "./gate-context-safety.js";
 import { buildClefStateString, mapClefSource } from "./clef-state.js";
 import { CLEF_FULL_SAMPLE_PERCENT } from "./clef-thresholds.js";
@@ -413,11 +413,14 @@ export async function runClefShadowWakeGate(
     ruleEligible ? decideClefOutcomeForEvent(run.pAction, run.pDup, run.qWhen, notionType) : run.decision;
   entry.clef_decision = decide(flash.parsed);
 
-  if (shouldRunClefFullSample(itemId)) {
+  const fullSampled = shouldRunClefFullSample(itemId);
+  let fullOption1 = false;
+  if (fullSampled) {
     const fullCap = await tryConsumeClefCall(env);
     if (fullCap.ok) {
       const full = await invokeClefFull(env, state);
       if (full.ok) {
+        fullOption1 = pageCreatedOption1Skip(full.parsed.pAction, full.parsed.qWhen);
         entry.sampled_full = {
           decision: decide(full.parsed),
           p_action: full.parsed.pAction,
@@ -429,11 +432,12 @@ export async function runClefShadowWakeGate(
     }
   }
 
-  // Option 1 skip: flash says skip AND (when sampled) the full model agrees; otherwise wake.
+  // Option 1 skip: flash meets the Option 1 predicate (never the p_dup rule) AND, when the page is in
+  // the full-model sample, the full model returned and meets it too. Sampled but cap/error ⇒ wake.
   const pageCreatedSkip =
     ruleEligible &&
-    entry.clef_decision === "would_skip" &&
-    (entry.sampled_full === null || entry.sampled_full.decision === "would_skip");
+    pageCreatedOption1Skip(flash.parsed.pAction, flash.parsed.qWhen) &&
+    (!fullSampled || fullOption1);
   if (pageCreatedSkip) {
     entry.reason = `${entry.reason};${PAGE_CREATED_RULE_TAG}`;
     entry.page_created_rule = "would_skip";

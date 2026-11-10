@@ -171,6 +171,16 @@ describe("replay Mode A", () => {
     });
     expect(variantOutcome(one({ event: "page.properties_updated" }), "option1")).toBe("would_batch");
     expect(variantOutcome(one({ needs_john: true }), "option1")).toBe("would_skip");
+    const dup = replay(
+      parseReplayInput(
+        jsonl([
+          row({ item_id: "opaque:d1", p_action: 0.01, p_dup: 0.95, q_when: "now", clef_decision: "would_skip" }),
+          row({ item_id: "opaque:d2", sampled_full: { decision: "would_skip", p_action: 0.01, p_dup: 0.95, q_when: "now", model: "m" } }),
+        ]),
+      ).rows,
+    );
+    expect(dup.option1.would_skip).toBe(1);
+    expect(dup.option1.live_skip).toBe(0);
     const nj = replay(parseReplayInput(jsonl([row({ needs_john: true })])).rows);
     expect(nj.option1.needs_john_or_sensitive_skips).toBe(1);
   });

@@ -427,7 +427,10 @@ batches elsewhere. The rule applies only to a real Clef score (`pageCreatedRuleE
   `notion_fetch_failed`, `notion_fetch_timeout`, `notion_page_unreadable`, `needs_john_changed`, `properties_unavailable`, …),
   no dedupe repeat, no cap, no Clef error;
 - properties were fetched, Needs John and Sensitive are not set, and the Clef mode resolved without a fallback reason;
-- when the page is in the 10% full-model sample, the full model must also say skip, otherwise the event wakes.
+- when the page is in the 10% full-model sample, the full model must have returned and also meet `p_action <= 0.05`
+  and `q_when = ignore`; a sampled page whose full call hit the cap or failed wakes;
+- only the Option 1 predicate makes a skip live: a `page.created` that skips via the old `p_dup >= 0.80` rule is
+  logged as before but is never skipped live.
 
 A matching row logs `clef_decision: "would_skip"`, `reason: "clef_ok;page_created_ignore"`, `page_created_rule: "would_skip"`.
 
