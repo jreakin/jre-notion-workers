@@ -35,7 +35,7 @@ export function tasksDataSourceId(env: Pick<Env, "TASKS_DATA_SOURCE_ID">): strin
 
 export function tasksParentIdsFromEnv(env: Pick<Env, "TASKS_DATA_SOURCE_ID" | "TASKS_DATABASE_ID">): Set<string> {
   const out = new Set<string>();
-  addId(out as unknown as Map<string, string>, tasksDataSourceId(env), PARENT_NAME_TASKS);
+  out.add(normalizeNotionUuid(tasksDataSourceId(env)));
   if (env.TASKS_DATABASE_ID?.trim()) {
     out.add(normalizeNotionUuid(env.TASKS_DATABASE_ID));
   }

@@ -9,6 +9,7 @@ import {
   isLiveSkipVerdict,
   readClefLiveDecisionTimeoutMs,
 } from "../src/wake-gate/clef-live-skip.js";
+import { resetClefConstantScoreForTests } from "../src/wake-gate/clef-constant-score.js";
 import {
   clefSkipPageCreatedLive,
   pageCreatedRuleEligible,
@@ -33,7 +34,8 @@ function ctx(over: Partial<GateEventContext> = {}): GateEventContext {
     updatedPropertyIds: [],
     isCommentEvent: false,
     propertiesAvailable: true,
-    properties: { needsJohn: false, sensitive: false },
+    properties: { needsJohn: false, sensitive: false, title: "Synthetic eligible", kind: "synthetic" },
+    parentDbConfigName: "tracked",
     ...over,
   };
 }
@@ -143,6 +145,7 @@ describe("runClefShadowWakeGate with Option 1", () => {
       }
     }) as typeof console.log;
     resetClefPageEventCountsForTests();
+    resetClefConstantScoreForTests();
     resetSoftDailyCountersForTests();
   });
   afterEach(() => {

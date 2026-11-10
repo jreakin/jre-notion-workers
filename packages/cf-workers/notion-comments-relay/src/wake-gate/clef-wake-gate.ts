@@ -5,6 +5,11 @@ import { clefHardOverrideReason, mustWakeOverrideReason } from "./clef-overrides
 import { decideClefOutcomeForEvent, isClefPageCreatedEvent, pageCreatedOption1Skip } from "./clef-decision-logic.js";
 import { isTruthyFlag } from "./gate-context-safety.js";
 import { buildClefStateString, mapClefSource } from "./clef-state.js";
+import { buildClefBaselineStateString, pageCreatedLiveSkipGate } from "./clef-blind-input.js";
+import { noteClefConstantScore, resetClefConstantScoreForTests } from "./clef-constant-score.js";
+import { hashClefStateString } from "./clef-state-hash.js";
+import { isLaunchScopeTaskPageCreated } from "./launch-scope-task.js";
+
 import { CLEF_FULL_SAMPLE_PERCENT } from "./clef-thresholds.js";
 import type { Env } from "../env.js";
 import { idInNotionIdSet, normalizeNotionUuid } from "./notion-ids.js";
@@ -200,6 +205,7 @@ function peekPageEventCount(pageId: string): number {
 export function resetClefPageEventCountsForTests(): void {
   pageEventCounts.clear();
   itemDedupe.clear();
+  resetClefConstantScoreForTests();
 }
 
 function isBotEcho(ctx: GateEventContext): boolean {
@@ -381,7 +387,9 @@ export async function runClefShadowWakeGate(
   }
 
   const pageEventsLast60s = ctx.pageId ? bumpPageEventCount(env, ctx.pageId) : 0;
-  const state = buildClefStateString(ctx, notionType, parsed, pageEventsLast60s, isBotEcho(ctx));
+  const botEcho = isBotEcho(ctx);
+  const state = buildClefStateString(ctx, notionType, parsed, pageEventsLast60s, botEcho);
+  const baselineState = buildClefBaselineStateString(ctx, notionType, parsed, pageEventsLast60s, botEcho);
 
   let entry = baseLogEntry(
     ctx,
@@ -405,6 +413,11 @@ export async function runClefShadowWakeGate(
   }
 
   entry = applyClefRun(entry, flash.parsed);
+  entry.state_hash = hashClefStateString(state);
+  const constScore = noteClefConstantScore(flash.parsed.pAction, flash.parsed.confidence);
+  if (constScore.logReason) {
+    entry.reason = `${entry.reason};${constScore.logReason}`;
+  }
   if (modeRes.reason) {
     entry.reason = `${entry.reason};${modeRes.reason}`;
   }
@@ -434,10 +447,31 @@ export async function runClefShadowWakeGate(
 
   // Option 1 skip: flash meets the Option 1 predicate (never the p_dup rule) AND, when the page is in
   // the full-model sample, the full model returned and meets it too. Sampled but cap/error ⇒ wake.
-  const pageCreatedSkip =
+  let pageCreatedSkip =
     ruleEligible &&
     pageCreatedOption1Skip(flash.parsed.pAction, flash.parsed.qWhen) &&
     (!fullSampled || fullOption1);
+  const skipGate = pageCreatedLiveSkipGate(
+    ctx,
+    notionType,
+    parsed,
+    modeRes.reason,
+    state,
+    baselineState,
+    env,
+    ruleEligible && pageCreatedOption1Skip(flash.parsed.pAction, flash.parsed.qWhen) && (!fullSampled || fullOption1),
+  );
+  if (!skipGate.allowed && pageCreatedSkip && skipGate.forceReason) {
+    pageCreatedSkip = false;
+    entry.reason = `${entry.reason};${skipGate.forceReason}`;
+  }
+  if (constScore.forceWake) {
+    pageCreatedSkip = false;
+  }
+  if (isLaunchScopeTaskPageCreated(ctx, env) && pageCreatedSkip) {
+    pageCreatedSkip = false;
+    entry.reason = `${entry.reason};launch_scope_task`;
+  }
   if (pageCreatedSkip) {
     entry.reason = `${entry.reason};${PAGE_CREATED_RULE_TAG}`;
     entry.page_created_rule = "would_skip";

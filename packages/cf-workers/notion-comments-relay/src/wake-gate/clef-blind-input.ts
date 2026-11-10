@@ -82,7 +82,7 @@ export function pageCreatedLiveSkipGate(
   if (!isClefPageCreatedEvent(notionType) || !baseRuleEligible) {
     return { allowed: false, forceReason: null };
   }
-  if (isLaunchScopeTaskPageCreated(ctx)) {
+  if (isLaunchScopeTaskPageCreated(ctx, env)) {
     return { allowed: false, forceReason: "launch_scope_task" };
   }
   if (clefPageCreatedHonorJohnAuthored(env) && isJohn(ctx)) {

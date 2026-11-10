@@ -3,9 +3,8 @@ import type { GateEventContext } from "./gate-event-types.js";
 import { PARENT_NAME_TASKS, tasksParentIdsFromEnv } from "./tracked-parent-names.js";
 import type { Env } from "../env.js";
 
+const LAUNCH_SCOPE_PROP_RE = /^launch\s*scope$/i;
 const SCOPE_NAME_RE = /scope/i;
-const LAUNCH_RE = /launch/i;
-const POST_LAUNCH_RE = /post[-\s]?launch/i;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -24,7 +23,14 @@ function ctxInTasksDb(ctx: GateEventContext, env: Pick<Env, "TASKS_DATA_SOURCE_I
   return parentIds.some((id) => ids.has(normalizeNotionUuid(id)));
 }
 
-/** Launch-scope assignment: Tasks parent + Scope-like value with Launch but not Post-launch. */
+function isLaunchScopeValue(value: string | undefined): boolean {
+  if (!value) return false;
+  const t = value.trim();
+  if (/^post[-\s]?launch$/i.test(t)) return false;
+  return t === "Launch";
+}
+
+/** Launch-scope assignment: Tasks parent + Launch Scope (or Scope-like) select/status equals Launch. */
 export function isLaunchScopeTaskPageCreated(
   ctx: GateEventContext,
   env: Pick<Env, "TASKS_DATA_SOURCE_ID" | "TASKS_DATABASE_ID">,
@@ -32,32 +38,28 @@ export function isLaunchScopeTaskPageCreated(
   const type = ctx.notionType ?? "";
   if (type !== "page.created" && type !== "page.added" && type !== "page_created") return false;
   if (!ctxInTasksDb(ctx, env)) return false;
-  const scope = scopeValueFromLabel(ctx.properties?.scopeLabel ?? ctx.properties?.statusLabel);
-  if (!scope) return false;
-  if (!LAUNCH_RE.test(scope)) return false;
-  if (POST_LAUNCH_RE.test(scope)) return false;
-  return true;
+  const scope = scopeValueFromLabel(ctx.properties?.launchScopeLabel ?? ctx.properties?.scopeLabel);
+  return isLaunchScopeValue(scope);
 }
 
 export function readLaunchScopeFromNotionProperties(properties: Record<string, unknown>): {
+  launchScopeLabel?: string;
   scopeLabel?: string;
   statusLabel?: string;
 } {
+  let launchScopeLabel: string | undefined;
   let scopeLabel: string | undefined;
   let statusLabel: string | undefined;
   for (const [name, raw] of Object.entries(properties)) {
     const prop = asRecord(raw);
     if (!prop) continue;
-    if (SCOPE_NAME_RE.test(name)) {
-      const v = readSelectOrStatusName(prop);
-      if (v) scopeLabel = v;
-    }
-    if (name.toLowerCase() === "status" && prop.type === "status") {
-      const v = readSelectOrStatusName(prop);
-      if (v) statusLabel = v;
-    }
+    const v = readSelectOrStatusName(prop);
+    if (!v) continue;
+    if (LAUNCH_SCOPE_PROP_RE.test(name)) launchScopeLabel = v;
+    else if (SCOPE_NAME_RE.test(name)) scopeLabel = v;
+    else if (name.toLowerCase() === "status" && prop.type === "status") statusLabel = v;
   }
-  return { scopeLabel, statusLabel };
+  return { launchScopeLabel, scopeLabel, statusLabel };
 }
 
 function readSelectOrStatusName(prop: Record<string, unknown>): string | undefined {

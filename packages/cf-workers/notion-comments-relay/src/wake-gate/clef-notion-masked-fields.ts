@@ -45,6 +45,7 @@ export type ClefMaskedParse = {
   clefMasked: Record<string, string>;
   authorLane?: string;
   needsReview?: boolean;
+  launchScopeLabel?: string;
   scopeLabel?: string;
   statusLabel?: string;
   usedTitlePropertyName?: string;
@@ -84,6 +85,7 @@ export function parseClefMaskedFieldsFromNotionProperties(
     clefMasked,
     authorLane,
     needsReview,
+    launchScopeLabel: scope.launchScopeLabel,
     scopeLabel: scope.scopeLabel,
     statusLabel: scope.statusLabel,
     usedTitlePropertyName,
