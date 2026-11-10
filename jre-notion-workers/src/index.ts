@@ -13,7 +13,6 @@ import { executeCalculateCreditForecast } from "./workers/calculate-credit-forec
 import { executeLintAgentsFile } from "./workers/lint-agents-file.js";
 import { executeReadRepoFile } from "./workers/read-repo-file.js";
 import { executeCheckUrlStatus } from "./workers/check-url-status.js";
-import { executeSyncGitHubItems } from "./workers/sync-github-items.js";
 import { executeCheckAgentStaleness } from "./workers/check-agent-staleness.js";
 import { executeValidateDigestQuality } from "./workers/validate-digest-quality.js";
 import { executeArchiveOldDigests } from "./workers/archive-old-digests.js";
@@ -24,8 +23,6 @@ import { executeResolveStaleDeadLetters } from "./workers/resolve-stale-dead-let
 import { executeValidateDatabaseReferences } from "./workers/validate-database-references.js";
 import { executeValidateRelationIntegrity } from "./workers/validate-relation-integrity.js";
 import { executeEstimateGitHubHours } from "./workers/estimate-github-hours.js";
-import { executeSyncTimeLog } from "./workers/sync-time-log.js";
-import { executePrEstimateWriter } from "./workers/pr-estimate-writer.js";
 import { executeWriteAgentOpsRun } from "./workers/write-agent-ops-run.js";
 import { executeNormalizeAgentOpsOptions } from "./workers/normalize-agent-ops-options.js";
 import { executeValidateClientShareScope } from "./workers/validate-client-share-scope.js";
@@ -50,7 +47,6 @@ import type {
   LintAgentsFileInput,
   ReadRepoFileInput,
   CheckUrlStatusInput,
-  SyncGitHubItemsInput,
   CheckAgentStalenessInput,
   ValidateDigestQualityInput,
   ArchiveOldDigestsInput,
@@ -61,8 +57,6 @@ import type {
   ValidateDatabaseReferencesInput,
   ValidateRelationIntegrityInput,
   EstimateGitHubHoursInput,
-  SyncTimeLogInput,
-  PrEstimateWriterInput,
   WriteAgentOpsRunInput,
   NormalizeAgentOpsOptionsInput,
   ClientShareScopeInput,
@@ -285,42 +279,6 @@ worker.tool("check-url-status", {
     executeCheckUrlStatus(input as unknown as CheckUrlStatusInput) as never,
 });
 
-// ── sync-github-items ─────────────────────────────────────────────
-
-worker.tool("sync-github-items", {
-  title: "Sync GitHub Items",
-  description:
-    "Syncs GitHub repos, issues, and PRs from configured sources (orgs/users) into the Notion GitHub Items database. Creates new rows for items not yet tracked, updates existing rows when GitHub data is newer. Uses GitHub URL as the unique idempotent key.",
-  schema: j.object({
-    sources: j
-      .array(
-        j.object({
-          name: j.string(),
-          type: j.enum("org", "user"),
-        })
-      )
-      .nullable(),
-    org_name: j.string().nullable(),
-    include_forks: j.boolean().nullable(),
-    include_archived: j.boolean().nullable(),
-    include_issues: j.boolean().nullable(),
-    include_prs: j.boolean().nullable(),
-    dry_run: j.boolean().nullable(),
-    updated_since_days: j.number().nullable(),
-    max_writes_per_run: j.number().nullable(),
-    open_only: j.boolean().nullable(),
-    max_repos_per_run: j.number().nullable(),
-    max_items_per_run: j.number().nullable(),
-    max_seconds: j.number().nullable(),
-    resume_cursor: j.object({
-      repo_index: j.number(),
-      phase: j.enum("issues", "prs"),
-    }).nullable(),
-  }),
-  execute: (input, context) =>
-    executeSyncGitHubItems(input as unknown as SyncGitHubItemsInput, getNotionClient()) as never,
-});
-
 // ── check-agent-staleness ──────────────────────────────────────────
 
 worker.tool("check-agent-staleness", {
@@ -488,40 +446,6 @@ worker.tool("estimate-github-hours", {
     executeEstimateGitHubHours(input as unknown as EstimateGitHubHoursInput) as never,
 });
 
-
-// ── pr-estimate-writer ───────────────────────────────────────────────
-
-worker.tool("pr-estimate-writer", {
-  title: "PR Estimate Writer",
-  description:
-    "Writes PR-based hour estimates to Time Log (Source=PR estimate) and Est. Hours on GitHub Items. Dry-run by default; live requires dry_run=false and PR_ESTIMATE_WRITER_LIVE=1.",
-  schema: j.object({
-    dry_run: j.boolean().nullable(),
-    repo_filter: j.array(j.string()).nullable(),
-    client_filter: j.string().nullable(),
-    max_items: j.number().nullable(),
-    as_of_date: j.string().nullable(),
-    backfill: j.boolean().nullable(),
-  }),
-  execute: (input, context) =>
-    executePrEstimateWriter(input as unknown as PrEstimateWriterInput, getNotionClient()) as never,
-});
-
-// ── sync-time-log ──────────────────────────────────────────────────────
-
-worker.tool("sync-time-log", {
-  title: "Sync Time Log",
-  description:
-    "Scans GitHub Items for recent PRs/issues and auto-creates Time Log entries with hour estimates. Uses estimate-github-hours logic internally. Deduplicates against existing entries. Respects [EST*] prefix conventions.",
-  schema: j.object({
-    lookback_days: j.number().nullable(),
-    repo_filter: j.array(j.string()).nullable(),
-    item_types: j.array(j.enum("Issue", "PR")).nullable(),
-    dry_run: j.boolean().nullable(),
-  }),
-  execute: (input, context) =>
-    executeSyncTimeLog(input as unknown as SyncTimeLogInput, getNotionClient()) as never,
-});
 
 // ── write-agent-ops-run ────────────────────────────────────────────────
 

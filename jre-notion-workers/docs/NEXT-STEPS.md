@@ -44,7 +44,6 @@ After fixing, @mention Fleet Ops Agent on any page to trigger an on-demand run. 
 |---|---|
 | `401 Unauthorized` | GitHub PAT expired — rotate in 1Password, update `GITHUB_TOKEN` secret via `ntn workers secrets set GITHUB_TOKEN=<new>` |
 | `404 Not Found` on org | Org name changed or PAT lost org access — verify `Abstract-Data` org membership and PAT scopes (`repo`, `read:org`) |
-| `ETIMEDOUT` / rate limit | Transient — @mention the agent to re-run; if recurring, add delay logic in `sync-github-items.ts` |
 | Partial sync / upsert failures | Check the `Fix GitHub Sync — YYYY-MM-DD` task linked in the dead letter for specifics |
 
 **After fixing:** @mention GitHub Insyncerator for an on-demand run. Confirm `Sync Status: ✅ Complete` in the new digest. Fleet Ops Agent will auto-resolve the stale dead letters on its next daily run via `resolve-stale-dead-letters`.
