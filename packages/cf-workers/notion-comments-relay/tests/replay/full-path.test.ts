@@ -40,7 +40,7 @@ describe("replay Mode B (full path, stub AI)", () => {
     expect(r.rows[0]?.clef_decision).toBe("would_wake");
   });
 
-  test("burst of non-John page.created under one parent: one Clef row per event", async () => {
+  test("burst of non-John page.created under one parent: one Clef row per event (constant-score wakes last 2)", async () => {
     const r = await run("02-burst-page-created");
     expect(r.statuses).toEqual([200, 200, 200, 200, 200, 200]);
     expect(r.buffered).toBe(6);
@@ -48,7 +48,10 @@ describe("replay Mode B (full path, stub AI)", () => {
     expect(new Set(r.rows.map((x) => x.item_id)).size).toBe(6);
     // Option 1 (PR B): page.created + p_action <= 0.05 + q_when ignore ⇒ would_skip, logged only (flag off).
     expect(r.rows.every((x) => x.clef_decision === "would_skip" && x.q_when === "ignore")).toBe(true);
-    expect(r.rows.every((x) => x.reason === "clef_ok;page_created_ignore" && !x.live_skip)).toBe(true);
+    const skipped = r.rows.filter((x) => String(x.reason ?? "").includes("page_created_ignore"));
+    const forced = r.rows.filter((x) => String(x.reason ?? "").includes("clef_constant_score"));
+    expect(skipped.length).toBe(4);
+    expect(forced.length).toBe(2);
   });
 
   test("page.created under an untracked parent still reaches Clef", async () => {
@@ -96,15 +99,15 @@ describe("replay Mode B (full path, stub AI)", () => {
   test("Option 1 live (CLEF_SKIP_PAGE_CREATED_LIVE=1): page.created low-action ignore is not forwarded, each skip logged", async () => {
     const r = await run("02-burst-page-created", LIVE);
     expect(r.statuses).toEqual([200, 200, 200, 200, 200, 200]);
-    expect(r.buffered).toBe(0);
+    expect(r.buffered).toBe(2);
     expect(r.cos_calls).toBe(0);
     const live = r.rows.filter((x) => x.live_skip);
-    expect(live.length).toBe(6);
+    expect(live.length).toBe(4);
     expect(live.every((x) => x.reason === "clef_live_skip:page_created_ignore" && x.actually_ran === "clef_live_skipped")).toBe(true);
-    expect(new Set(live.map((x) => x.item_id)).size).toBe(6);
+    expect(new Set(live.map((x) => x.item_id)).size).toBe(4);
     expect(live.every((x) => x.item_id.startsWith("opaque:"))).toBe(true);
     // The wake-path row is still written once per event.
-    expect(r.rows.filter((x) => !x.live_skip && x.reason === "clef_ok;page_created_ignore").length).toBe(6);
+    expect(r.rows.filter((x) => !x.live_skip && String(x.reason ?? "").includes("page_created_ignore")).length).toBe(4);
   });
 
   for (const [name, reason] of [

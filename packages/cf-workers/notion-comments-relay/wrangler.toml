@@ -59,3 +59,5 @@ crons = ["*/1 * * * *"]
 # [[migrations]]
 # tag = "v1-day-log-serializer"
 # new_classes = ["DayLogSerializer"]
+
+# CLEF_PAGE_CREATED_HONOR_JOHN_AUTHORED = "1"  # optional; unset = fixed Clef gate (0); 1 = honor john_authored
