@@ -414,6 +414,40 @@ global `CLEF_DAILY_CALL_CAP`. Clef mode `off` ⇒ no call; `jre@mail.grokbot.com
 scored echo drop with `candidate_false_skip:true` counts toward `false_skips` (the echo filter is live, so that is a real
 missed wake if Clef is right).
 
+### Clef `page.created` skip rule (Option 1, default OFF)
+
+**Why nothing was rejected:** `decideClefOutcome` skips only when `p_action <= 0.05` **and** `p_dup >= 0.80`. A new
+page cannot be a duplicate, so `page.created` never skipped: in the logged rows every low-action `page.created` came out
+`would_batch` (Oct 20 to Nov 9: 0 of 1,096 scored `page.created` rows skipped).
+
+**Rule (John, 2026-11-09):** for `page.created` only, Clef also skips when `p_action <= 0.05` **and** `q_when = "ignore"`
+(`decideClefOutcomeForEvent`). Every other event keeps `decideClefOutcome` unchanged, and `q_when = ignore` still only
+batches elsewhere. The rule applies only to a real Clef score (`pageCreatedRuleEligible`):
+- the wake path reached Clef: no hard override (John / bot mention, Submitted, **Needs John or Sensitive set**,
+  `notion_fetch_failed`, `notion_fetch_timeout`, `notion_page_unreadable`, `needs_john_changed`, `properties_unavailable`, …),
+  no dedupe repeat, no cap, no Clef error;
+- properties were fetched, Needs John and Sensitive are not set, and the Clef mode resolved without a fallback reason;
+- when the page is in the 10% full-model sample, the full model must also say skip, otherwise the event wakes.
+
+A matching row logs `clef_decision: "would_skip"`, `reason: "clef_ok;page_created_ignore"`, `page_created_rule: "would_skip"`.
+
+**Live flag `CLEF_SKIP_PAGE_CREATED_LIVE`:** unset (default) or anything but `1` = **shadow**: the would-skip is logged
+and the event is still forwarded. `1` = **live**, for `page.created` only: the forward path waits for the Clef verdict
+the shadow gates already compute (at most `CLEF_LIVE_DECISION_TIMEOUT_MS`, default `8000`; timeout or error forwards),
+and a matching event is not forwarded. Each live skip writes one extra masked row to `gate_log:v1` (stream
+`clef_wake_shadow`, same opaque `item_id` / `event_key`, scores, `live_skip: true`, `actually_ran: "clef_live_skipped"`,
+`mode: "live"`, `reason: "clef_live_skip:page_created_ignore"`; no titles or content). Nothing else becomes live. The Clef
+kill switch still wins: `clef:mode:global` / `clef:mode:clef_wake` = `off` means no Clef call, so nothing is skipped.
+
+**Turning it on (no secrets):** it is a plain var. Either add `CLEF_SKIP_PAGE_CREATED_LIVE = "1"` under `[vars]` in
+`wrangler.toml` (reviewed PR, then `npx wrangler deploy`), or for a one-off canary deploy
+`npx wrangler deploy --var CLEF_SKIP_PAGE_CREATED_LIVE:1`. A dashboard var is replaced by the next deploy, so the
+`wrangler.toml` route is the durable one. **Turning it off:** remove the var (or set `"0"`) and deploy, or roll back:
+
+```bash
+npx wrangler rollback b6bd254e-0f7f-42be-908f-8c67a4815dac   # version deployed before PR A / PR B
+```
+
 ### Deploy vars (`wrangler.toml` `[vars]`)
 
 Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these). Secrets stay in Wrangler secrets / dashboard.
@@ -436,6 +470,8 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `TRACKED_DATA_SOURCE_IDS` | set in `[vars]` | Echo filter property rule fails open (no `untracked_property_edit` drops). `TRACKED_PARENT_IDS` = deprecated alias (merged) |
 | `ECHO_FILTER_LANE_NAMES` | optional | Built-in LOCK-39 lane names (`DEFAULT_LOCK39_LANE_NAMES`) |
 | `ECHO_FILTER` | optional | Live; `off` disables the echo filter (verdicts still logged) |
+| `CLEF_SKIP_PAGE_CREATED_LIVE` | optional | Shadow (default). `1` makes the Clef `page.created` skip rule live (see above) |
+| `CLEF_LIVE_DECISION_TIMEOUT_MS` | optional | Live mode only: max wait for the Clef verdict before forwarding (default `8000`) |
 
 KV: `wake_gate_adopted_at:<pageId>` (**90-day** TTL) for adopted-change dedupe after a shadow `adopted_change` wake.
 
@@ -478,7 +514,11 @@ Measures what the Clef wake gate *would* do, offline. It never deploys, calls Cl
 prints labels, counts and `opaque:` hashes only (any non-`opaque:` id prints as `[unmasked]`; titles/content are never read).
 
 **Mode A, real rows, no AI:** re-decides exported `clef_wake_shadow` rows with today's `decideClefOutcome` and two
-candidate rules, `variant1` (also skip when `p_action <= 0.05 && q_when = ignore`) and `variant2` (same at `<= 0.3`).
+candidate rules, `variant1` (also skip when `p_action <= 0.05 && q_when = ignore`) and `variant2` (same at `<= 0.3`),
+plus `option1`, the shipped `page.created` rule (variant1 on eligible `page.created` wake-path rows only). An
+`option1 page.created` summary reports rows, eligible rows, would-skips, live skips (full model agrees or unsampled),
+full-model wakes among would-skips and Needs John / Sensitive would-skips (must be 0). `live_skip` rows are counted
+separately and never double-counted.
 
 ```bash
 bun run replay -- --rows /path/outside/repo/masked-rows.jsonl
@@ -502,6 +542,7 @@ forwarded events are only counted as `buffered`; CoS is never called.
 
 ```bash
 bun run replay -- --fixtures fixtures/replay
+bun run replay -- --fixtures fixtures/replay --live   # same with CLEF_SKIP_PAGE_CREATED_LIVE=1
 bun test tests/replay/            # pins Mode A logic and each fixture's current behavior (also part of bun run test)
 ```
 

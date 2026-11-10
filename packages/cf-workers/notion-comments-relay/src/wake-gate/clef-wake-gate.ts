@@ -1,7 +1,9 @@
 import { invokeClefFlash, invokeClefFull, type ParsedClefRun } from "./clef-ai.js";
 import { tryConsumeClefCall } from "./clef-daily-cap.js";
 import { resolveClefMode } from "./clef-mode.js";
-import { clefHardOverrideReason } from "./clef-overrides.js";
+import { clefHardOverrideReason, mustWakeOverrideReason } from "./clef-overrides.js";
+import { decideClefOutcomeForEvent, isClefPageCreatedEvent } from "./clef-decision-logic.js";
+import { isTruthyFlag } from "./gate-context-safety.js";
 import { buildClefStateString, mapClefSource } from "./clef-state.js";
 import { CLEF_FULL_SAMPLE_PERCENT } from "./clef-thresholds.js";
 import type { Env } from "../env.js";
@@ -17,6 +19,48 @@ import { enqueueGateLogRow } from "../gate-log-ring.js";
 import { runRuleSkipClefShadow } from "./clef-rule-skip-shadow.js";
 
 const DUPLICATE_WINDOW_MS = 60_000;
+
+/** Reason suffix on a wake-path row whose page.created event met the Option 1 skip rule. */
+export const PAGE_CREATED_RULE_TAG = "page_created_ignore";
+
+/**
+ * CLEF_SKIP_PAGE_CREATED_LIVE=1 makes the Option 1 page.created skip LIVE (the event is not forwarded).
+ * Anything else (default, unset) = shadow: the would_skip is logged and the event still wakes.
+ */
+export function clefSkipPageCreatedLive(env: Pick<Env, "CLEF_SKIP_PAGE_CREATED_LIVE">): boolean {
+  return env.CLEF_SKIP_PAGE_CREATED_LIVE?.trim() === "1";
+}
+
+/** What the Clef gate decided for this event, for the forward path (live page.created skip only). */
+export type ClefGateResult = {
+  /** The wake-path row as logged (null when the gate returned before a wake-path row). */
+  entry: ClefShadowLogEntry | null;
+  /** True only when the Option 1 rule says skip on a real, eligible Clef score. Never set for other events. */
+  pageCreatedSkip: boolean;
+};
+
+const NO_SKIP: ClefGateResult = { entry: null, pageCreatedSkip: false };
+
+/**
+ * The Option 1 rule may only decide a page.created event Clef scored with real signal: properties
+ * fetched and parsed, no fetch failure, no mode fallback reason, Needs John / Sensitive not set, and no
+ * must-wake override (re-checked here so a future caller cannot skip one by accident).
+ */
+export function pageCreatedRuleEligible(
+  ctx: GateEventContext,
+  notionType: string | null,
+  parsed: Record<string, unknown>,
+  modeReason: string | null,
+): boolean {
+  if (!isClefPageCreatedEvent(notionType)) return false;
+  if (modeReason) return false;
+  if (!ctx.propertiesAvailable || ctx.notionFetchFailReason) return false;
+  const props = ctx.properties;
+  if (isTruthyFlag(ctx.needsJohnNow) || isTruthyFlag(props?.needsJohn) || isTruthyFlag(props?.sensitive)) {
+    return false;
+  }
+  return mustWakeOverrideReason(ctx, parsed) === null;
+}
 
 /** Default window for the pre-Clef same-item dedupe (CLEF_ITEM_DEDUPE_WINDOW_S). */
 export const ITEM_DEDUPE_WINDOW_S_DEFAULT = 600;
@@ -237,7 +281,7 @@ export async function runClefShadowWakeGate(
   parsed: Record<string, unknown>,
   parseOk: boolean,
   ruleDecisions: WakeGateDecision[],
-): Promise<void> {
+): Promise<ClefGateResult> {
   const itemId = resolveOpaqueItemId(ctx, parsed);
   const ruleDecision = aggregateRuleDecision(ruleDecisions);
   const modeRes = await resolveClefMode(env);
@@ -260,7 +304,7 @@ export async function runClefShadowWakeGate(
         pageEventsLast60s: ctx.pageId ? peekPageEventCount(ctx.pageId) : 0,
       });
     }
-    return;
+    return NO_SKIP;
   }
 
   const overrideReason = clefHardOverrideReason(ctx, parsed, parseOk, ruleDecisions);
@@ -278,7 +322,7 @@ export async function runClefShadowWakeGate(
       entry.reason = `${overrideReason};${modeRes.reason}`;
     }
     await appendClefShadowLog(env, entry);
-    return;
+    return NO_SKIP;
   }
 
   // Pre-Clef dedupe (after hard overrides, so John / Submitted / Needs John never dedupe).
@@ -304,7 +348,7 @@ export async function runClefShadowWakeGate(
       pageEventsLast60s: ctx.pageId ? peekPageEventCount(ctx.pageId) : 0,
       scoreAll: true, // 100% of dedupe repeats are scored (capped); each logs scored true/false
     });
-    return;
+    return NO_SKIP;
   }
 
   if (!modeRes.allowClefCall) {
@@ -318,7 +362,7 @@ export async function runClefShadowWakeGate(
       modeRes.reason ?? "clef_mode_off",
     );
     await appendClefShadowLog(env, entry);
-    return;
+    return NO_SKIP;
   }
 
   const cap = await tryConsumeClefCall(env);
@@ -333,7 +377,7 @@ export async function runClefShadowWakeGate(
       cap.reason,
     );
     await appendClefShadowLog(env, entry);
-    return;
+    return NO_SKIP;
   }
 
   const pageEventsLast60s = ctx.pageId ? bumpPageEventCount(env, ctx.pageId) : 0;
@@ -357,13 +401,17 @@ export async function runClefShadowWakeGate(
     entry.reason = flash.reason;
     entry.clef_decision = "would_wake";
     await appendClefShadowLog(env, entry);
-    return;
+    return NO_SKIP;
   }
 
   entry = applyClefRun(entry, flash.parsed);
   if (modeRes.reason) {
     entry.reason = `${entry.reason};${modeRes.reason}`;
   }
+  const ruleEligible = pageCreatedRuleEligible(ctx, notionType, parsed, modeRes.reason);
+  const decide = (run: ParsedClefRun) =>
+    ruleEligible ? decideClefOutcomeForEvent(run.pAction, run.pDup, run.qWhen, notionType) : run.decision;
+  entry.clef_decision = decide(flash.parsed);
 
   if (shouldRunClefFullSample(itemId)) {
     const fullCap = await tryConsumeClefCall(env);
@@ -371,7 +419,7 @@ export async function runClefShadowWakeGate(
       const full = await invokeClefFull(env, state);
       if (full.ok) {
         entry.sampled_full = {
-          decision: full.parsed.decision,
+          decision: decide(full.parsed),
           p_action: full.parsed.pAction,
           p_dup: full.parsed.pDup,
           q_when: full.parsed.qWhen,
@@ -381,5 +429,16 @@ export async function runClefShadowWakeGate(
     }
   }
 
+  // Option 1 skip: flash says skip AND (when sampled) the full model agrees; otherwise wake.
+  const pageCreatedSkip =
+    ruleEligible &&
+    entry.clef_decision === "would_skip" &&
+    (entry.sampled_full === null || entry.sampled_full.decision === "would_skip");
+  if (pageCreatedSkip) {
+    entry.reason = `${entry.reason};${PAGE_CREATED_RULE_TAG}`;
+    entry.page_created_rule = "would_skip";
+  }
+
   await appendClefShadowLog(env, entry);
+  return { entry, pageCreatedSkip };
 }

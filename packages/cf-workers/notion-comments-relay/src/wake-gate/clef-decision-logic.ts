@@ -21,3 +21,29 @@ export function decideClefOutcome(
   }
   return "would_wake";
 }
+
+/** Webhook event types the page_created skip rule (Option 1) applies to. */
+export const CLEF_PAGE_CREATED_EVENT = "page.created";
+
+export function isClefPageCreatedEvent(notionType: string | null): boolean {
+  return notionType === CLEF_PAGE_CREATED_EVENT;
+}
+
+/**
+ * Event-aware Clef outcome (Option 1, John 2026-11-09). A new page cannot be a duplicate, so the
+ * p_dup rule above never skips page.created. For page.created only, also skip when
+ * p_action <= 0.05 AND q_when = "ignore". Every other event type is decided by decideClefOutcome
+ * unchanged. Callers apply this only to a real Clef score (no override, no fallback, no mode reason);
+ * see pageCreatedRuleEligible in clef-wake-gate.ts.
+ */
+export function decideClefOutcomeForEvent(
+  pAction: number,
+  pDup: number,
+  qWhen: "now" | "batch" | "ignore",
+  notionType: string | null,
+): ClefOutcome {
+  if (isClefPageCreatedEvent(notionType) && pAction <= CLEF_P_ACTION_SKIP_MAX && qWhen === "ignore") {
+    return "would_skip";
+  }
+  return decideClefOutcome(pAction, pDup, qWhen);
+}

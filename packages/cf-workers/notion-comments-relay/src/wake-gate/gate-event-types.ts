@@ -68,6 +68,10 @@ export type ClefShadowLogEntry = {
   cap_exhausted?: boolean;
   /** Echo-filter skip rows (LOCK-69): the drop reason (own_echo / agent_prefix / untracked_property_edit). */
   echo_reason?: string;
+  /** Wake-path page.created row that met the Option 1 skip rule (p_action <= 0.05, q_when ignore). */
+  page_created_rule?: "would_skip";
+  /** Row written by the forward path when CLEF_SKIP_PAGE_CREATED_LIVE=1 actually skipped the event. */
+  live_skip?: boolean;
 };
 
 export type FleetLocksFieldSnapshot = {
