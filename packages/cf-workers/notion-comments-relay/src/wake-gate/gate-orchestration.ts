@@ -1,5 +1,5 @@
 import { adoptedChangeGateName, decideAdoptedChangeGate } from "./adopted-change-gate.js";
-import { opaqueLogItemId, runClefShadowWakeGate } from "./clef-wake-gate.js";
+import { type ClefGateResult, opaqueLogItemId, runClefShadowWakeGate } from "./clef-wake-gate.js";
 import { decideCommentsEchoGate } from "./comments-echo-gate.js";
 import type { Env } from "../env.js";
 import {
@@ -516,7 +516,7 @@ async function runGateDecisions(
   notionType: string | null,
   parsed: Record<string, unknown>,
   parseOk: boolean,
-): Promise<WakeGateDecision[]> {
+): Promise<{ decisions: WakeGateDecision[]; clef: ClefGateResult }> {
   const decisions: WakeGateDecision[] = [];
   decisions.push(decideCommentsEchoGate(ctx));
 
@@ -540,8 +540,8 @@ async function runGateDecisions(
       await storeAdoptedAtDedupe(env, ctx, ctx.fleetLocksAdoptedAt);
     }
   }
-  await runClefShadowWakeGate(env, ctx, notionType, parsed, parseOk, decisions);
-  return decisions;
+  const clef = await runClefShadowWakeGate(env, ctx, notionType, parsed, parseOk, decisions);
+  return { decisions, clef };
 }
 
 export async function runHarnessRuleShadowGates(
@@ -551,13 +551,13 @@ export async function runHarnessRuleShadowGates(
   rawBody: string,
   parseOk = true,
   fetchScope?: string,
-): Promise<void> {
+): Promise<ClefGateResult | null> {
   try {
     const ctx = buildGateContext(parsed, notionType, rawBody, env);
     ctx.fetchScope = fetchScope;
     if (shouldDropGateLogEvent(ctx, env)) {
       await logGateLogDrop(env, ctx, notionType);
-      return;
+      return null;
     }
     try {
       await markDuplicateIfNeeded(env, ctx);
@@ -569,8 +569,9 @@ export async function runHarnessRuleShadowGates(
     } catch (err) {
       ctx.notionFetchFailReason = `error:${err instanceof Error ? err.name : "Error"}`;
     }
-    await runGateDecisions(env, ctx, notionType, parsed, parseOk);
+    return (await runGateDecisions(env, ctx, notionType, parsed, parseOk)).clef;
   } catch (err) {
     await appendShadowLog(env, shadowRunnerErrorDecision(err));
+    return null;
   }
 }

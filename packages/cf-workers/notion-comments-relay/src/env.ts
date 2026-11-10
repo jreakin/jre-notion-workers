@@ -33,6 +33,14 @@ export interface Env {
   CLEF_ECHO_SKIP_DAILY_CAP?: string;
   /** Fallback Clef mode when KV unset: off | shadow only. */
   CLEF_DEFAULT_MODE?: string;
+  /**
+   * Clef page.created skip rule (Option 1). `1` = LIVE: a page.created event Clef scores
+   * p_action <= 0.05 and q_when = ignore (no override, no fallback) is not forwarded. Anything else
+   * (default) = shadow: the would_skip is logged and the event still wakes. Nothing else becomes live.
+   */
+  CLEF_SKIP_PAGE_CREATED_LIVE?: string;
+  /** Live mode only: ms the forward path waits for the Clef verdict before forwarding anyway (default 8000). */
+  CLEF_LIVE_DECISION_TIMEOUT_MS?: string;
   /** Comma-separated Gate Log data source / database ids — drop before rule gates. */
   GATE_LOG_DATA_SOURCE_IDS?: string;
 

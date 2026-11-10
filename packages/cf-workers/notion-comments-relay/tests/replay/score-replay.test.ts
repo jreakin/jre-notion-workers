@@ -80,11 +80,11 @@ describe("replay Mode A", () => {
       rows: 3,
       scored: 3,
       logged_skip: 0,
-      skip: { current: 0, variant1: 1, variant2: 2 },
+      skip: { current: 0, variant1: 1, variant2: 2, option1: 1 },
     });
     expect(rep.groups.find((g) => g.bucket === "notion_fetch_failed")?.scored).toBe(0);
     expect(rep.groups.find((g) => g.bucket === "error")?.rows).toBe(1);
-    expect(rep.totals).toEqual({ current: 0, variant1: 2, variant2: 3 });
+    expect(rep.totals).toEqual({ current: 0, variant1: 2, variant2: 3, option1: 1 });
     const text = formatReport(rep, parsed);
     expect(text).toContain("v1_rate");
     expect(text).toContain("66.7%");
@@ -113,7 +113,7 @@ describe("replay Mode A", () => {
     expect(ids).toEqual(["opaque:s1", "opaque:s2", "opaque:s3", "opaque:s4", "opaque:s5"]);
     expect(rep.suspicious[0]?.why).toEqual(["needs_john"]);
     expect(rep.suspicious[3]?.why).toEqual(["sampled_full_wake"]);
-    expect(rep.suspicious[0]?.variants).toEqual(["variant1", "variant2"]);
+    expect(rep.suspicious[0]?.variants).toEqual(["variant1", "variant2", "option1"]);
   });
 
   test("accepts gate_log:v1 KV values, skips bad lines and other streams, never echoes content", () => {
@@ -138,5 +138,50 @@ describe("replay Mode A", () => {
     expect(reasonBucket("")).toBe("(none)");
     expect(maskedId("opaque:abc")).toBe("opaque:abc");
     expect(maskedId("raw-page-id")).toBe("[unmasked]");
+  });
+
+  test("option1: page.created eligible rows only; full-model wakes and live_skip rows reported", () => {
+    const full = (decision: string, p_action: number, q_when: string) => ({ decision, p_action, p_dup: 0.1, q_when, model: "m" });
+    const rep = replay(
+      parseReplayInput(
+        jsonl([
+          row({ item_id: "opaque:o1" }),
+          row({ item_id: "opaque:o2", reason: "clef_ok;page_created_ignore", clef_decision: "would_skip" }),
+          row({ item_id: "opaque:o3", sampled_full: full("would_wake", 0.8, "now") }),
+          row({ item_id: "opaque:o4", sampled_full: full("would_batch", 0.01, "ignore") }),
+          row({ item_id: "opaque:o5", reason: "clef_ok;clef_mode_invalid" }),
+          row({ item_id: "opaque:o6", event: "page.properties_updated" }),
+          row({ item_id: "opaque:o7", decision: "rule_skip", reason: "rule_skip:clef_ok" }),
+          row({ item_id: "opaque:o8", p_action: 0.9, q_when: "now", clef_decision: "would_wake" }),
+          row({ item_id: "opaque:o2", reason: "clef_live_skip:page_created_ignore", clef_decision: "would_skip", live_skip: true }),
+        ]),
+      ).rows,
+    );
+    expect(rep.baseline_mismatch).toBe(0);
+    expect(rep.option1).toEqual({
+      page_created_rows: 7,
+      page_created_scored: 7,
+      eligible: 5,
+      would_skip: 4,
+      live_skip: 3,
+      full_sampled_among_skips: 2,
+      full_model_wakes_among_skips: 1,
+      needs_john_or_sensitive_skips: 0,
+      live_skip_rows_in_input: 1,
+    });
+    expect(variantOutcome(one({ event: "page.properties_updated" }), "option1")).toBe("would_batch");
+    expect(variantOutcome(one({ needs_john: true }), "option1")).toBe("would_skip");
+    const dup = replay(
+      parseReplayInput(
+        jsonl([
+          row({ item_id: "opaque:d1", p_action: 0.01, p_dup: 0.95, q_when: "now", clef_decision: "would_skip" }),
+          row({ item_id: "opaque:d2", sampled_full: { decision: "would_skip", p_action: 0.01, p_dup: 0.95, q_when: "now", model: "m" } }),
+        ]),
+      ).rows,
+    );
+    expect(dup.option1.would_skip).toBe(1);
+    expect(dup.option1.live_skip).toBe(0);
+    const nj = replay(parseReplayInput(jsonl([row({ needs_john: true })])).rows);
+    expect(nj.option1.needs_john_or_sensitive_skips).toBe(1);
   });
 });

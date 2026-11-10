@@ -12,6 +12,9 @@ import {
   gateLogBlocksForward,
 } from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
+import { isClefPageCreatedEvent } from "./wake-gate/clef-decision-logic.js";
+import { awaitClefVerdict, isLiveSkipVerdict, logClefLiveSkip, readClefLiveDecisionTimeoutMs } from "./wake-gate/clef-live-skip.js";
+import { type ClefGateResult, clefSkipPageCreatedLive } from "./wake-gate/clef-wake-gate.js";
 import { cosPrefilterLive, decideCosPrefilterAfterFetch, logCosPrefilter } from "./wake-gate/cos-prefilter.js";
 import { decideEchoFilter, logEchoFilter, resolveEchoCommentText } from "./wake-gate/echo-filter.js";
 import { runEchoSkipClefShadow } from "./wake-gate/clef-echo-skip-shadow.js";
@@ -651,6 +654,7 @@ export default {
       }
 
       let cosDrop: string | null = null;
+      let liveClef: ClefGateResult | null = null;
       // One Notion page GET per page per request, shared by the prefilter and the shadow gates.
       const fetchScope = crypto.randomUUID();
       if (parseOk) {
@@ -714,7 +718,13 @@ export default {
           );
         }
         try {
-          ctx.waitUntil(runShadowWakeGates(env, parsed, notionType, rawBody, true, fetchScope));
+          const shadow = runShadowWakeGates(env, parsed, notionType, rawBody, true, fetchScope);
+          ctx.waitUntil(shadow);
+          // Option 1 live skip (CLEF_SKIP_PAGE_CREATED_LIVE=1, page.created only): wait, bounded, for the
+          // Clef verdict the shadow gates already compute. Timeout / error ⇒ forward (fail open).
+          if (!cosDrop && clefSkipPageCreatedLive(env) && isClefPageCreatedEvent(notionType)) {
+            liveClef = await awaitClefVerdict(shadow, readClefLiveDecisionTimeoutMs(env));
+          }
         } catch (shadowErr) {
           const shadowErrorName = shadowErr instanceof Error ? shadowErr.name : "Error";
           console.log(
@@ -751,6 +761,12 @@ export default {
         };
         await recordForward(env, dropped);
         console.log(JSON.stringify(dropped));
+        return new Response("ok", { status: 200 });
+      }
+
+      if (isLiveSkipVerdict(liveClef)) {
+        // Clef page.created skip is LIVE: the shadow rows are logged; only the CoS wake is skipped.
+        await logClefLiveSkip(env, liveClef);
         return new Response("ok", { status: 200 });
       }
 

@@ -3,6 +3,7 @@
  *
  *   bun run replay -- --rows <masked.jsonl>         Mode A: re-decide exported rows (no AI)
  *   bun run replay -- --fixtures <dir-or-file.json> Mode B: masked fixtures through the real pipeline (stub AI)
+ *   bun run replay -- --fixtures <dir> --live       Mode B with CLEF_SKIP_PAGE_CREATED_LIVE=1
  *
  * Output is labels, counts and opaque hashes only.
  */
@@ -12,7 +13,7 @@ import { formatReport, parseReplayInput, replay } from "./replay-lib.js";
 import { formatFixtureResult, runFixture, type ReplayFixture } from "./replay-pipeline.js";
 
 function usage(): never {
-  console.error("usage: bun run replay -- --rows <file.jsonl> | --fixtures <dir|file.json>");
+  console.error("usage: bun run replay -- --rows <file.jsonl> | --fixtures <dir|file.json> [--live]");
   process.exit(2);
 }
 
@@ -27,7 +28,7 @@ function fixtureFiles(path: string): string[] {
 }
 
 async function main(argv: string[]): Promise<void> {
-  const [flag, path] = argv;
+  const [flag, path, extra] = argv;
   if (!path) usage();
   if (flag === "--rows") {
     const parsed = parseReplayInput(readFileSync(path, "utf8"));
@@ -37,7 +38,7 @@ async function main(argv: string[]): Promise<void> {
   if (flag === "--fixtures") {
     for (const file of fixtureFiles(path)) {
       const fixture = JSON.parse(readFileSync(file, "utf8")) as ReplayFixture;
-      const result = await runFixture(fixture);
+      const result = await runFixture(fixture, extra === "--live" ? { CLEF_SKIP_PAGE_CREATED_LIVE: "1" } : {});
       console.log(formatFixtureResult(result));
     }
     return;

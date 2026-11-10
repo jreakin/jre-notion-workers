@@ -13,9 +13,11 @@ function load(name: string): ReplayFixture {
   return JSON.parse(readFileSync(join(DIR, `${name}.json`), "utf8")) as ReplayFixture;
 }
 
-async function run(name: string): Promise<FixtureResult> {
-  return runFixture(load(name));
+async function run(name: string, env: Record<string, string> = {}): Promise<FixtureResult> {
+  return runFixture(load(name), env);
 }
+
+const LIVE = { CLEF_SKIP_PAGE_CREATED_LIVE: "1" };
 
 describe("replay Mode B (full path, stub AI)", () => {
   test("fixtures contain only fake ids and masked titles", () => {
@@ -44,7 +46,9 @@ describe("replay Mode B (full path, stub AI)", () => {
     expect(r.buffered).toBe(6);
     expect(r.rows.length).toBe(6);
     expect(new Set(r.rows.map((x) => x.item_id)).size).toBe(6);
-    expect(r.rows.every((x) => x.clef_decision === "would_batch" && x.q_when === "ignore")).toBe(true);
+    // Option 1 (PR B): page.created + p_action <= 0.05 + q_when ignore ⇒ would_skip, logged only (flag off).
+    expect(r.rows.every((x) => x.clef_decision === "would_skip" && x.q_when === "ignore")).toBe(true);
+    expect(r.rows.every((x) => x.reason === "clef_ok;page_created_ignore" && !x.live_skip)).toBe(true);
   });
 
   test("page.created under an untracked parent still reaches Clef", async () => {
@@ -87,5 +91,53 @@ describe("replay Mode B (full path, stub AI)", () => {
     const text = formatFixtureResult(await run("05-tracked-edit-props-ok"));
     expect(text).not.toContain("[masked]");
     expect(text).not.toContain("fa4e0000");
+  });
+
+  test("Option 1 live (CLEF_SKIP_PAGE_CREATED_LIVE=1): page.created low-action ignore is not forwarded, each skip logged", async () => {
+    const r = await run("02-burst-page-created", LIVE);
+    expect(r.statuses).toEqual([200, 200, 200, 200, 200, 200]);
+    expect(r.buffered).toBe(0);
+    expect(r.cos_calls).toBe(0);
+    const live = r.rows.filter((x) => x.live_skip);
+    expect(live.length).toBe(6);
+    expect(live.every((x) => x.reason === "clef_live_skip:page_created_ignore" && x.actually_ran === "clef_live_skipped")).toBe(true);
+    expect(new Set(live.map((x) => x.item_id)).size).toBe(6);
+    expect(live.every((x) => x.item_id.startsWith("opaque:"))).toBe(true);
+    // The wake-path row is still written once per event.
+    expect(r.rows.filter((x) => !x.live_skip && x.reason === "clef_ok;page_created_ignore").length).toBe(6);
+  });
+
+  for (const [name, reason] of [
+    ["08-page-created-needs-john", "needs_john_or_sensitive"],
+    ["09-page-created-sensitive", "needs_john_or_sensitive"],
+    ["10-page-created-fetch-fail", "notion_fetch_failed"],
+  ] as const) {
+    test(`Option 1: ${name} always wakes, flag off and on`, async () => {
+      for (const env of [{}, LIVE]) {
+        const r = await run(name, env);
+        expect(r.buffered).toBe(1);
+        expect(r.ai_calls).toBe(0);
+        expect(r.rows.some((x) => x.live_skip)).toBe(false);
+        expect(r.rows[0]?.reason).toBe(reason);
+        expect(r.rows[0]?.clef_decision).toBe("would_wake");
+      }
+    });
+  }
+
+  test("Option 1 does not apply to properties_updated: low-action ignore edit batches and is forwarded with the flag on", async () => {
+    for (const env of [{}, LIVE]) {
+      const r = await run("11-tracked-edit-low-action", env);
+      expect(r.buffered).toBe(1);
+      expect(r.rows.length).toBe(1);
+      expect(r.rows[0]?.reason).toBe("clef_ok");
+      expect(r.rows[0]?.clef_decision).toBe("would_batch");
+    }
+  });
+
+  test("Option 1 live: Clef mode off (kill switch) ⇒ no score ⇒ forwarded", async () => {
+    const r = await run("02-burst-page-created", { ...LIVE, CLEF_DEFAULT_MODE: "off" });
+    expect(r.buffered).toBe(6);
+    expect(r.ai_calls).toBe(0);
+    expect(r.rows.some((x) => x.live_skip)).toBe(false);
   });
 });

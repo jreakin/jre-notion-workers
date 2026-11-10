@@ -1,0 +1,76 @@
+{
+  "name": "11-tracked-edit-low-action",
+  "description": "tracked-parent properties_updated; Clef stub says low action, ignore: page_created rule does not apply (batch, forwarded)",
+  "env": {
+    "NON_SUBMITTED_PROPERTY_IDS": "fakeOther"
+  },
+  "notion_pages": {
+    "*": {
+      "object": "page",
+      "id": "{i}",
+      "parent": {
+        "type": "data_source_id",
+        "data_source_id": "7aac0000-0000-4000-8000-000000000001"
+      },
+      "created_by": {
+        "object": "user",
+        "id": "33333333-3333-4333-8333-333333333333"
+      },
+      "last_edited_by": {
+        "object": "user",
+        "id": "33333333-3333-4333-8333-333333333333"
+      },
+      "properties": {
+        "Name": {
+          "id": "title",
+          "type": "title",
+          "title": [
+            {
+              "plain_text": "[masked]"
+            }
+          ]
+        },
+        "Needs John": {
+          "id": "fakeNJ",
+          "type": "checkbox",
+          "checkbox": false
+        },
+        "Sensitive": {
+          "id": "fakeSens",
+          "type": "checkbox",
+          "checkbox": false
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "id": "ev-fake-1101",
+      "type": "page.properties_updated",
+      "authors": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "type": "person"
+        }
+      ],
+      "entity": {
+        "id": "fa4e0000-0000-4000-8000-000000001101",
+        "type": "page"
+      },
+      "data": {
+        "parent": {
+          "type": "data_source_id",
+          "data_source_id": "7aac0000-0000-4000-8000-000000000001"
+        },
+        "updated_properties": [
+          "fakeOther"
+        ]
+      }
+    }
+  ],
+  "ai": {
+    "p_action": 0.02,
+    "p_dup": 0.1,
+    "q_when": "ignore"
+  }
+}

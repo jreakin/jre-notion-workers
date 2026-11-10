@@ -1,5 +1,6 @@
 import type { Env } from "../env.js";
 import { runHarnessRuleShadowGates } from "./gate-orchestration.js";
+import type { ClefGateResult } from "./clef-wake-gate.js";
 import {
   AD_DOCS_DATA_SOURCE_ID,
   type GatePageInputs,
@@ -375,9 +376,10 @@ export async function runShadowWakeGates(
   parseOk = true,
   /** Per-request page-fetch memo scope shared with the forward-path prefilter (see GateEventContext). */
   fetchScope?: string,
-): Promise<void> {
+): Promise<ClefGateResult | null> {
   await runAdDocsWakeGateShadow(env, parsed, notionType, fetchScope);
-  await runHarnessRuleShadowGates(env, parsed, notionType, rawBody, parseOk, fetchScope);
+  const clef = await runHarnessRuleShadowGates(env, parsed, notionType, rawBody, parseOk, fetchScope);
   // End of request: flush a partial gate_log batch if it is old enough (low-traffic path).
   await flushGateLogRing(env);
+  return clef;
 }
