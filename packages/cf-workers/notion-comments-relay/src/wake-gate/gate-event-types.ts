@@ -22,6 +22,13 @@ export type NotionPageProperties = {
   inTrash?: boolean;
   submittedChanged?: boolean;
   adDocsParseOk?: boolean;
+  /** Masked Clef auxiliary fields from page properties (select/status/multi_select, lane-like). */
+  clefMasked?: Record<string, string>;
+  launchScopeLabel?: string;
+  scopeLabel?: string;
+  statusLabel?: string;
+  usedTitlePropertyName?: string;
+  needsReview?: boolean;
 };
 
 export type ClefShadowLogEntry = {
@@ -72,6 +79,8 @@ export type ClefShadowLogEntry = {
   page_created_rule?: "would_skip";
   /** Row written by the forward path when CLEF_SKIP_PAGE_CREATED_LIVE=1 actually skipped the event. */
   live_skip?: boolean;
+  /** Opaque hash of the Clef state string (never the string itself). */
+  state_hash?: string;
 };
 
 export type FleetLocksFieldSnapshot = {

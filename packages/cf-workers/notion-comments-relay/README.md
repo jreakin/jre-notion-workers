@@ -474,6 +474,8 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `ECHO_FILTER_LANE_NAMES` | optional | Built-in LOCK-39 lane names (`DEFAULT_LOCK39_LANE_NAMES`) |
 | `ECHO_FILTER` | optional | Live; `off` disables the echo filter (verdicts still logged) |
 | `CLEF_SKIP_PAGE_CREATED_LIVE` | optional | Shadow (default). `1` makes the Clef `page.created` skip rule live (see above) |
+| `CLEF_PAGE_CREATED_HONOR_JOHN_AUTHORED` | optional | Default unset = `0`: fixed Clef gate decides on `page.created` even when John-authored. Set `1` to honor CoS prefilter `john_authored` (no live skip). |
+| `TASKS_DATA_SOURCE_ID` / `TASKS_DATABASE_ID` | optional | Tasks parent for `parent_db=Tasks` and Launch-scope wake guard (default data source in code). |
 | `CLEF_LIVE_DECISION_TIMEOUT_MS` | optional | Live mode only: max wait for the Clef verdict before forwarding (default `8000`) |
 
 KV: `wake_gate_adopted_at:<pageId>` (**90-day** TTL) for adopted-change dedupe after a shadow `adopted_change` wake.
@@ -546,6 +548,7 @@ forwarded events are only counted as `buffered`; CoS is never called.
 ```bash
 bun run replay -- --fixtures fixtures/replay
 bun run replay -- --fixtures fixtures/replay --live   # same with CLEF_SKIP_PAGE_CREATED_LIVE=1
+bun run replay -- --rows /path/masked.jsonl --out-by-event-type /tmp/replay-out  # shard rows by event type
 bun test tests/replay/            # pins Mode A logic and each fixture's current behavior (also part of bun run test)
 ```
 

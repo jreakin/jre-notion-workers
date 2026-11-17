@@ -41,6 +41,15 @@ export interface Env {
   CLEF_SKIP_PAGE_CREATED_LIVE?: string;
   /** Live mode only: ms the forward path waits for the Clef verdict before forwarding anyway (default 8000). */
   CLEF_LIVE_DECISION_TIMEOUT_MS?: string;
+  /**
+   * Unset (default) or `0`: fixed Clef gate decides on page.created even when John-authored.
+   * `1`: honor CoS prefilter john_authored (John-authored page.created never live-skips).
+   */
+  CLEF_PAGE_CREATED_HONOR_JOHN_AUTHORED?: string;
+  /** Tasks data source id for launch-scope wakes (non-secret; defaults in wake-gate-types). */
+  TASKS_DATA_SOURCE_ID?: string;
+  /** Tasks database id (2022 parent.database_id fallback). */
+  TASKS_DATABASE_ID?: string;
   /** Comma-separated Gate Log data source / database ids — drop before rule gates. */
   GATE_LOG_DATA_SOURCE_IDS?: string;
 

@@ -1,4 +1,5 @@
 import { readPageParentIds } from "./notion-ids.js";
+import { parseClefMaskedFieldsFromNotionProperties } from "./clef-notion-masked-fields.js";
 
 export const FLEET_LOCKS_PROPERTY_IDS = {
   status: "]GbO",
@@ -28,6 +29,13 @@ export type ParsedAdDocsProperties = {
   sourceRepo?: string;
   documentType?: string;
   inTrash?: boolean;
+  authorLane?: string;
+  clefMasked?: Record<string, string>;
+  launchScopeLabel?: string;
+  scopeLabel?: string;
+  statusLabel?: string;
+  usedTitlePropertyName?: string;
+  needsReview?: boolean;
 };
 
 export type ParseAdDocsOutcome =
@@ -146,19 +154,33 @@ export function readPageUserIds(page: Record<string, unknown>): {
   };
 }
 
+export function findFirstTitleProperty(
+  properties: Record<string, unknown>,
+): { name: string; prop: Record<string, unknown> } | null {
+  for (const [name, raw] of Object.entries(properties)) {
+    const prop = asRecord(raw);
+    if (prop?.type === "title") {
+      return { name, prop };
+    }
+  }
+  return null;
+}
+
 function readTitleFromProperties(properties: Record<string, unknown>): string | undefined {
+  const byType = findFirstTitleProperty(properties);
+  if (byType) {
+    const text = plainTextFromRichArray(byType.prop.title).trim();
+    if (text) return text;
+  }
   const titleProp =
     findNotionProperty(properties, "", ["Title", "Name"]) ??
     asRecord(properties.Title) ??
     asRecord(properties.Name);
-  if (!titleProp) {
+  if (!titleProp || titleProp.type !== "title") {
     return undefined;
   }
-  if (titleProp.type === "title") {
-    const text = plainTextFromRichArray(titleProp.title).trim();
-    return text || undefined;
-  }
-  return undefined;
+  const text = plainTextFromRichArray(titleProp.title).trim();
+  return text || undefined;
 }
 
 function readCheckbox(prop: Record<string, unknown> | null): boolean | undefined {
@@ -233,6 +255,8 @@ export function parseAdDocsPropertiesFromNotionPage(
     readSelectName(findNotionProperty(props, "", ["Source Repo", "source_repo"])) ?? undefined;
   const documentType =
     readSelectName(findNotionProperty(props, "", ["Document Type", "document_type"])) ?? undefined;
+  const masked = parseClefMaskedFieldsFromNotionProperties(props);
+  const titleFirst = findFirstTitleProperty(props);
   return {
     ok: true,
     properties: {
@@ -243,6 +267,13 @@ export function parseAdDocsPropertiesFromNotionPage(
       sourceRepo,
       documentType,
       inTrash: page.in_trash === true,
+      authorLane: masked.authorLane,
+      clefMasked: masked.clefMasked,
+      launchScopeLabel: masked.launchScopeLabel,
+      scopeLabel: masked.scopeLabel,
+      statusLabel: masked.statusLabel,
+      needsReview: masked.needsReview,
+      usedTitlePropertyName: titleFirst?.name ?? masked.usedTitlePropertyName,
     },
   };
 }

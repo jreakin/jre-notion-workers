@@ -27,6 +27,11 @@ import type {
   NotionPageProperties,
   WakeGateDecision,
 } from "./gate-event-types.js";
+import {
+  isTasksPageCreatedEvent,
+  pageCreatedNeedsTasksLaunchScopeFetch,
+  readLaunchScopeFromNotionProperties,
+} from "./launch-scope-task.js";
 import { trackedParentName, trackedParentNameMap } from "./tracked-parent-names.js";
 import { kvTtl } from "../kv-ttl.js";
 import { enqueueGateLogRow } from "../gate-log-ring.js";
@@ -265,10 +270,14 @@ function pageEventNeedsNotionFetch(
   ctx: GateEventContext,
   notionType: string | null,
   enrich: EnrichOpts = {},
+  env?: Env,
 ): boolean {
   const adDocsTypes = new Set(["page.created", "page.added", "page_created"]);
+  const needsTasksLaunchScope =
+    env !== undefined && pageCreatedNeedsTasksLaunchScopeFetch(ctx, env, notionType);
   const needsAdDocs = Boolean(
-    (notionType && adDocsTypes.has(notionType) && !ctx.propertiesAvailable) ||
+    needsTasksLaunchScope ||
+      (notionType && adDocsTypes.has(notionType) && !ctx.propertiesAvailable) ||
       (enrich.parsePropertyEdits && !ctx.propertiesAvailable && isTrackedPropertyEdit(ctx, notionType)),
   );
   const fleetPage =
@@ -349,7 +358,7 @@ export async function enrichContextFromNotionPage(
   if (!ctx.pageId) {
     return;
   }
-  if (!pageEventNeedsNotionFetch(ctx, notionType, enrich)) {
+  if (!pageEventNeedsNotionFetch(ctx, notionType, enrich, env)) {
     return;
   }
   const trackedEditBeforeFetch = Boolean(enrich.parsePropertyEdits) && isTrackedPropertyEdit(ctx, notionType);
@@ -365,6 +374,13 @@ export async function enrichContextFromNotionPage(
   }
 
   const page = fetched.page;
+  const userIds = readPageUserIds(page);
+  if (userIds.createdById) {
+    ctx.pageCreatedById = userIds.createdById;
+  }
+  if (userIds.lastEditedById) {
+    ctx.pageLastEditedById = userIds.lastEditedById;
+  }
   const parent = readPageParentIds(page);
   if (!ctx.parentDbConfigName) {
     ctx.parentDbConfigName = trackedParentName(
@@ -392,9 +408,6 @@ export async function enrichContextFromNotionPage(
         const fields = parseFleetLocksFieldsFromNotionPage(page);
         ctx.fleetLocksFields = fields;
         ctx.fleetLocksAdoptedAt = fields.adoptedAt;
-        const userIds = readPageUserIds(page);
-        ctx.pageCreatedById = userIds.createdById;
-        ctx.pageLastEditedById = userIds.lastEditedById;
         ctx.pageAuthorId = readPageAuthorId(page, notionType, ctx.authorId);
         if (fields.parseOk) {
           await loadAdoptedAtDedupe(env, ctx);
@@ -424,6 +437,12 @@ export async function enrichContextFromNotionPage(
       ctx.propertiesAvailable = true;
       ctx.needsJohnNow = parsed.properties.needsJohn === true;
       propertiesSubmittedRefresh(ctx);
+    }
+  } else if (env && notionType && adDocsTypes.has(notionType) && isTasksPageCreatedEvent(ctx, env, notionType)) {
+    const notionProps = page.properties;
+    if (notionProps && typeof notionProps === "object") {
+      const scope = readLaunchScopeFromNotionProperties(notionProps as Record<string, unknown>);
+      ctx.properties = { ...(ctx.properties ?? {}), ...scope };
     }
   }
 }

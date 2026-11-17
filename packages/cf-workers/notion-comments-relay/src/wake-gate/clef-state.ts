@@ -139,16 +139,13 @@ export function buildClefStateString(
   opts: { maskText?: (raw: string) => string } = {},
 ): string {
   const props = ctx.properties ?? {};
-  // Mask BEFORE truncation so clipping can never split (and leak half of) an email/phone.
-  const mask = opts.maskText ?? ((t: string) => t);
-  // Config name of a tracked parent first (tracked-parent-names.ts), then a webhook-supplied title.
+  const mask = opts.maskText ?? ((s: string) => s);
   const parentDb = truncateCodePoints(
     ctx.parentDbConfigName ?? ctx.parentDatabaseTitle ?? "unknown",
     CLEF_FIELD_SHORT_MAX_CHARS,
   );
   const kind = truncateCodePoints(props.kind ?? "", CLEF_FIELD_SHORT_MAX_CHARS);
-  const authorLane = truncateCodePoints(props.authorLane ?? "", CLEF_FIELD_SHORT_MAX_CHARS);
-  // No event or page field names the receiving lane today, so say so instead of echoing author_lane.
+  const laneRaw = (props.authorLane ?? "").trim();
   const targetLane = "unknown";
   const status = truncateCodePoints(
     ctx.fleetLocksFields?.statusName ?? "",
@@ -162,7 +159,6 @@ export function buildClefStateString(
     `parent_db=${parentDb}`,
     `kind=${kind}`,
     `status=${status}`,
-    `author_lane=${authorLane}`,
     `needs_john=${triStateFlag(ctx, props.needsJohn)}`,
     `sensitive=${triStateFlag(ctx, props.sensitive)}`,
     `target_lane=${targetLane}`,
@@ -171,5 +167,14 @@ export function buildClefStateString(
     `title=${encodeStateTextField(mask(props.title ?? ""), CLEF_TITLE_MAX_CHARS)}`,
     `snippet=${encodeStateTextField(mask(readSnippetFromPayload(parsed, opts.maskText)), CLEF_SNIPPET_MAX_CHARS)}`,
   ];
+  if (laneRaw) {
+    lines.splice(6, 0, `author_lane=${truncateCodePoints(laneRaw, CLEF_FIELD_SHORT_MAX_CHARS)}`);
+  }
+  const masked = props.clefMasked ?? {};
+  for (const key of Object.keys(masked).sort()) {
+    const val = masked[key];
+    if (!val) continue;
+    lines.push(`prop_${key}=${truncateCodePoints(val, CLEF_FIELD_SHORT_MAX_CHARS)}`);
+  }
   return truncateStateSafe(lines.join("\n"));
 }

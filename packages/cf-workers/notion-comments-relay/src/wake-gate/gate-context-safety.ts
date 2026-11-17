@@ -103,6 +103,15 @@ export function isJohn(ctx: GateEventContext): boolean {
   return normalized === "john" || normalized === "john eakin";
 }
 
+/** page.created honor switch: webhook authors or fetched page creator. */
+export function isJohnForPageCreatedHonor(ctx: GateEventContext): boolean {
+  if (isJohn(ctx)) return true;
+  if (ctx.pageCreatedById && idInNotionIdSet(ctx.pageCreatedById, ctx.johnUserIds)) {
+    return true;
+  }
+  return false;
+}
+
 export function anyJohnUserId(johnUserIds: Set<string>, candidateIds: Iterable<string>): boolean {
   for (const id of candidateIds) {
     if (idInNotionIdSet(id, johnUserIds)) {
