@@ -81,7 +81,7 @@ export default {
       });
       admitted.catch(() => {}); // handler may be cancelled before it awaits; never an unhandled rejection
       ctx.waitUntil(
-        (async () => {
+        (async (): Promise<void> => {
           let a: Admission;
           try {
             a = await admitEmailShadow(env, body);

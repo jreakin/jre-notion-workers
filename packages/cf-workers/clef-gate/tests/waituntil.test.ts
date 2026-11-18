@@ -13,6 +13,7 @@ afterEach(() => {
 
 const ctx = () => {
   const p: Promise<unknown>[] = [];
+  // SAFETY: the handler only calls waitUntil/passThroughOnException; the rest of ExecutionContext is unused here.
   return { p, c: { waitUntil: (x: Promise<unknown>) => p.push(x), passThroughOnException() {} } as unknown as ExecutionContext };
 };
 const decisionReq = (signal?: AbortSignal) =>
@@ -80,7 +81,7 @@ describe("waitUntil is registered before admit awaits", () => {
     g.release();
     const r = await handler;
     expect(r.status).toBe(202);
-    expect((await r.json()) as unknown).toEqual({ logged: true, verdict: "pending" });
+    expect((await r.json()) as unknown /* SAFETY: compared with toEqual, never indexed */).toEqual({ logged: true, verdict: "pending" });
     expect(k.p.length).toBe(1);
     await Promise.all(k.p);
     expect(rowOf(kv).error_reason).toBeNull();
@@ -96,7 +97,7 @@ describe("waitUntil is registered before admit awaits", () => {
     const second = ctx();
     const r = await worker.fetch(decisionReq(), env, second.c);
     expect(r.status).toBe(202);
-    expect((await r.json()) as unknown).toEqual({ logged: true, duplicate: true });
+    expect((await r.json()) as unknown /* SAFETY: compared with toEqual, never indexed */).toEqual({ logged: true, duplicate: true });
     await Promise.all(second.p);
     expect(calls.length).toBe(1);
   });
