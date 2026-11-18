@@ -310,6 +310,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
+# ntn workers env push updates only keys present in FILTERED_ENV; it does not delete other remote keys.
 echo "Pushing to Notion Workers (adds new keys, updates changed values)..."
 ntn workers env push --file="$FILTERED_ENV" --yes
 

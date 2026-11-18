@@ -5,15 +5,11 @@ const TL = {
     client: "Client",
     project: "Project",
     task: "Task",
-    githubItem: "GitHub Item",
 };
-/** Property names on a 🔀 GitHub Items page (Source 1). */
-const GH_SRC = { client: "Client", project: "Project", task: "Task" };
 /** Property names on a Tasks page (Source 2 — note the plurals). */
 const TASK_SRC = {
     client: "Clients",
     project: "Project",
-    githubItem: "GitHub Items",
 };
 /** Read an array of page IDs from a Notion relation property. */
 function readRelationIds(properties, propName) {
@@ -92,13 +88,13 @@ export async function loadUniqueIdMaps(notion) {
 }
 /**
  * Load Time Log entries that are (a) missing Client or Project AND (b) have a
- * source to inherit from (a GitHub Item or a Task).
+ * source to inherit from (a Task).
  *
  * Candidacy keys on Client/Project only — the billing-critical relations a
- * source can almost always supply — NOT on Task/GitHub Item. Keying on Task or
+ * source can almost always supply — NOT on Task. Keying on Task or
  * GitHub Item would make entries whose source genuinely lacks those fields into
  * *permanent* candidates: they can never be completed, so they clog the per-run
- * budget and the backlog never converges. Task and GitHub Item are still filled
+ * budget and the backlog never converges. Task is still filled
  * opportunistically when an entry is processed (see backfillTimeLogRelations),
  * but their absence no longer keeps an entry queued forever.
  */
@@ -112,12 +108,7 @@ export async function loadTimeLogEntriesNeedingRelations(notion) {
                     { property: TL.project, relation: { is_empty: true } },
                 ],
             },
-            {
-                or: [
-                    { property: TL.githubItem, relation: { is_not_empty: true } },
-                    { property: TL.task, relation: { is_not_empty: true } },
-                ],
-            },
+            { property: TL.task, relation: { is_not_empty: true } },
         ],
     };
     const out = [];
@@ -134,7 +125,6 @@ export async function loadTimeLogEntriesNeedingRelations(notion) {
             const props = page.properties;
             out.push({
                 id: page.id,
-                githubItemIds: readRelationIds(props, TL.githubItem),
                 clientIds: readRelationIds(props, TL.client),
                 projectIds: readRelationIds(props, TL.project),
                 taskIds: readRelationIds(props, TL.task),
@@ -146,7 +136,7 @@ export async function loadTimeLogEntriesNeedingRelations(notion) {
 }
 /**
  * Backfill empty Client/Project/Task/GitHub Item relations on the given Time
- * Log entries. GitHub Item first, then Task fallback. Idempotent.
+ * Log entries from linked Tasks. Idempotent.
  */
 export async function backfillTimeLogRelations(notion, entries, opts) {
     // Bound the pass so it can't exceed the worker platform's ~60s hard stop.
@@ -158,7 +148,7 @@ export async function backfillTimeLogRelations(notion, entries, opts) {
     const result = {
         considered: 0,
         updated: 0,
-        filled: { client: 0, project: 0, task: 0, githubItem: 0 },
+        filled: { client: 0, project: 0, task: 0 },
         stillUnlinkedIds: [],
         remaining: 0,
         stoppedEarly: false,
@@ -172,8 +162,7 @@ export async function backfillTimeLogRelations(notion, entries, opts) {
         const needClient = entry.clientIds.length === 0;
         const needProject = entry.projectIds.length === 0;
         const needTask = entry.taskIds.length === 0;
-        const needGithubItem = entry.githubItemIds.length === 0;
-        if (!needClient && !needProject && !needTask && !needGithubItem)
+        if (!needClient && !needProject && !needTask)
             continue;
         // Cap / deadline: stop processing but keep counting how many still need work.
         if (result.considered >= maxEntries || Date.now() >= deadlineMs) {
@@ -184,50 +173,10 @@ export async function backfillTimeLogRelations(notion, entries, opts) {
         result.considered++;
         const resolved = {};
         try {
-            // ── Source 1: GitHub Item first ──
-            if (entry.githubItemIds.length > 0 && (needClient || needProject || needTask)) {
-                const gh = await notion.pages.retrieve({ page_id: entry.githubItemIds[0] });
-                if ("properties" in gh) {
-                    const p = gh.properties;
-                    if (needClient) {
-                        const v = readRelationIds(p, GH_SRC.client);
-                        if (v.length)
-                            resolved.client = v;
-                    }
-                    if (needProject) {
-                        const v = readRelationIds(p, GH_SRC.project);
-                        if (v.length)
-                            resolved.project = v;
-                    }
-                    if (needTask) {
-                        const v = readRelationIds(p, GH_SRC.task);
-                        if (v.length)
-                            resolved.task = v;
-                    }
-                    // Title-prefix fallback: many GitHub Items carry "[AD-CLIENT-N]" /
-                    // "[AD-PROJ-N]" in their title but have empty Client/Project relations
-                    // (and may even be trashed). Recover the IDs from the title.
-                    if (opts.uidMaps && ((needClient && !resolved.client) || (needProject && !resolved.project))) {
-                        const tokens = parseAdIdTokens(readTitle(p));
-                        for (const tok of tokens) {
-                            if (needClient && !resolved.client) {
-                                const id = opts.uidMaps.clientByUid.get(tok);
-                                if (id)
-                                    resolved.client = [id];
-                            }
-                            if (needProject && !resolved.project) {
-                                const id = opts.uidMaps.projectByUid.get(tok);
-                                if (id)
-                                    resolved.project = [id];
-                            }
-                        }
-                    }
-                }
-            }
-            // ── Source 2: Task fallback (Clients/Project + the PR/Repo link) ──
+            // ── Source: Task (Clients/Project + the PR/Repo link) ──
             const stillClient = needClient && !resolved.client;
             const stillProject = needProject && !resolved.project;
-            if (entry.taskIds.length > 0 && (stillClient || stillProject || needGithubItem)) {
+            if (entry.taskIds.length > 0 && (needClient || needProject || needTask)) {
                 const tk = await notion.pages.retrieve({ page_id: entry.taskIds[0] });
                 if ("properties" in tk) {
                     const p = tk.properties;
@@ -241,10 +190,8 @@ export async function backfillTimeLogRelations(notion, entries, opts) {
                         if (v.length)
                             resolved.project = v;
                     }
-                    if (needGithubItem) {
-                        const v = readRelationIds(p, TASK_SRC.githubItem);
-                        if (v.length)
-                            resolved.githubItem = v;
+                    if (needTask) {
+                        resolved.task = [entry.taskIds[0]];
                     }
                 }
             }
@@ -267,10 +214,7 @@ export async function backfillTimeLogRelations(notion, entries, opts) {
             if (!(gotClient && gotProject)) {
                 result.stillUnlinkedIds.push(entry.id);
             }
-            if (!resolved.client &&
-                !resolved.project &&
-                !resolved.task &&
-                !resolved.githubItem) {
+            if (!resolved.client && !resolved.project && !resolved.task) {
                 continue;
             }
             // Re-read immediately before writing so we never clobber a relation that
@@ -289,11 +233,6 @@ export async function backfillTimeLogRelations(notion, entries, opts) {
             if (resolved.task && readRelationIds(cp, TL.task).length === 0) {
                 updates[TL.task] = { relation: resolved.task.map((id) => ({ id })) };
             }
-            if (resolved.githubItem && readRelationIds(cp, TL.githubItem).length === 0) {
-                updates[TL.githubItem] = {
-                    relation: resolved.githubItem.map((id) => ({ id })),
-                };
-            }
             if (Object.keys(updates).length === 0)
                 continue;
             if (!opts.dryRun) {
@@ -309,8 +248,6 @@ export async function backfillTimeLogRelations(notion, entries, opts) {
                 result.filled.project++;
             if (updates[TL.task])
                 result.filled.task++;
-            if (updates[TL.githubItem])
-                result.filled.githubItem++;
             console.log(TAG, `${opts.dryRun ? "[DRY RUN] " : ""}filled ${Object.keys(updates).join(", ")} on Time Log ${entry.id}`);
         }
         catch (e) {

@@ -121,12 +121,6 @@ export function getDeadLettersDatabaseId(): string {
   return id;
 }
 
-/** The native Worker.sync() database — updated automatically every 30 minutes. */
-export function getGitHubItemsSyncDatabaseId(): string {
-  const id = process.env.GITHUB_ITEMS_SYNC_DATABASE_ID;
-  if (!id) throw new Error("GITHUB_ITEMS_SYNC_DATABASE_ID is not set");
-  return id;
-}
 
 export function getGitHubToken(): string {
   const token = process.env.GITHUB_TOKEN;
