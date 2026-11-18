@@ -344,7 +344,7 @@ describe("http", () => {
     const k = ctx();
     const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k.c);
     expect(r.status).toBe(500);
-    expect(k.p.length).toBe(0);
+    await Promise.all(k.p); // the registered admit+complete promise settles without completing anything
     expect(calls.length).toBe(0);
     const line = JSON.parse(cap.lines.at(-1) ?? "{}");
     expect(line.event).toBe("store_failed");
@@ -407,7 +407,7 @@ describe("http", () => {
     const r = await worker.fetch(req("/clef/email-shadow", "Bearer tok-123"), env, k2.c);
     expect(r.status).toBe(202);
     expect((await r.json()) as unknown).toEqual({ logged: true, duplicate: true });
-    expect(k2.p.length).toBe(0);
+    await Promise.all(k2.p); // registered up front; a duplicate does no completion work
     expect(calls.length).toBe(1);
     expect(kv.data.get(`${RING_PREFIX}${HASH_NOFLASH}`)).toBe(before);
   });
