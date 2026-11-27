@@ -172,13 +172,50 @@ export async function runClefModel(
   }
 }
 
+/** Matches a leading Workers AI / gateway numeric code prefix only (e.g. `5006: …`). */
+const LEADING_NUMERIC_ERROR_CODE = /^\s*(\d{3,5})(?::|\s|$)/;
+
+function isSafeNumericCode(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const n = Math.trunc(value);
+    if (n >= 100 && n <= 99_999) return String(n);
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (/^\d{3,5}$/.test(t)) return t;
+  }
+  return null;
+}
+
+/** Numeric Workers AI / HTTP code only — never returns message text or other fields. */
+export function sanitizedWorkersAiErrorCode(err: Error): string | null {
+  const rec = err as Error & { code?: unknown; status?: unknown };
+  for (const key of ["code", "status"] as const) {
+    const fromField = isSafeNumericCode(rec[key]);
+    if (fromField) return fromField;
+  }
+  const fromPrefix = err.message.match(LEADING_NUMERIC_ERROR_CODE)?.[1];
+  return fromPrefix ?? null;
+}
+
 /** Error → log-safe reason (never includes the message text). */
 export function clefErrorReason(err: unknown): string {
   if (err instanceof Error) {
     if (err.message === "clef_timeout") {
       return "clef_timeout";
     }
-    return `clef_error:${err.name}`;
+    const code = sanitizedWorkersAiErrorCode(err);
+    const base = `clef_error:${err.name}`;
+    return code ? `${base}:${code}` : base;
+  }
+  if (err && typeof err === "object" && "name" in err) {
+    const name = (err as { name: unknown }).name;
+    if (typeof name === "string" && name.length > 0) {
+      const synthetic = Object.assign(new Error(""), err) as Error;
+      const code = sanitizedWorkersAiErrorCode(synthetic);
+      const base = `clef_error:${name}`;
+      return code ? `${base}:${code}` : base;
+    }
   }
   return "clef_error:Error";
 }

@@ -16,7 +16,7 @@ AI_GATEWAY_ID = "clef-shadow-gate"
 CLEF_EMAIL_DAILY_CALL_CAP = "1000"
 CLEF_DEFAULT_MODE = "shadow"
 
-CLEF_EMAIL_BATCH_SIZE = "20"
+CLEF_EMAIL_BATCH_SIZE = "5"
 
 [[durable_objects.bindings]]
 name = "CLEF_BATCHER"
