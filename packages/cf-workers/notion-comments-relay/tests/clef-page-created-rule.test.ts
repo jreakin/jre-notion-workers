@@ -294,6 +294,6 @@ describe("live flag + verdict wait", () => {
     expect(await awaitClefVerdict(slow, 5)).toBeNull();
     expect(await awaitClefVerdict(Promise.reject(new Error("x")), 50)).toBeNull();
     expect(isLiveSkipVerdict(null)).toBe(false);
-    expect(isLiveSkipVerdict({ entry: null, pageCreatedSkip: true })).toBe(false);
+    expect(isLiveSkipVerdict({ entry: null, pageCreatedSkip: true, liveSkipKind: null })).toBe(false);
   });
 });

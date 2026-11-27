@@ -2,7 +2,7 @@ import { invokeClefFlash, invokeClefFull, type ParsedClefRun } from "./clef-ai.j
 import { tryConsumeClefCall } from "./clef-daily-cap.js";
 import { resolveClefMode } from "./clef-mode.js";
 import { clefHardOverrideReason, mustWakeOverrideReason } from "./clef-overrides.js";
-import { decideClefOutcomeForEvent, isClefPageCreatedEvent, pageCreatedOption1Skip } from "./clef-decision-logic.js";
+import { decideClefOutcome, decideClefOutcomeForEvent, isClefPageCreatedEvent, pageCreatedOption1Skip } from "./clef-decision-logic.js";
 import { isTruthyFlag } from "./gate-context-safety.js";
 import { buildClefStateString, mapClefSource } from "./clef-state.js";
 import { buildClefBaselineStateString, pageCreatedLiveSkipGate } from "./clef-blind-input.js";
@@ -21,6 +21,10 @@ import type {
   WakeGateDecision,
 } from "./gate-event-types.js";
 import { enqueueGateLogRow } from "../gate-log-ring.js";
+import {
+  clefModePermitsEnvLiveSkip,
+  kvExplicitlyBlocksClefLiveSkip,
+} from "./clef-live-skip-policy.js";
 import { runRuleSkipClefShadow } from "./clef-rule-skip-shadow.js";
 
 const DUPLICATE_WINDOW_MS = 60_000;
@@ -28,23 +32,23 @@ const DUPLICATE_WINDOW_MS = 60_000;
 /** Reason suffix on a wake-path row whose page.created event met the Option 1 skip rule. */
 export const PAGE_CREATED_RULE_TAG = "page_created_ignore";
 
-/**
- * CLEF_SKIP_PAGE_CREATED_LIVE=1 makes the Option 1 page.created skip LIVE (the event is not forwarded).
- * Anything else (default, unset) = shadow: the would_skip is logged and the event still wakes.
- */
-export function clefSkipPageCreatedLive(env: Pick<Env, "CLEF_SKIP_PAGE_CREATED_LIVE">): boolean {
-  return env.CLEF_SKIP_PAGE_CREATED_LIVE?.trim() === "1";
-}
+/** Re-export for callers; see `clef-live-skip-policy.ts`. */
+export { clefSkipPageCreatedLiveEnabled as clefSkipPageCreatedLive } from "./clef-live-skip-policy.js";
 
-/** What the Clef gate decided for this event, for the forward path (live page.created skip only). */
+/** Live skip kinds for LOCK-69 comment.* and page.properties_updated (plus page_created via `pageCreatedSkip`). */
+export type ClefLiveSkipKind = "comment" | "properties_updated";
+
+/** What the Clef gate decided for this event, for the forward path (live Clef skip). */
 export type ClefGateResult = {
   /** The wake-path row as logged (null when the gate returned before a wake-path row). */
   entry: ClefShadowLogEntry | null;
   /** True only when the Option 1 rule says skip on a real, eligible Clef score. Never set for other events. */
   pageCreatedSkip: boolean;
+  /** Standard Clef `would_skip` live path for comment.* / properties_updated when env live flags are on. */
+  liveSkipKind: ClefLiveSkipKind | null;
 };
 
-const NO_SKIP: ClefGateResult = { entry: null, pageCreatedSkip: false };
+const NO_SKIP: ClefGateResult = { entry: null, pageCreatedSkip: false, liveSkipKind: null };
 
 /**
  * The Option 1 rule may only decide a page.created event Clef scored with real signal: properties
@@ -65,6 +69,49 @@ export function pageCreatedRuleEligible(
     return false;
   }
   return mustWakeOverrideReason(ctx, parsed) === null;
+}
+
+export function isClefCommentEvent(notionType: string | null): boolean {
+  return Boolean(notionType?.startsWith("comment."));
+}
+
+/** Standard Clef skip rule eligibility (comment.* / properties_updated live skip; not Option 1). */
+export function clefStandardLiveSkipEligible(
+  ctx: GateEventContext,
+  notionType: string | null,
+  parsed: Record<string, unknown>,
+  modeReason: string | null,
+): boolean {
+  if (modeReason) {
+    return false;
+  }
+  if (mustWakeOverrideReason(ctx, parsed) !== null) {
+    return false;
+  }
+  if (isClefPageCreatedEvent(notionType)) {
+    return false;
+  }
+  if (!isClefCommentEvent(notionType) && notionType !== "page.properties_updated") {
+    return false;
+  }
+  if (isClefCommentEvent(notionType)) {
+    return !ctx.notionFetchFailReason;
+  }
+  if (!ctx.propertiesAvailable || ctx.notionFetchFailReason) {
+    return false;
+  }
+  const props = ctx.properties;
+  if (isTruthyFlag(ctx.needsJohnNow) || isTruthyFlag(props?.needsJohn) || isTruthyFlag(props?.sensitive)) {
+    return false;
+  }
+  return true;
+}
+
+function clefStandardWouldSkip(run: ParsedClefRun, notionType: string | null): boolean {
+  if (isClefPageCreatedEvent(notionType)) {
+    return false;
+  }
+  return decideClefOutcome(run.pAction, run.pDup, run.qWhen) === "would_skip";
 }
 
 /** Default window for the pre-Clef same-item dedupe (CLEF_ITEM_DEDUPE_WINDOW_S). */
@@ -477,6 +524,22 @@ export async function runClefShadowWakeGate(
     entry.page_created_rule = "would_skip";
   }
 
+  let liveSkipKind: ClefLiveSkipKind | null = null;
+  const kvBlocks = await kvExplicitlyBlocksClefLiveSkip(env);
+  const modeOk = clefModePermitsEnvLiveSkip(modeRes);
+  if (!pageCreatedSkip && modeOk && !kvBlocks) {
+    const stdEligible = clefStandardLiveSkipEligible(ctx, notionType, parsed, modeRes.reason);
+    if (stdEligible && entry.clef_decision === "would_skip" && clefStandardWouldSkip(flash.parsed, notionType)) {
+      let fullAgrees = true;
+      if (fullSampled) {
+        fullAgrees = entry.sampled_full?.decision === "would_skip";
+      }
+      if (fullAgrees && !constScore.forceWake) {
+        liveSkipKind = isClefCommentEvent(notionType) ? "comment" : "properties_updated";
+      }
+    }
+  }
+
   await appendClefShadowLog(env, entry);
-  return { entry, pageCreatedSkip };
+  return { entry, pageCreatedSkip, liveSkipKind };
 }

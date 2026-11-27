@@ -442,6 +442,20 @@ and a matching event is not forwarded. Each live skip writes one extra masked ro
 `mode: "live"`, `reason: "clef_live_skip:page_created_ignore"`; no titles or content). Nothing else becomes live. The Clef
 kill switch still wins: `clef:mode:global` / `clef:mode:clef_wake` = `off` means no Clef call, so nothing is skipped.
 
+**Live flags `CLEF_SKIP_COMMENTS_LIVE` / `CLEF_SKIP_PROPERTIES_UPDATED_LIVE` (LOCK-69, approved live):** unset or anything
+but `1` = shadow (log `would_skip`, forward anyway). `1` = **live** for `comment.*` / `page.properties_updated` only:
+the forward path waits (bounded by `CLEF_LIVE_DECISION_TIMEOUT_MS`) for the Clef score the shadow path already runs.
+Live skip applies only when Clef’s standard rule returns `would_skip` (`p_action <= 0.05` and `p_dup >= 0.80`), with the
+same safety invariants as shadow (no hard override, no Needs John / Sensitive, no fetch failure, no constant-score
+force-wake; when the item is in the 10% full-model sample, the full model must agree). Each live skip writes one masked
+row with `reason: "clef_live_skip:comment"` or `"clef_live_skip:properties_updated"`. `CLEF_SKIP_PAGE_CREATED_LIVE`
+stays unset until Option 1 `page.created` is approved.
+
+**Clef KV kill switch (instant, no redeploy):** explicit `clef:mode:global` or `clef:mode:clef_wake` = `off` or `shadow`
+in `RELAY_KV` blocks env live skip (the event forwards even when the live flags are `1`). Unset mode keys do not block
+live skip by themselves. Mode resolution errors (`clef_mode_invalid`, `clef_kv_unavailable`, …) also block live skip.
+
+
 **Turning it on (no secrets):** it is a plain var. Either add `CLEF_SKIP_PAGE_CREATED_LIVE = "1"` under `[vars]` in
 `wrangler.toml` (reviewed PR, then `npx wrangler deploy`), or for a one-off canary deploy
 `npx wrangler deploy --var CLEF_SKIP_PAGE_CREATED_LIVE:1`. A dashboard var is replaced by the next deploy, so the
@@ -474,6 +488,8 @@ Ids in `[vars]` ship with `wrangler deploy` (no `--keep-vars` needed for these).
 | `ECHO_FILTER_LANE_NAMES` | optional | Built-in LOCK-39 lane names (`DEFAULT_LOCK39_LANE_NAMES`) |
 | `ECHO_FILTER` | optional | Live; `off` disables the echo filter (verdicts still logged) |
 | `CLEF_SKIP_PAGE_CREATED_LIVE` | optional | Shadow (default). `1` makes the Clef `page.created` skip rule live (see above) |
+| `CLEF_SKIP_COMMENTS_LIVE` | optional | Default shadow in code; `1` in `wrangler.toml` makes `comment.*` Clef `would_skip` live (LOCK-69) |
+| `CLEF_SKIP_PROPERTIES_UPDATED_LIVE` | optional | Default shadow in code; `1` in `wrangler.toml` makes `page.properties_updated` Clef `would_skip` live (LOCK-69) |
 | `CLEF_PAGE_CREATED_HONOR_JOHN_AUTHORED` | optional | Default unset = `0`: fixed Clef gate decides on `page.created` even when John-authored. Set `1` to honor CoS prefilter `john_authored` (no live skip). |
 | `TASKS_DATA_SOURCE_ID` / `TASKS_DATABASE_ID` | optional | Tasks parent for `parent_db=Tasks` and Launch-scope wake guard (default data source in code). |
 | `CLEF_LIVE_DECISION_TIMEOUT_MS` | optional | Live mode only: max wait for the Clef verdict before forwarding (default `8000`) |
