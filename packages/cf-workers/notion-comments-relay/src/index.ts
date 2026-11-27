@@ -12,9 +12,9 @@ import {
   gateLogBlocksForward,
 } from "./wake-gate/gate-log-filter.js";
 import { runShadowWakeGates } from "./wake-gate/wake-gate-shadow.js";
-import { isClefPageCreatedEvent } from "./wake-gate/clef-decision-logic.js";
 import { awaitClefVerdict, isLiveSkipVerdict, logClefLiveSkip, readClefLiveDecisionTimeoutMs } from "./wake-gate/clef-live-skip.js";
-import { type ClefGateResult, clefSkipPageCreatedLive } from "./wake-gate/clef-wake-gate.js";
+import { kvExplicitlyBlocksClefLiveSkip, wantsClefLiveVerdictAwait } from "./wake-gate/clef-live-skip-policy.js";
+import type { ClefGateResult } from "./wake-gate/clef-wake-gate.js";
 import { cosPrefilterLive, decideCosPrefilterAfterFetch, logCosPrefilter } from "./wake-gate/cos-prefilter.js";
 import { decideEchoFilter, logEchoFilter, resolveEchoCommentText } from "./wake-gate/echo-filter.js";
 import { runEchoSkipClefShadow } from "./wake-gate/clef-echo-skip-shadow.js";
@@ -720,10 +720,12 @@ export default {
         try {
           const shadow = runShadowWakeGates(env, parsed, notionType, rawBody, true, fetchScope);
           ctx.waitUntil(shadow);
-          // Option 1 live skip (CLEF_SKIP_PAGE_CREATED_LIVE=1, page.created only): wait, bounded, for the
-          // Clef verdict the shadow gates already compute. Timeout / error ⇒ forward (fail open).
-          if (!cosDrop && clefSkipPageCreatedLive(env) && isClefPageCreatedEvent(notionType)) {
-            liveClef = await awaitClefVerdict(shadow, readClefLiveDecisionTimeoutMs(env));
+          // Live Clef skip (per-event env flags): bounded wait for the shadow Clef verdict. Timeout / error ⇒ forward.
+          if (!cosDrop && wantsClefLiveVerdictAwait(env, notionType)) {
+            const kvBlocks = await kvExplicitlyBlocksClefLiveSkip(env);
+            if (!kvBlocks) {
+              liveClef = await awaitClefVerdict(shadow, readClefLiveDecisionTimeoutMs(env));
+            }
           }
         } catch (shadowErr) {
           const shadowErrorName = shadowErr instanceof Error ? shadowErr.name : "Error";

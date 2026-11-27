@@ -60,4 +60,7 @@ crons = ["*/1 * * * *"]
 # tag = "v1-day-log-serializer"
 # new_classes = ["DayLogSerializer"]
 
+CLEF_SKIP_COMMENTS_LIVE = "1"
+CLEF_SKIP_PROPERTIES_UPDATED_LIVE = "1"
+# CLEF_SKIP_PAGE_CREATED_LIVE unset — page.created stays shadow-only (Option 1 not approved live).
 # CLEF_PAGE_CREATED_HONOR_JOHN_AUTHORED = "1"  # optional; unset = fixed Clef gate (0); 1 = honor john_authored

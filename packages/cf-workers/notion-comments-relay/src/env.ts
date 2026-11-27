@@ -39,6 +39,16 @@ export interface Env {
    * (default) = shadow: the would_skip is logged and the event still wakes. Nothing else becomes live.
    */
   CLEF_SKIP_PAGE_CREATED_LIVE?: string;
+  /**
+   * Clef comment.* live skip (LOCK-69). `1` = LIVE: a comment event Clef scores `would_skip` (standard rule,
+   * all safety invariants) is not forwarded. Anything else (default) = shadow.
+   */
+  CLEF_SKIP_COMMENTS_LIVE?: string;
+  /**
+   * Clef page.properties_updated live skip (LOCK-69). `1` = LIVE: properties_updated Clef scores `would_skip`
+   * is not forwarded. Anything else (default) = shadow.
+   */
+  CLEF_SKIP_PROPERTIES_UPDATED_LIVE?: string;
   /** Live mode only: ms the forward path waits for the Clef verdict before forwarding anyway (default 8000). */
   CLEF_LIVE_DECISION_TIMEOUT_MS?: string;
   /**
