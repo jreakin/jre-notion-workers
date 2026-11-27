@@ -50,6 +50,20 @@ describe("clef-core", () => {
     expect(readScore(a, "s", 3)).toBe(2.5);
     expect(readScore(a, "s", 2)).toBeNull();
   });
+
+  test("clefErrorReason appends sanitized numeric code only", () => {
+    const withCode = Object.assign(new Error("5006: model failed jane@example.com secret"), { name: "AiError", code: 5006 });
+    expect(clefErrorReason(withCode)).toBe("clef_error:AiError:5006");
+    expect(clefErrorReason(withCode)).not.toContain("jane");
+    const fromStatus = Object.assign(new Error("502 gateway"), { name: "AiGatewayError", status: 502 });
+    expect(clefErrorReason(fromStatus)).toBe("clef_error:AiGatewayError:502");
+    const fromPrefix = Object.assign(new Error("3040: upstream"), { name: "AiError" });
+    expect(clefErrorReason(fromPrefix)).toBe("clef_error:AiError:3040");
+    const plain = Object.assign(new Error("no digits here"), { name: "AiError" });
+    expect(clefErrorReason(plain)).toBe("clef_error:AiError");
+    expect(clefErrorReason(plain)).not.toContain("no digits");
+  });
+
   test("timeout yields clef_timeout", async () => {
     const ai = { run: () => new Promise<unknown>(() => {}) };
     let reason = "";

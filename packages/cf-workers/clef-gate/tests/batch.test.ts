@@ -31,7 +31,7 @@ function batchAnswers(n: number, opts: { skip?: number[]; bad?: number[]; bulk?:
   return { result: { answers: out } };
 }
 
-function core(run: (states: readonly string[]) => Promise<unknown>, maxSize = 20) {
+function core(run: (states: readonly string[]) => Promise<unknown>, maxSize = 5) {
   const calls: number[] = [];
   let capUnits = 0;
   const c = new ClefBatchCore({
@@ -73,33 +73,33 @@ describe("batch request / response", () => {
     expect(parseBatchResponse("garbage", 3)).toEqual([null, null, null]);
   });
 
-  test("batch size: default 20, clamped to 25", () => {
-    expect(parseBatchSize(undefined)).toBe(20);
-    expect(parseBatchSize("0")).toBe(20);
+  test("batch size: default 5, clamped to 25", () => {
+    expect(parseBatchSize(undefined)).toBe(5);
+    expect(parseBatchSize("0")).toBe(5);
     expect(parseBatchSize("100")).toBe(25);
     expect(parseBatchSize("10")).toBe(10);
   });
 });
 
 describe("ClefBatchCore", () => {
-  test("120-email burst → 6 calls of 20 (fits the 300/min gateway limit), one cap unit per call", async () => {
+  test("120-email burst → 24 calls of 5 (fits the 300/min gateway limit), one cap unit per call", async () => {
     const { c, calls, capUnits } = core(async (s) => batchAnswers(s.length));
     const res = await Promise.all(states(120).map((s) => c.submit(s)));
-    expect(calls).toEqual([20, 20, 20, 20, 20, 20]);
-    expect(capUnits()).toBe(6);
-    expect(res.every((r) => r.ok && r.batch_size === 20)).toBe(true);
+    expect(calls).toEqual(Array.from({ length: 24 }, () => 5));
+    expect(capUnits()).toBe(24);
+    expect(res.every((r) => r.ok && r.batch_size === 5)).toBe(true);
   });
 
   test("partial answers: missing items re-batched once in one call", async () => {
     let n = 0;
-    const { c, calls } = core(async (s) => (++n === 1 ? batchAnswers(s.length, { skip: [3, 7] }) : batchAnswers(s.length)));
+    const { c, calls } = core(async (s) => (++n === 1 ? batchAnswers(s.length, { skip: [3, 7] }) : batchAnswers(s.length)), 10);
     const res = await Promise.all(states(10).map((s) => c.submit(s)));
     expect(calls).toEqual([10, 2]);
     expect(res.every((r) => r.ok)).toBe(true);
   });
 
   test("still missing after the re-batch: at most MAX_SINGLE_FALLBACK go per-email, the rest are bad output", async () => {
-    const { c, calls } = core(async () => ({ result: { answers: {} } }));
+    const { c, calls } = core(async () => ({ result: { answers: {} } }), 12);
     const res = await Promise.all(states(12).map((s) => c.submit(s)));
     expect(calls).toEqual([12, 12]);
     expect(res.filter((r) => !r.ok && r.fallback && r.reason === BATCH_ITEM_MISSING).length).toBe(MAX_SINGLE_FALLBACK);
@@ -125,6 +125,16 @@ describe("ClefBatchCore", () => {
     expect(res.every((r) => r.ok && r.attempts === 2)).toBe(true);
   });
 
+
+  test("AiError numeric code is logged in reason without message text", async () => {
+    const { c } = core(async () => {
+      throw Object.assign(new Error("5006: failed for jane@secret.example"), { name: "AiError", code: 5006 });
+    }, 5);
+    const res = await Promise.all(states(3).map((s) => c.submit(s)));
+    expect(res.every((r) => !r.ok && r.reason === "clef_error:AiError:5006")).toBe(true);
+    expect(JSON.stringify(res)).not.toContain("jane@");
+  });
+
   test("cap reached: no call, items get the cap reason", async () => {
     const c = new ClefBatchCore({
       maxSize: 20,
@@ -148,12 +158,12 @@ describe("shadow flow with a batcher", () => {
   test("batched verdict fills the row; no single call; secrets never logged", async () => {
     cap = captureLogs();
     const { env, calls, kv } = makeEnv();
-    const b = fake({ ok: true, parsed: { p_person: 0.01, p_money_sec: 0.01, lane: "none", p_bulk: 0.95, p_calendar: 0.01, urgency: 1, confidence: 0.9 }, batch_size: 20, attempts: 1 });
+    const b = fake({ ok: true, parsed: { p_person: 0.01, p_money_sec: 0.01, lane: "none", p_bulk: 0.95, p_calendar: 0.01, urgency: 1, confidence: 0.9 }, batch_size: 5, attempts: 1 });
     const e = await processEmailShadow(env, JSON.stringify(payload()), { batcher: b });
     expect(calls.length).toBe(0);
     expect(b.states.length).toBe(1);
     expect(e?.shadow_label).toBe("would_skip");
-    expect(e?.clef_batch_size).toBe(20);
+    expect(e?.clef_batch_size).toBe(5);
     expect(e?.clef_attempts).toBe(1);
     const all = cap.lines.join("\n") + [...kv.data.values()].join("\n");
     expect(all).not.toContain(SECRET_SUBJECT.slice(0, 20));
@@ -164,7 +174,7 @@ describe("shadow flow with a batcher", () => {
   test("missing in batch → scored alone (one single call), flagged clef_batch_fallback", async () => {
     cap = captureLogs();
     const { env, calls } = makeEnv(answers());
-    const b = fake({ ok: false, reason: BATCH_ITEM_MISSING, fallback: true, batch_size: 20, attempts: 1 });
+    const b = fake({ ok: false, reason: BATCH_ITEM_MISSING, fallback: true, batch_size: 5, attempts: 1 });
     const e = await processEmailShadow(env, JSON.stringify(payload()), { batcher: b });
     expect(calls.length).toBe(1);
     expect(e?.clef_batch_fallback).toBe(true);
@@ -174,7 +184,7 @@ describe("shadow flow with a batcher", () => {
   test("whole-batch failure → error row, no single call, no side-by-side on 429", async () => {
     cap = captureLogs();
     const { env, calls } = makeEnv();
-    const b = fake({ ok: false, reason: CLEF_RATE_LIMITED_REASON, fallback: false, batch_size: 20, attempts: 2 });
+    const b = fake({ ok: false, reason: CLEF_RATE_LIMITED_REASON, fallback: false, batch_size: 5, attempts: 2 });
     const e = await processEmailShadow(env, JSON.stringify(payload({ msg_id_hash: HASH_FLASH })), { batcher: b });
     expect(calls.length).toBe(0);
     expect(e?.shadow_label).toBe("error");

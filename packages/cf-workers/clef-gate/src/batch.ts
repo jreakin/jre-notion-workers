@@ -1,9 +1,9 @@
 /**
- * Clef email batching: one Workers AI call scores up to CLEF_EMAIL_BATCH_SIZE (default 20) emails.
+ * Clef email batching: one Workers AI call scores up to CLEF_EMAIL_BATCH_SIZE (default 5) emails.
  *
  * Why: the clef-shadow-gate AI Gateway allows 300 req / 60 s (was 60 during the Oct 14/15 7:12 AM CT
- * bursts → 429 → fail-open) and the morning inbox run posts 120+ emails in a minute. One call per ~20
- * emails keeps a burst far under the limit (300 calls/min ≈ 6,000 emails/min at batch size 20).
+ * bursts → 429 → fail-open) and the morning inbox run posts 120+ emails in a minute. One call per ~5
+ * emails keeps a burst far under the limit (300 calls/min ≈ 1,500 emails/min at batch size 5).
  *
  * Privacy: the batch state carries only each email's masked + clipped state (buildEmailState: masked
  * subject/snippet + non-PII metadata). It lives in Durable Object memory only for the batch window, is
@@ -19,11 +19,11 @@
 import { EMAIL_QUESTIONS, isRateLimitError, parseEmailClefResponse, CLEF_RATE_LIMITED_REASON, type ParsedEmailRun } from "./clef-email.js";
 import { clefErrorReason } from "../../../clef-core/src/index.js";
 
-export const BATCH_SIZE_DEFAULT = 20;
+export const BATCH_SIZE_DEFAULT = 5;
 export const BATCH_SIZE_MAX = 25;
 /** How long the first item of a batch waits for company before the batch is sent. */
 export const BATCH_WINDOW_MS = 2_000;
-/** Timeout for one batch call (a batch answers ~20× the questions of a single call). */
+/** Timeout for one batch call (a batch answers ~5× the questions of a single call). */
 export const BATCH_CALL_TIMEOUT_MS = 8_000;
 /**
  * All work for one batch (first call, one retry, one re-batch) must end within this, so the waiting
